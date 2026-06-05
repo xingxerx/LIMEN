@@ -19,7 +19,7 @@ recompilation when the chain strength recommendation changes.
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from limen.core.compiler import PhysicalEncoding, compile_lexicographic
 from limen.validator.validator import brute_force_solve, validate
@@ -90,6 +90,7 @@ def run_codesign(
     learning_rate: float = 0.1,
     runs_per_iteration: int = 500,
     seed: int = 42,
+    chain_break_fraction_fn: Callable[[PhysicalEncoding], float] | None = None,
 ) -> CoDesignResult:
     """Run the Stackelberg co-design loop on a PhysicalEncoding.
 
@@ -105,6 +106,11 @@ def run_codesign(
             (default 0.1).
         runs_per_iteration: Simulated runs per validation call (default 500).
         seed: Base RNG seed; each iteration uses seed + i for independence.
+        chain_break_fraction_fn: Optional callable (PhysicalEncoding) → float
+            that returns the measured chain-break fraction for the current
+            encoding. When None (default), chain-break fraction is 0.0
+            (simulation mode). Pass dwave_chain_break_fn() to populate this
+            from real D-Wave QPU hardware responses.
 
     Returns:
         A CoDesignResult describing the best encoding found and the full
@@ -132,10 +138,15 @@ def run_codesign(
         vr = validate(current_encoding, runs=runs_per_iteration, seed=seed + i)
         s_best = _second_best_energy(current_encoding.qubo, vr.best_energy)
 
+        cbf = (
+            chain_break_fraction_fn(current_encoding)
+            if chain_break_fraction_fn is not None
+            else 0.0
+        )
         confidences.append(vr.confidence)
         best_energies.append(vr.best_energy)
         second_best_energies.append(s_best)
-        chain_break_fractions.append(0.0)
+        chain_break_fractions.append(cbf)
         chain_strength_history.append(current_encoding.chain_strength)
 
         recommended_cs, best_score = solver.solve(
