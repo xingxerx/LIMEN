@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "limen"
+version = "0.1.0a1"
+description = "A physics-aware compiler stack for translating classical optimization problems into native quantum and analog substrates."
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.10"
+keywords = [
+  "quantum computing",
+  "optimization",
+  "QUBO",
+  "compiler",
+  "quantum annealing",
+  "physics-native computing",
+]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Science/Research",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Topic :: Software Development :: Compilers",
+]
+dependencies = []
+
+[project.optional-dependencies]
+pyqubo = ["pyqubo>=1.4"]
+dwave = ["dwave-ocean-sdk>=6.0"]
+ibm = ["qiskit>=1.0"]
+all = ["pyqubo>=1.4", "dwave-ocean-sdk>=6.0", "qiskit>=1.0"]
+
+[project.urls]
+"Homepage" = "https://github.com/xingxerx/LIMEN"
+"Bug Tracker" = "https://github.com/xingxerx/LIMEN/issues"
+"Documentation" = "https://github.com/xingxerx/LIMEN#readme"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["limen*"]
