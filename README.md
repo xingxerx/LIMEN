@@ -37,39 +37,60 @@ For every compiled problem, LIMEN produces a confidence bound not a proof of cor
 ## Architecture
 
 ```
-[ Domain Problem ]
-        │
-        ▼
-┌─────────────────────────────┐
-│ SEMANTIC FRONTEND           │
-│ PyQUBO · OpenFermion · PDE  │
-└─────────────┬───────────────┘
-              │
-              ▼
-┌─────────────────────────────┐
-│ LOGICAL GRAPH IR            │
-│ Hardware-agnostic           │
-│ Deterministic normal form   │
-└─────────────┬───────────────┘
-              │
-              ▼
-┌─────────────────────────────┐
-│ LEXICOGRAPHIC COMPILER      │
-│ Embedding → Penalty solve   │
-│ Fixed seed · Single pass    │
-└─────────────┬───────────────┘
-              │
-              ▼
-┌─────────────────────────────┐
-│ PROBABILISTIC VALIDATOR     │
-│ Small-instance regression   │
-│ Distribution matching       │
-│ Confidence bounds           │
-└─────────────┬───────────────┘
-              │
-              ▼
-      [ Physical Execution ]
-      D-Wave · IBM · Simulator
+                    [ Domain Problem ]
+                            │
+                            ▼
+                ┌─────────────────────────────┐
+                │ SEMANTIC FRONTEND           │
+                │ PyQUBO · OpenFermion · PDE  │
+                └─────────────┬───────────────┘
+                              │  LogicalGraph IR
+                              ▼
+                ┌─────────────────────────────┐
+                │ LEXICOGRAPHIC COMPILER      │
+                │ Deterministic · Fixed seed  │
+                │ Greedy minor-embedding      │
+                └─────────────┬───────────────┘
+                              │  PhysicalEncoding
+                              ▼
+                ┌─────────────────────────────┐
+                │ PROBABILISTIC VALIDATOR     │
+                │ Brute-force small instances │
+                │ Confidence bounds           │
+                └──────┬──────────────────────┘
+                       │
+          ┌────────────┴────────────────────────┐
+          │  open-loop path                     │  co-design path
+          ▼                                     ▼
+┌──────────────────┐             ┌───────────────────────────┐
+│ PHYSICAL         │             │ STACKELBERG CO-DESIGN LOOP│
+│ EXECUTION        │             │ Rust core (limen_core)    │
+│ D-Wave · IBM     │             │ κ scoring · stability     │
+│ Simulator        │             │ Adaptive learning rate    │
+└──────────────────┘             └────────────┬──────────────┘
+                                              │  optimised
+                                              │  PhysicalEncoding
+                                              ▼
+                                ┌───────────────────────────┐
+                                │ PORTFOLIO COMPILER        │
+                                │ Multi-backend ranking     │
+                                │ Runtime switching         │
+                                └────────────┬──────────────┘
+                                             │
+                                             ▼
+                                ┌───────────────────────────┐
+                                │ HAMILTONIAN IR            │
+                                │ Z-basis Ising mapping     │
+                                │ Substrate-agnostic        │
+                                └────────────┬──────────────┘
+                                             │
+                              ┌──────────────┴──────────────┐
+                              ▼                             ▼
+                  ┌────────────────────┐      ┌─────────────────────┐
+                  │ NEUTRAL-ATOM STUB  │      │   PHOTONIC STUB     │
+                  │ Rydberg blockade   │      │   CV optical        │
+                  │ [pending theorem]  │      │   [pending theorem] │
+                  └────────────────────┘      └─────────────────────┘
 ```
 
 ---
