@@ -27,6 +27,10 @@ __all__ = [
     "run_codesign",
     "PortfolioResult",
     "compile_portfolio",
+    "HamiltonianIR",
+    "HamiltonianTerm",
+    "SubstrateType",
+    "from_physical_encoding",
 ]
 
 
@@ -43,5 +47,18 @@ def __getattr__(name: str):
             "run_codesign": run_codesign,
             "PortfolioResult": PortfolioResult,
             "compile_portfolio": compile_portfolio,
+        }[name]
+    if name in ("HamiltonianIR", "HamiltonianTerm", "SubstrateType", "from_physical_encoding"):
+        from limen.analog.hamiltonian import (
+            HamiltonianIR,
+            HamiltonianTerm,
+            SubstrateType,
+            from_physical_encoding,
+        )
+        return {
+            "HamiltonianIR": HamiltonianIR,
+            "HamiltonianTerm": HamiltonianTerm,
+            "SubstrateType": SubstrateType,
+            "from_physical_encoding": from_physical_encoding,
         }[name]
     raise AttributeError(f"module 'limen' has no attribute {name!r}")
