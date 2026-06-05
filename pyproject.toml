@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
 
 [project]
 name = "limen"
@@ -42,6 +42,6 @@ all = ["pyqubo>=1.4", "dwave-ocean-sdk>=6.0", "qiskit>=1.0"]
 "Bug Tracker" = "https://github.com/xingxerx/LIMEN/issues"
 "Documentation" = "https://github.com/xingxerx/LIMEN#readme"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["limen*"]
+[tool.maturin]
+module-name = "limen_core"
+features = ["pyo3/extension-module"]

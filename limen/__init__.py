@@ -23,4 +23,25 @@ __all__ = [
     "validate",
     "from_qubo_dict",
     "from_pyqubo",
+    "CoDesignResult",
+    "run_codesign",
+    "PortfolioResult",
+    "compile_portfolio",
 ]
+
+
+def __getattr__(name: str):
+    if name in ("CoDesignResult", "run_codesign", "PortfolioResult", "compile_portfolio"):
+        from limen.codesign import (
+            CoDesignResult,
+            PortfolioResult,
+            compile_portfolio,
+            run_codesign,
+        )
+        return {
+            "CoDesignResult": CoDesignResult,
+            "run_codesign": run_codesign,
+            "PortfolioResult": PortfolioResult,
+            "compile_portfolio": compile_portfolio,
+        }[name]
+    raise AttributeError(f"module 'limen' has no attribute {name!r}")
