@@ -166,7 +166,11 @@ The patent grant clause is intentional. Quantum computing is a patent-dense fiel
 
 ## Status
 
-**v0.1.0 — Phase 1 complete.** Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend adapters are all shipped and tested. 11 tests passing.
+**v0.2.0 — Phase 1 complete · Phase 2 in progress.**
+Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend
+adapters shipped and tested. Stackelberg co-design loop operational with
+Rust-backed κ scoring, stability-penalised learning rate, and portfolio
+compilation across backend slots. 17 tests passing.
 
 If you are building in this space and want to collaborate, open an issue.
 

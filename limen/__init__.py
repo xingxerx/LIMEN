@@ -10,7 +10,7 @@ from limen.core.ir import Interaction, LogicalGraph, Variable
 from limen.frontends.pyqubo import from_pyqubo, from_qubo_dict
 from limen.validator.validator import ValidationResult, validate
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Variable",
