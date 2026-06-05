@@ -51,6 +51,7 @@ class CoDesignResult:
     encoding: PhysicalEncoding
     score: Any
     kappa: float
+    kappa_std: float
     iterations: int
     chain_strength_history: list[float]
     confidence_history: list[float]
@@ -162,6 +163,7 @@ def run_codesign(
         encoding=current_encoding,
         score=best_score,
         kappa=best_score.kappa,
+        kappa_std=best_score.kappa_std,
         iterations=len(confidences),
         chain_strength_history=chain_strength_history,
         confidence_history=confidences,
@@ -170,5 +172,6 @@ def run_codesign(
             "target_kappa": target_kappa,
             "max_iterations": max_iterations,
             "learning_rate": learning_rate,
+            "kappa_std": best_score.kappa_std,
         },
     )
