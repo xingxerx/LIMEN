@@ -111,7 +111,7 @@ class LogicalGraph:
         errors: list[str] = []
         known = {v.name for v in self.variables}
 
-        seen: set[tuple[str, str]] = set()
+        seen: set[frozenset[str]] = set()
         for idx, ix in enumerate(self.interactions):
             if ix.i not in known:
                 errors.append(
@@ -121,7 +121,7 @@ class LogicalGraph:
                 errors.append(
                     f"Interaction[{idx}]: unknown variable '{ix.j}'"
                 )
-            key = (ix.i, ix.j)
+            key = frozenset([ix.i, ix.j])
             if key in seen:
                 errors.append(
                     f"Interaction[{idx}]: duplicate interaction ({ix.i!r}, {ix.j!r})"
