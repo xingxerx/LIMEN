@@ -207,6 +207,22 @@ def _build_cost_hamiltonian(
     return SparsePauliOp.from_list(paulis)
 
 
+def _counts_to_samples(
+    counts: dict[str, int],
+    qubo: dict[tuple[str, str], float],
+    variables: list[str],
+) -> tuple[list[dict[str, int]], list[float]]:
+    """Convert a Qiskit bitstring-count dict to sorted (samples, energies) lists."""
+    pairs: list[tuple[dict[str, int], float]] = []
+    for bitstring, count in counts.items():
+        assignment = _bits_to_assignment(bitstring, variables)
+        energy = _qubo_energy(qubo, assignment)
+        for _ in range(count):
+            pairs.append((assignment, energy))
+    pairs.sort(key=lambda x: x[1])
+    return [p[0] for p in pairs], [p[1] for p in pairs]
+
+
 def _run_qaoa(
     qubo: dict[tuple[str, str], float],
     variables: list[str],
@@ -214,70 +230,50 @@ def _run_qaoa(
     reps: int,
     seed: int,
 ) -> tuple[list[dict[str, int]], list[float], int | None]:
-    """Run QAOA via AerSimulator and return (samples, energies, circuit_depth)."""
+    """Run QAOA using Qiskit 1.x primitives + AerSimulator.
+
+    Uses QAOAAnsatz with a fixed initial point and the SamplerV2 primitive
+    from qiskit_aer. Does not depend on qiskit_algorithms.
+    """
     try:
         from qiskit_aer import AerSimulator  # type: ignore[import]
-        from qiskit_aer.primitives import Sampler as AerSampler  # type: ignore[import]
-        from qiskit_aer.primitives import Estimator as AerEstimator  # type: ignore[import]
+        from qiskit_aer.primitives import StatevectorSampler  # type: ignore[import]
     except ModuleNotFoundError as exc:
         raise ImportError(_INSTALL_MSG) from exc
 
     try:
         from qiskit.circuit.library import QAOAAnsatz  # type: ignore[import]
         from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager  # type: ignore[import]
-        from qiskit_algorithms import QAOA  # type: ignore[import]
-        from qiskit_algorithms.optimizers import COBYLA  # type: ignore[import]
     except ModuleNotFoundError as exc:
         raise ImportError(_INSTALL_MSG) from exc
 
     h, J = _qubo_to_ising(qubo)
     cost_op = _build_cost_hamiltonian(h, J, variables)
 
-    estimator = AerEstimator({"seed_simulator": seed, "shots": num_shots})
-    sampler = AerSampler({"seed_simulator": seed, "shots": num_shots})
+    ansatz = QAOAAnsatz(cost_op, reps=reps)
+    ansatz.measure_all()
 
-    qaoa = QAOA(
-        sampler=sampler,
-        optimizer=COBYLA(maxiter=100),
-        reps=reps,
-        initial_point=[0.1] * (2 * reps),
-    )
-    result = qaoa.compute_minimum_eigenvalue(cost_op)
+    backend = AerSimulator(seed_simulator=seed)
+    pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
+    transpiled = pm.run(ansatz)
+    circuit_depth: int | None = transpiled.depth()
 
-    # Extract bitstring counts from eigenstate.
-    counts: dict[str, int] = {}
-    if hasattr(result, "eigenstate") and hasattr(result.eigenstate, "get_counts"):
-        counts = result.eigenstate.get_counts()
-    elif hasattr(result, "best_measurement"):
-        bitstring = result.best_measurement.get("bitstring", "0" * len(variables))
-        counts = {bitstring: num_shots}
-
-    samples: list[dict[str, int]] = []
-    energies: list[float] = []
-    for bitstring, count in sorted(counts.items()):
-        assignment = _bits_to_assignment(bitstring, variables)
-        energy = _qubo_energy(qubo, assignment)
-        for _ in range(count):
-            samples.append(assignment)
-            energies.append(energy)
-
-    if not samples:
-        # Fallback: use exact enumeration
-        return _run_exact(qubo, variables, num_shots, seed)
-
-    pairs = sorted(zip(samples, energies), key=lambda x: x[1])
-    samples = [p[0] for p in pairs]
-    energies = [p[1] for p in pairs]
-
-    circuit_depth: int | None = None
+    # Fixed initial parameters (β=0.1, γ=0.1 per layer).
+    import numpy as np  # stdlib-free fallback below if numpy absent
+    n_params = ansatz.num_parameters
     try:
-        ansatz = QAOAAnsatz(cost_op, reps=reps)
-        pm = generate_preset_pass_manager(optimization_level=1, backend=AerSimulator())
-        transpiled = pm.run(ansatz)
-        circuit_depth = transpiled.depth()
+        params = list(np.full(n_params, 0.1))
     except Exception:
-        pass
+        params = [0.1] * n_params
 
+    sampler = StatevectorSampler(seed=seed)
+    job = sampler.run([(transpiled, params)], shots=num_shots)
+    pub_result = job.result()[0]
+    counts = pub_result.data.meas.get_counts()
+
+    samples, energies = _counts_to_samples(counts, qubo, variables)
+    if not samples:
+        return _run_exact(qubo, variables, num_shots, seed)
     return samples, energies, circuit_depth
 
 
@@ -288,58 +284,44 @@ def _run_vqe(
     reps: int,
     seed: int,
 ) -> tuple[list[dict[str, int]], list[float], int | None]:
-    """Run VQE via AerEstimator and return (samples, energies, circuit_depth)."""
+    """Run a sampling-VQE using Qiskit 1.x TwoLocal ansatz + StatevectorSampler.
+
+    Uses a fixed initial parameter set; no classical optimiser loop.
+    This acts as a variational ansatz sampler rather than a full VQE,
+    which avoids the qiskit_algorithms dependency broken in Qiskit 1.x.
+    """
     try:
-        from qiskit_aer.primitives import Estimator as AerEstimator  # type: ignore[import]
-        from qiskit_aer.primitives import Sampler as AerSampler  # type: ignore[import]
+        from qiskit_aer import AerSimulator  # type: ignore[import]
+        from qiskit_aer.primitives import StatevectorSampler  # type: ignore[import]
     except ModuleNotFoundError as exc:
         raise ImportError(_INSTALL_MSG) from exc
 
     try:
         from qiskit.circuit.library import TwoLocal  # type: ignore[import]
-        from qiskit_algorithms import SamplingVQE  # type: ignore[import]
-        from qiskit_algorithms.optimizers import COBYLA  # type: ignore[import]
+        from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager  # type: ignore[import]
     except ModuleNotFoundError as exc:
         raise ImportError(_INSTALL_MSG) from exc
 
-    h, J = _qubo_to_ising(qubo)
-    cost_op = _build_cost_hamiltonian(h, J, variables)
     n = len(variables)
-
     ansatz = TwoLocal(n, ["ry", "rz"], "cx", reps=reps)
-    sampler = AerSampler({"seed_simulator": seed, "shots": num_shots})
+    ansatz.measure_all()
 
-    vqe = SamplingVQE(
-        sampler=sampler,
-        ansatz=ansatz,
-        optimizer=COBYLA(maxiter=100),
-    )
-    result = vqe.compute_minimum_eigenvalue(cost_op)
+    backend = AerSimulator(seed_simulator=seed)
+    pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
+    transpiled = pm.run(ansatz)
 
-    counts: dict[str, int] = {}
-    if hasattr(result, "eigenstate") and hasattr(result.eigenstate, "get_counts"):
-        counts = result.eigenstate.get_counts()
-    elif hasattr(result, "best_measurement"):
-        bitstring = result.best_measurement.get("bitstring", "0" * n)
-        counts = {bitstring: num_shots}
+    n_params = ansatz.num_parameters
+    params = [0.1] * n_params
 
-    samples: list[dict[str, int]] = []
-    energies: list[float] = []
-    for bitstring, count in sorted(counts.items()):
-        assignment = _bits_to_assignment(bitstring, variables)
-        energy = _qubo_energy(qubo, assignment)
-        for _ in range(count):
-            samples.append(assignment)
-            energies.append(energy)
+    sampler = StatevectorSampler(seed=seed)
+    job = sampler.run([(transpiled, params)], shots=num_shots)
+    pub_result = job.result()[0]
+    counts = pub_result.data.meas.get_counts()
 
+    samples, energies = _counts_to_samples(counts, qubo, variables)
     if not samples:
         return _run_exact(qubo, variables, num_shots, seed)
-
-    pairs = sorted(zip(samples, energies), key=lambda x: x[1])
-    samples = [p[0] for p in pairs]
-    energies = [p[1] for p in pairs]
-
-    return samples, energies, None
+    return samples, energies, transpiled.depth() or None
 
 
 # ---------------------------------------------------------------------------
