@@ -16,16 +16,32 @@ pub struct EquilibriumScore {
     /// Number of solver iterations taken to reach this score.
     #[pyo3(get)]
     pub iterations: usize,
+    /// Standard deviation of κ across all scored iterations (0.0 if < 2).
+    #[pyo3(get)]
+    pub kappa_std: f64,
 }
 
 #[pymethods]
 impl EquilibriumScore {
     fn __repr__(&self) -> String {
         format!(
-            "EquilibriumScore(kappa={:.4}, confidence={:.4}, energy_gap={:.4}, iterations={})",
-            self.kappa, self.confidence, self.energy_gap, self.iterations
+            "EquilibriumScore(kappa={:.4}, confidence={:.4}, energy_gap={:.4}, kappa_std={:.4}, iterations={})",
+            self.kappa, self.confidence, self.energy_gap, self.kappa_std, self.iterations
         )
     }
+}
+
+/// Compute the standard deviation of a slice of κ values.
+///
+/// Returns 0.0 if fewer than 2 observations are provided.
+pub fn compute_stability(scores: &[f64]) -> f64 {
+    let n = scores.len();
+    if n < 2 {
+        return 0.0;
+    }
+    let mean = scores.iter().sum::<f64>() / n as f64;
+    let variance = scores.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+    variance.sqrt()
 }
 
 /// Compute an EquilibriumScore from raw validator statistics.
@@ -40,6 +56,7 @@ pub fn compute(
     second_best_energy: f64,
     chain_break_fraction: f64,
     iterations: usize,
+    kappa_std: f64,
 ) -> EquilibriumScore {
     let gap_term = (second_best_energy - best_energy).abs().min(10.0) / 10.0;
     let cbf_penalty = 1.0 - chain_break_fraction.clamp(0.0, 1.0);
@@ -51,5 +68,6 @@ pub fn compute(
         confidence,
         energy_gap,
         iterations,
+        kappa_std,
     }
 }

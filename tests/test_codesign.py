@@ -78,6 +78,46 @@ def test_run_codesign_returns_result():
     assert isinstance(result.converged, bool)
 
 
+def test_kappa_std_zero_for_single_iteration():
+    """kappa_std must be 0.0 when only one iteration is provided."""
+    solver = StackelbergSolver(0.85, 10, 0.1)
+    _, score = solver.solve(
+        confidences=[0.8],
+        best_energies=[-2.0],
+        second_best_energies=[-1.0],
+        chain_break_fractions=[0.0],
+        current_chain_strength=2.0,
+    )
+    assert score.kappa_std == 0.0
+
+
+def test_oscillating_kappa_reduces_effective_lr():
+    """Oscillating confidence must produce a smaller chain-strength increase than stable."""
+    current_cs = 2.0
+
+    solver_stable = StackelbergSolver(target_kappa=0.99, max_iterations=5, learning_rate=0.2)
+    cs_stable, _ = solver_stable.solve(
+        confidences=[0.9] * 5,
+        best_energies=[-2.0] * 5,
+        second_best_energies=[-1.0] * 5,
+        chain_break_fractions=[0.0] * 5,
+        current_chain_strength=current_cs,
+    )
+
+    solver_osc = StackelbergSolver(target_kappa=0.99, max_iterations=5, learning_rate=0.2)
+    cs_oscillating, _ = solver_osc.solve(
+        confidences=[0.9, 0.1, 0.9, 0.1, 0.9],
+        best_energies=[-2.0] * 5,
+        second_best_energies=[-1.0] * 5,
+        chain_break_fractions=[0.0] * 5,
+        current_chain_strength=current_cs,
+    )
+
+    assert cs_stable > current_cs
+    assert cs_oscillating > current_cs
+    assert cs_oscillating <= cs_stable
+
+
 def test_compile_portfolio_ranks_candidates():
     """compile_portfolio produces sorted candidates with the best first."""
     encoding = _make_encoding()

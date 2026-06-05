@@ -5,6 +5,8 @@ use crate::scoring::{self, EquilibriumScore};
 ///
 /// Scores a history of validation runs and recommends a chain strength
 /// adjustment to drive the encoding toward a target calibration margin κ.
+/// When κ is oscillating the effective learning rate is reduced proportionally
+/// to the κ standard deviation, preventing overshooting.
 #[pyclass]
 pub struct StackelbergSolver {
     /// Convergence target for κ.
@@ -13,7 +15,7 @@ pub struct StackelbergSolver {
     /// Maximum number of iterations before stopping.
     #[pyo3(get)]
     pub max_iterations: usize,
-    /// Multiplicative step size for chain-strength adjustment.
+    /// Base multiplicative step size for chain-strength adjustment.
     #[pyo3(get)]
     pub learning_rate: f64,
 }
@@ -31,8 +33,12 @@ impl StackelbergSolver {
 
     /// Score each iteration and return (recommended_chain_strength, best_score).
     ///
+    /// The effective learning rate is reduced when κ oscillates:
+    ///   stability_penalty = (kappa_std * 5.0).clamp(0.0, 0.9)
+    ///   effective_lr      = learning_rate * (1.0 - stability_penalty)
+    ///
     /// If the best κ already meets target_kappa the chain strength is returned
-    /// unchanged. Otherwise it is scaled up by `learning_rate * (1 - best_kappa)`.
+    /// unchanged. Otherwise it is scaled up by `effective_lr * (1 - best_kappa)`.
     pub fn solve(
         &self,
         confidences: Vec<f64>,
@@ -43,31 +49,46 @@ impl StackelbergSolver {
     ) -> (f64, EquilibriumScore) {
         let n = confidences.len();
 
-        let mut best_score = scoring::compute(
-            *confidences.first().unwrap_or(&0.0),
-            *best_energies.first().unwrap_or(&0.0),
-            *second_best_energies.first().unwrap_or(&0.0),
-            *chain_break_fractions.first().unwrap_or(&0.0),
-            0,
-        );
+        // First pass: compute all per-iteration scores (kappa_std not yet known).
+        let mut scores: Vec<EquilibriumScore> = (0..n)
+            .map(|i| {
+                scoring::compute(
+                    confidences[i],
+                    best_energies[i],
+                    second_best_energies[i],
+                    chain_break_fractions[i],
+                    i,
+                    0.0, // placeholder; overwritten below
+                )
+            })
+            .collect();
 
-        for i in 1..n {
-            let score = scoring::compute(
-                confidences[i],
-                best_energies[i],
-                second_best_energies[i],
-                chain_break_fractions[i],
-                i,
-            );
-            if score.kappa > best_score.kappa {
-                best_score = score;
-            }
+        // Compute κ stability across all iterations.
+        let kappa_values: Vec<f64> = scores.iter().map(|s| s.kappa).collect();
+        let kappa_std = scoring::compute_stability(&kappa_values);
+
+        // Find index of best kappa, then stamp kappa_std on all scores.
+        let best_idx = scores
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.kappa.partial_cmp(&b.1.kappa).unwrap())
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+
+        for score in scores.iter_mut() {
+            score.kappa_std = kappa_std;
         }
+
+        let best_score = scores[best_idx].clone();
+
+        // Stability-penalised learning rate.
+        let stability_penalty = (kappa_std * 5.0).clamp(0.0, 0.9);
+        let effective_lr = self.learning_rate * (1.0 - stability_penalty);
 
         let recommended = if best_score.kappa >= self.target_kappa {
             current_chain_strength
         } else {
-            let adjustment = self.learning_rate * (1.0 - best_score.kappa);
+            let adjustment = effective_lr * (1.0 - best_score.kappa);
             current_chain_strength * (1.0 + adjustment)
         };
 
