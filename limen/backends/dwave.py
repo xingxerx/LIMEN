@@ -46,6 +46,8 @@ class DWaveResult:
             (may be an empty dict when using the simulator).
         best_assignment: The lowest-energy sample as a variable→value dict.
         best_energy: The energy of best_assignment.
+        chain_break_fraction: Mean chain-break fraction across all reads.
+            Non-zero only when using a real QPU (0.0 for the simulator).
     """
 
     samples: list[dict[str, int]]
@@ -53,6 +55,7 @@ class DWaveResult:
     timing: dict[str, Any]
     best_assignment: dict[str, int]
     best_energy: float
+    chain_break_fraction: float = 0.0
 
 
 def _import_bqm():
@@ -142,10 +145,59 @@ def run_dwave(
     samples = [dict(s) for s, _ in pairs]
     energies = [float(e) for _, e in pairs]
 
+    # Chain break fraction is available from QPU samplesets only.
+    cbf = 0.0
+    if use_qpu:
+        try:
+            cbf_values = sampleset.record.chain_break_fraction
+            if len(cbf_values) > 0:
+                cbf = float(sum(cbf_values) / len(cbf_values))
+        except AttributeError:
+            pass
+
     return DWaveResult(
         samples=samples,
         energies=energies,
         timing=dict(sampleset.info),
         best_assignment={k: int(v) for k, v in samples[0].items()},
         best_energy=energies[0],
+        chain_break_fraction=cbf,
     )
+
+
+def dwave_chain_break_fn(
+    num_reads: int = 100,
+    use_qpu: bool = False,
+    qpu_endpoint: str | None = None,
+    qpu_token: str | None = None,
+) -> "Callable[[PhysicalEncoding], float]":
+    """Return a chain_break_fraction_fn suitable for run_codesign.
+
+    The returned callable submits the encoding to a D-Wave sampler each
+    iteration and extracts the mean chain-break fraction. With use_qpu=False
+    (the default) this always returns 0.0; set use_qpu=True when Leap
+    credentials are available.
+
+    Args:
+        num_reads: Samples per iteration (kept low to reduce QPU time).
+        use_qpu: Route through a real D-Wave QPU instead of the simulator.
+        qpu_endpoint: D-Wave Leap endpoint URL.
+        qpu_token: D-Wave Leap API token.
+
+    Returns:
+        A callable (PhysicalEncoding) → float for use as the
+        chain_break_fraction_fn argument of run_codesign.
+    """
+    from typing import Callable as _Callable
+
+    def _fn(encoding: PhysicalEncoding) -> float:
+        result = run_dwave(
+            encoding,
+            num_reads=num_reads,
+            use_qpu=use_qpu,
+            qpu_endpoint=qpu_endpoint,
+            qpu_token=qpu_token,
+        )
+        return result.chain_break_fraction
+
+    return _fn

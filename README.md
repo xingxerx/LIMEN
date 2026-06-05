@@ -114,15 +114,18 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 - [x] Probabilistic validator (small-instance classical verification)
 - [x] IBM Qiskit backend adapter
 
-### Phase 2 — Co-Design Loop (In Progress)
-- [-] Stackelberg co-design loop (joint penalty + embedding optimization)
-- [-] Robust equilibrium selection with calibration margin
-- [-] Portfolio compilation with runtime switching conditions
+### Phase 2 — Co-Design Loop ✓
+- [x] Stackelberg co-design loop (joint penalty + embedding optimization)
+- [x] Robust equilibrium selection with calibration margin
+- [x] Portfolio compilation with runtime switching conditions
+- [x] Chain-break fraction wired up (`chain_break_fraction_fn` callback; populated from D-Wave QPU via `dwave_chain_break_fn`)
 
-### Phase 3 — Analog Interface (In Progress)
-- [-] Hamiltonian IR interface specification (placeholder layer)
-- [-] Constructive universality theorem integration (pending research)
-- [-] Neutral-atom and photonic backend stubs
+### Phase 3 — Analog Interface
+- [x] Hamiltonian IR interface specification
+- [x] Classical Ising simulation backend (exact diagonalisation, ≤ 20 sites)
+- [x] Neutral-atom heuristic backend (van der Waals layout, Rydberg parameters)
+- [x] Photonic GBS-inspired backend (Arrazola-Bromley adjacency encoding)
+- [ ] Constructive universality theorem (pending research — see limen/docs/architecture.md)
 
 ---
 
