@@ -98,10 +98,10 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 - [-] Robust equilibrium selection with calibration margin
 - [-] Portfolio compilation with runtime switching conditions
 
-### Phase 3 — Analog Interface
-- [ ] Hamiltonian IR interface specification (placeholder layer)
-- [ ] Constructive universality theorem integration (pending research)
-- [ ] Neutral-atom and photonic backend stubs
+### Phase 3 — Analog Interface (In Progress)
+- [-] Hamiltonian IR interface specification (placeholder layer)
+- [-] Constructive universality theorem integration (pending research)
+- [-] Neutral-atom and photonic backend stubs
 
 ---
 
