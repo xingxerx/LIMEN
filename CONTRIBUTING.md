@@ -1,6 +1,6 @@
 # Contributing to LIMEN
 
-LIMEN is early-stage infrastructure. The most valuable contributions right now fall into three categories — engineering (new backends, validator improvements, problem formulations), research (the constructive universality theorem for analog substrates), and documentation.
+LIMEN is early-stage infrastructure. The most valuable contributions right now fall into three categories engineering (new backends, validator improvements, problem formulations), research (the constructive universality theorem for analog substrates), and documentation.
 
 ## Getting Started
 
@@ -28,7 +28,7 @@ Verify the setup:
 python -c "import limen; from limen_core import StackelbergSolver; print(limen.__version__)"
 ```
 
-**Windows:** the Rust extension builds cleanly under WSL (Ubuntu). PowerShell 7 with the Rust toolchain installed natively also works — run `maturin develop` inside the repo root.
+**Windows:** the Rust extension builds cleanly under WSL (Ubuntu). PowerShell 7 with the Rust toolchain installed natively also works run `maturin develop` inside the repo root.
 
 Optional SDK installs for hardware backend tests:
 
@@ -57,7 +57,7 @@ Test files and what they cover:
 
 ## Adding a New Backend Adapter
 
-A backend adapter converts a `PhysicalEncoding` into hardware-specific instructions and returns a result dataclass. The contract is:
+A backend adapter converts a `PhysicalEncoding` into hardware specific instructions and returns a result dataclass. The contract is:
 
 0. Create `limen/backends/<name>.py`
 1. Guard all SDK imports inside `try/except ImportError` with a clear install message directed at the user
@@ -70,7 +70,7 @@ Reference implementations: `limen/backends/dwave.py` and `limen/backends/qiskit_
 
 ## Adding a New Frontend Adapter
 
-A frontend adapter converts a domain-specific problem representation into a `LogicalGraph`. The contract is:
+A frontend adapter converts a domain specific problem representation into a `LogicalGraph`. The contract is:
 
 0. Create `limen/frontends/<name>.py`
 1. Import any optional dependencies lazily with a clear `ImportError` message
@@ -83,13 +83,13 @@ Reference implementation: `limen/frontends/pyqubo.py`.
 
 The analog substrate layer (`limen/analog/`) is waiting for one thing: a constructive universality theorem.
 
-The current `from_physical_encoding()` function produces a correct Z-basis Ising Hamiltonian from any QUBO. What does not yet exist is a proof — and corresponding algorithm — that maps this Hamiltonian onto:
+The current `from_physical_encoding()` function produces a correct Z-basis Ising Hamiltonian from any QUBO. What does not yet exist is a proof and corresponding algorithm that maps this Hamiltonian onto:
 
 - **Neutral-atom arrays:** Rydberg blockade Hamiltonians with spatial layout constraints (blockade radius, connectivity geometry, available gate operations)
-- **Photonic processors:** continuous-variable Hamiltonians (Gaussian boson sampling, Kerr interactions, homodyne measurement readout)
-- **BEC simulators:** Bose-Einstein condensate interaction Hamiltonians with tunable scattering lengths
+- **Photonic processors:** continuous variable Hamiltonians (Gaussian boson sampling, Kerr interactions, homodyne measurement readout)
+- **BEC simulators:** Bose Einstein condensate interaction Hamiltonians with tunable scattering lengths
 
-A contribution here is not code — it is a proof that such a mapping exists and is constructive, plus an implementation of the mapping algorithm as a backend adapter. The interface contract is already defined in `limen/analog/hamiltonian.py`. A valid research contribution would implement `run_neutral_atom()` or `run_photonic()` by replacing the `NotImplementedError` with a real compilation algorithm.
+A contribution here is not code it is a proof that such a mapping exists and is constructive, plus an implementation of the mapping algorithm as a backend adapter. The interface contract is already defined in `limen/analog/hamiltonian.py`. A valid research contribution would implement `run_neutral_atom()` or `run_photonic()` by replacing the `NotImplementedError` with a real compilation algorithm.
 
 For the precise mathematical specification of what needs to be proved, see `limen/docs/architecture.md`.
 
@@ -103,4 +103,4 @@ One PR per logical change. PR titles follow the pattern `<scope>: <description>`
 
 ## License
 
-All contributions are Apache 2.0. The patent grant clause is intentional — quantum computing is a patent-dense field.
+All contributions are Apache 2.0. The patent grant clause is intentional quantum computing is a patent dense field.
