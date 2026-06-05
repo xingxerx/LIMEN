@@ -31,8 +31,10 @@ def _build_graph(
 
     variables = [Variable(name=n, domain="binary") for n in sorted(names)]
     interactions = [
-        Interaction(i=i, j=j, weight=float(w))
-        for (i, j), w in sorted(qubo_dict.items())
+        Interaction(i=min(i, j), j=max(i, j), weight=float(w))
+        for (i, j), w in sorted(
+            ((( min(k), max(k) ), v) for k, v in qubo_dict.items())
+        )
     ]
 
     graph = LogicalGraph(variables=variables, interactions=interactions, metadata=metadata)
