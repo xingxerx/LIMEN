@@ -86,12 +86,12 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 
 ## Roadmap
 
-### Phase 1 — Core (Now)
-- [ ] Logical graph IR schema
-- [ ] PyQUBO frontend adapter
-- [ ] Lexicographic compiler (D-Wave backend)
-- [ ] Probabilistic validator (small-instance classical verification)
-- [ ] IBM Qiskit backend adapter
+### Phase 1 — Core ✓
+- [x] Logical graph IR schema
+- [x] PyQUBO frontend adapter
+- [x] Lexicographic compiler (D-Wave backend)
+- [x] Probabilistic validator (small-instance classical verification)
+- [x] IBM Qiskit backend adapter
 
 ### Phase 2 — Co-Design Loop
 - [ ] Stackelberg co-design loop (joint penalty + embedding optimization)
@@ -112,17 +112,17 @@ pip install limen
 ```
 
 ```python
-from limen import Problem, compile, validate
+from limen import from_qubo_dict, compile_lexicographic, default_hardware_graph, validate
 
-# Define your problem
-p = Problem.from_qubo({
-    ('x0', 'x0'): -1,
-    ('x1', 'x1'): -1,
-    ('x0', 'x1'):  2,
+# Define your problem as a QUBO dict
+graph = from_qubo_dict({
+    ('x0', 'x0'): -1.0,
+    ('x1', 'x1'): -1.0,
+    ('x0', 'x1'):  2.0,
 })
 
-# Compile to D-Wave
-encoding = compile(p, backend='dwave')
+# Compile to a physical encoding
+encoding = compile_lexicographic(graph, default_hardware_graph(4))
 
 # Validate confidence
 result = validate(encoding, runs=1000)
@@ -166,7 +166,7 @@ The patent grant clause is intentional. Quantum computing is a patent-dense fiel
 
 ## Status
 
-**Pre-alpha.** The architecture is defined. The core is being built. Nothing is stable yet.
+**v0.1.0 — Phase 1 complete.** Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend adapters are all shipped and tested. 11 tests passing.
 
 If you are building in this space and want to collaborate, open an issue.
 
