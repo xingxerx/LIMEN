@@ -101,7 +101,7 @@ LIMEN is not a quantum computing framework. It does not manage qubits, run circu
 
 LIMEN does not claim to solve NP-hard problems. It claims to translate them correctly and reproducibly onto hardware that attempts to solve them, and to give you a measurable signal about how much to trust the result.
 
-The analog substrate layer (BEC, photonic, continuous-variable) is defined as an interface — not yet implemented. The mathematics required for a constructive universality theorem on those substrates does not yet exist. When it does, LIMEN will be ready to receive it.
+The analog substrate layer (BEC, photonic, continuous-variable) is defined as an interface not yet implemented. The mathematics required for a constructive universality theorem on those substrates does not yet exist. When it does, LIMEN will be ready to receive it.
 
 ---
 
@@ -198,8 +198,8 @@ telemetry wired end-to-end, and portfolio compilation across backend slots.
 Analog interface layer implemented: classical Ising simulator (exact
 diagonalisation, ≤20 sites), neutral-atom heuristic backend (van der Waals
 layout, Rydberg parameters), photonic GBS backend (Arrazola-Bromley adjacency
-encoding). Constructive universality theorem pending research — formal
-specification in limen/docs/architecture.md. 49 tests passing.
+encoding). Constructive universality theorem pending research formal
+specification in limen/docs/architecture.md. 54 tests passing.
 
 If you are building in this space and want to collaborate, open an issue.
 
