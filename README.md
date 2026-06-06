@@ -190,11 +190,16 @@ The patent grant clause is intentional. Quantum computing is a patent-dense fiel
 
 ## Status
 
-**v0.2.0 — Phase 1 complete · Phase 2 in progress.**
+**v0.3.0 — Phase 1 complete, Phase 2 complete, Phase 3 substantially implemented.**
 Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend
 adapters shipped and tested. Stackelberg co-design loop operational with
-Rust-backed κ scoring, stability-penalised learning rate, and portfolio
-compilation across backend slots. 17 tests passing.
+Rust-backed κ scoring, stability-penalised learning rate, chain-break fraction
+telemetry wired end-to-end, and portfolio compilation across backend slots.
+Analog interface layer implemented: classical Ising simulator (exact
+diagonalisation, ≤20 sites), neutral-atom heuristic backend (van der Waals
+layout, Rydberg parameters), photonic GBS backend (Arrazola-Bromley adjacency
+encoding). Constructive universality theorem pending research — formal
+specification in limen/docs/architecture.md. 49 tests passing.
 
 If you are building in this space and want to collaborate, open an issue.
 
