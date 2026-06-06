@@ -113,6 +113,9 @@ class HardwareDeltaModel:
     def apply_detuning_correction(self, detunings: list[float]) -> list[float]:
         """Return corrected detunings with hardware offsets subtracted.
 
+        Delegates to the limen_core Rust extension when available; falls back
+        to a pure Python implementation otherwise.
+
         For each site i, the corrected value is detunings[i] minus
         drift.site_detuning_offsets.get(i, 0.0). Sites with no recorded
         offset are returned unchanged.
@@ -123,15 +126,24 @@ class HardwareDeltaModel:
         Returns:
             New list of pre-distorted detunings.
         """
-        return [
-            v - self.drift.site_detuning_offsets.get(i, 0.0)
-            for i, v in enumerate(detunings)
-        ]
+        try:
+            from limen_core import apply_detuning_correction as _rust_fn
+            offsets = list(self.drift.site_detuning_offsets.items())
+            return _rust_fn(detunings, offsets)
+        except ImportError:
+            # Pure Python fallback for environments without the Rust extension.
+            return [
+                d - self.drift.site_detuning_offsets.get(i, 0.0)
+                for i, d in enumerate(detunings)
+            ]
 
     def apply_coupling_correction(
         self, couplings: dict[tuple[int, int], float]
     ) -> dict[tuple[int, int], float]:
         """Return corrected couplings with scale errors divided out.
+
+        Delegates to the limen_core Rust extension when available; falls back
+        to a pure Python implementation otherwise.
 
         For each pair key, the corrected value is J / (1 + error), where
         error = drift.coupling_scale_errors.get(key, 0.0). The denominator
@@ -143,12 +155,17 @@ class HardwareDeltaModel:
         Returns:
             New dict of pre-distorted couplings.
         """
-        result: dict[tuple[int, int], float] = {}
-        for key, J in couplings.items():
-            error = self.drift.coupling_scale_errors.get(key, 0.0)
-            denominator = max(1.0 + error, 0.01)
-            result[key] = J / denominator
-        return result
+        try:
+            from limen_core import apply_coupling_correction as _rust_fn
+            errors = list(self.drift.coupling_scale_errors.items())
+            result_list = _rust_fn(list(couplings.items()), errors)
+            return dict(result_list)
+        except ImportError:
+            # Pure Python fallback.
+            return {
+                key: J / max(1.0 + self.drift.coupling_scale_errors.get(key, 0.0), 0.01)
+                for key, J in couplings.items()
+            }
 
     @classmethod
     def identity(

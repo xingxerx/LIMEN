@@ -180,3 +180,46 @@ def test_registry_list_devices_sorted():
     for dev_id in ("zeta", "alpha", "mu"):
         registry.register(HardwareDeltaModel.identity(dev_id, SubstrateType.BEC, 2))
     assert registry.list_devices() == ["alpha", "mu", "zeta"]
+
+
+# ---------------------------------------------------------------------------
+# Test 11: apply_detuning_correction matches pure Python fallback
+# ---------------------------------------------------------------------------
+
+def test_apply_detuning_correction_matches_fallback():
+    drift = DeviceDrift(site_detuning_offsets={0: 0.5, 1: -0.3, 2: 0.0})
+    model = HardwareDeltaModel(
+        device_id="dev-rust-det",
+        substrate=SubstrateType.NEUTRAL_ATOM,
+        drift=drift,
+        n_sites=3,
+    )
+    detunings = [1.0, 2.0, 3.0]
+    rust_result = model.apply_detuning_correction(detunings)
+    fallback = [
+        d - drift.site_detuning_offsets.get(i, 0.0)
+        for i, d in enumerate(detunings)
+    ]
+    assert rust_result == pytest.approx(fallback)
+
+
+# ---------------------------------------------------------------------------
+# Test 12: apply_coupling_correction matches pure Python fallback
+# ---------------------------------------------------------------------------
+
+def test_apply_coupling_correction_matches_fallback():
+    drift = DeviceDrift(coupling_scale_errors={(0, 1): 0.1, (1, 2): -0.05})
+    model = HardwareDeltaModel(
+        device_id="dev-rust-coup",
+        substrate=SubstrateType.NEUTRAL_ATOM,
+        drift=drift,
+        n_sites=3,
+    )
+    couplings = {(0, 1): 1.1, (1, 2): 2.0, (0, 2): 0.5}
+    rust_result = model.apply_coupling_correction(couplings)
+    fallback = {
+        key: J / max(1.0 + drift.coupling_scale_errors.get(key, 0.0), 0.01)
+        for key, J in couplings.items()
+    }
+    for key in couplings:
+        assert rust_result[key] == pytest.approx(fallback[key])
