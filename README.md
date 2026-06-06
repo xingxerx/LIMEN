@@ -199,7 +199,7 @@ Analog interface layer implemented: classical Ising simulator (exact
 diagonalisation, ≤20 sites), neutral-atom heuristic backend (van der Waals
 layout, Rydberg parameters), photonic GBS backend (Arrazola-Bromley adjacency
 encoding). Constructive universality theorem pending research — formal
-specification in limen/docs/architecture.md. 49 tests passing.
+specification in limen/docs/architecture.md. 54 tests passing.
 
 If you are building in this space and want to collaborate, open an issue.
 
