@@ -190,7 +190,8 @@ The patent grant clause is intentional. Quantum computing is a patent-dense fiel
 
 ## Status
 
-**v0.3.0 — Phase 1 complete, Phase 2 complete, Phase 3 substantially implemented.**
+**v0.3.0 — Phase 1 complete, Phase 2 complete, Phase 3 substantially implemented.
+Validated on real IBM quantum hardware (ibm_kingston, Heron R2, 156 qubits).**
 Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend
 adapters shipped and tested. Stackelberg co-design loop operational with
 Rust-backed κ scoring, stability-penalised learning rate, chain-break fraction

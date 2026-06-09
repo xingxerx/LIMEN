@@ -13,13 +13,8 @@
 # limitations under the License.
 """Tests for chain-break fraction wiring in the Stackelberg co-design loop."""
 
-import pytest
-
 from limen import compile_lexicographic, default_hardware_graph, from_qubo_dict
-
-limen_core = pytest.importorskip("limen_core", reason="limen_core not built")
-
-from limen.codesign.solver import run_codesign  # noqa: E402
+from limen.codesign.solver import run_codesign
 
 TRIVIAL_QUBO = {
     ("x0", "x0"): -1.0,

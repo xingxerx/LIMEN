@@ -29,6 +29,9 @@ try:
 
     _RUST_AVAILABLE = True
 except ImportError:
+    # Pure-Python reference port of the Rust solver (same semantics).
+    from limen.codesign._pyfallback import EquilibriumScore, StackelbergSolver
+
     _RUST_AVAILABLE = False
 
 
@@ -116,14 +119,11 @@ def run_codesign(
         A CoDesignResult describing the best encoding found and the full
         convergence history.
 
-    Raises:
-        ImportError: If the limen_core Rust extension is not installed.
+    Note:
+        Uses the limen_core Rust extension when built; otherwise falls back
+        to the pure-Python reference port in limen.codesign._pyfallback.
+        The backend used is recorded in result.metadata["solver_backend"].
     """
-    if not _RUST_AVAILABLE:
-        raise ImportError(
-            "limen_core Rust extension required. Run: maturin develop"
-        )
-
     solver = StackelbergSolver(target_kappa, max_iterations, learning_rate)
     current_encoding = encoding
 
@@ -184,5 +184,6 @@ def run_codesign(
             "max_iterations": max_iterations,
             "learning_rate": learning_rate,
             "kappa_std": best_score.kappa_std,
+            "solver_backend": "rust" if _RUST_AVAILABLE else "python",
         },
     )
