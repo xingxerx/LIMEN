@@ -45,4 +45,9 @@ all = ["pyqubo>=1.4", "dwave-ocean-sdk>=6.0", "qiskit>=1.0"]
 [tool.maturin]
 module-name = "limen_core"
 features = ["pyo3/extension-module"]
-python-packages = ["limen"]
+
+[tool.pyright]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+extraPaths = ["."]

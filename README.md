@@ -114,11 +114,10 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 - [x] Probabilistic validator (small-instance classical verification)
 - [x] IBM Qiskit backend adapter
 
-### Phase 2 — Co-Design Loop ✓
+### Phase 2 — Co-Design Loop (Complete)
 - [x] Stackelberg co-design loop (joint penalty + embedding optimization)
 - [x] Robust equilibrium selection with calibration margin
 - [x] Portfolio compilation with runtime switching conditions
-- [x] Chain-break fraction wired up (`chain_break_fraction_fn` callback; populated from D-Wave QPU via `dwave_chain_break_fn`)
 
 ### Phase 3 — Analog Interface
 - [x] Hamiltonian IR interface specification
@@ -190,7 +189,7 @@ The patent grant clause is intentional. Quantum computing is a patent-dense fiel
 
 ## Status
 
-**v0.3.0 — Phase 1 complete, Phase 2 complete, Phase 3 substantially implemented.**
+**v0.3.1 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Hardware validated.**
 Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend
 adapters shipped and tested. Stackelberg co-design loop operational with
 Rust-backed κ scoring, stability-penalised learning rate, chain-break fraction
@@ -198,8 +197,14 @@ telemetry wired end-to-end, and portfolio compilation across backend slots.
 Analog interface layer implemented: classical Ising simulator (exact
 diagonalisation, ≤20 sites), neutral-atom heuristic backend (van der Waals
 layout, Rydberg parameters), photonic GBS backend (Arrazola-Bromley adjacency
-encoding). Constructive universality theorem pending research formal
-specification in limen/docs/architecture.md. 54 tests passing.
+encoding), HardwareDeltaModel calibration layer.
+Pure-Python fallback for all Rust-backed paths. Constructive universality
+theorem pending research — formal specification in limen/docs/architecture.md.
+
+**First real hardware validation: IBM ibm_kingston (Heron R2, 156 qubits),
+June 9 2026. Benchmark results in benchmarks/RESULTS.md.**
+
+54+ tests passing across six test suites.
 
 If you are building in this space and want to collaborate, open an issue.
 

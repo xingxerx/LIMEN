@@ -1,5 +1,9 @@
 import unittest
-import limen_core
+
+import pytest
+
+limen_core = pytest.importorskip("limen_core", reason="limen_core Rust extension not installed")
+
 from limen.exceptions import SizeViolation
 
 class TestIsingSimulator(unittest.TestCase):

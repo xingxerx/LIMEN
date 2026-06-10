@@ -5,7 +5,6 @@ dist/
 build/
 *.egg-info/
 target/
+limen/
 .venv/
-limen/Lib/
-limen/Scripts/
-limen/pyvenv.cfg
+venv/

@@ -1,0 +1,111 @@
+{
+  "backend": "ibm_kingston",
+  "shots": 1000,
+  "qubo": [
+    [
+      [
+        "x0",
+        "x0"
+      ],
+      -1.0
+    ],
+    [
+      [
+        "x1",
+        "x1"
+      ],
+      -1.0
+    ],
+    [
+      [
+        "x0",
+        "x1"
+      ],
+      2.0
+    ]
+  ],
+  "baseline": {
+    "optimal_rate_pct": 49.2,
+    "counts": {
+      "00": 260,
+      "01": 274,
+      "10": 218,
+      "11": 248
+    },
+    "job_id": "d8ka7b32d42s73c9vc8g"
+  },
+  "codesign": {
+    "converged": false,
+    "kappa": 0.6864561518191191,
+    "kappa_std": 0.008444932641812121,
+    "iterations": 5,
+    "chain_strength_history": [
+      3.0,
+      3.0940631544542647,
+      3.1873258918697163,
+      3.2822643681381547,
+      3.3803529514078168
+    ],
+    "confidence_history": [
+      0.918,
+      0.892,
+      0.868,
+      0.91,
+      0.906
+    ],
+    "solver_backend": "python",
+    "qpu_history": [
+      {
+        "chain_strength": 3.0,
+        "cost_scale": 1.0,
+        "tvd": 0.012719240904404211,
+        "qpu_optimal_rate": 0.489,
+        "best_energy": -1.0,
+        "job_id": "d8ka7eb2d42s73c9vccg"
+      },
+      {
+        "chain_strength": 3.0940631544542647,
+        "cost_scale": 1.0313543848180882,
+        "tvd": 0.025022916970865144,
+        "qpu_optimal_rate": 0.501,
+        "best_energy": -1.0,
+        "job_id": "d8ka7hrnn5bs738qjncg"
+      },
+      {
+        "chain_strength": 3.1873258918697163,
+        "cost_scale": 1.062441963956572,
+        "tvd": 0.008676088323449696,
+        "qpu_optimal_rate": 0.471,
+        "best_energy": -1.0,
+        "job_id": "d8ka7ko32u0s73f8gqsg"
+      },
+      {
+        "chain_strength": 3.2822643681381547,
+        "cost_scale": 1.0940881227127182,
+        "tvd": 0.017369787861477456,
+        "qpu_optimal_rate": 0.462,
+        "best_energy": -1.0,
+        "job_id": "d8ka7o32d42s73c9vcn0"
+      },
+      {
+        "chain_strength": 3.3803529514078168,
+        "cost_scale": 1.1267843171359389,
+        "tvd": 0.026053436046238845,
+        "qpu_optimal_rate": 0.471,
+        "best_energy": -1.0,
+        "job_id": "d8ka7r032u0s73f8gr20"
+      }
+    ]
+  },
+  "final": {
+    "cost_scale": 1.1606221645329287,
+    "optimal_rate_pct": 46.2,
+    "counts": {
+      "01": 237,
+      "10": 225,
+      "11": 275,
+      "00": 263
+    },
+    "job_id": "d8ka7uj2d42s73c9vct0"
+  }
+}

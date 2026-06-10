@@ -26,7 +26,7 @@ the SDK installed; import errors surface at call time with a clear hint.
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from limen.core.compiler import PhysicalEncoding
 
@@ -368,7 +368,7 @@ def run_qiskit(
         except ModuleNotFoundError as exc:
             raise ImportError(_INSTALL_MSG) from exc
 
-        service = QiskitRuntimeService(channel="ibm_quantum", token=ibm_token)
+        service = QiskitRuntimeService(channel="ibm_quantum_platform", token=ibm_token)
         backend = service.backend(ibm_backend)
         sampler = SamplerV2(backend)
         # Runtime path falls through to exact as a structural placeholder —
@@ -404,3 +404,229 @@ def run_qiskit(
             "backend": backend_name,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Real IBM QPU path (QiskitRuntimeService + SamplerV2)
+# ---------------------------------------------------------------------------
+
+def _build_qaoa_ansatz(
+    qubo: dict[tuple[str, str], float],
+    variables: list[str],
+    reps: int,
+    cost_scale: float,
+) -> Any:
+    """Build a QAOAAnsatz for a QUBO with the cost Hamiltonian scaled.
+
+    cost_scale is the gate-model analog of the annealer's chain strength:
+    it scales the cost Hamiltonian energy (equivalently, the effective
+    QAOA γ), which is the lever the Stackelberg leader controls.
+    """
+    from qiskit.circuit.library import QAOAAnsatz  # type: ignore[import]
+
+    h, J = _qubo_to_ising(qubo)
+    cost_op = _build_cost_hamiltonian(h, J, variables) * cost_scale
+    return QAOAAnsatz(cost_op, reps=reps)
+
+
+def _ideal_distribution(ansatz: Any, params: list[float]) -> dict[str, float]:
+    """Noiseless bitstring distribution of a bound ansatz via statevector."""
+    from qiskit.quantum_info import Statevector  # type: ignore[import]
+
+    bound = ansatz.assign_parameters(params)
+    return {
+        bs: float(p)
+        for bs, p in Statevector(bound).probabilities_dict().items()
+    }
+
+
+def run_qiskit_qpu(
+    encoding: PhysicalEncoding,
+    token: str,
+    crn: str,
+    backend_name: str = "ibm_kingston",
+    shots: int = 1000,
+    reps: int = 1,
+    cost_scale: float = 1.0,
+) -> QiskitResult:
+    """Execute a PhysicalEncoding as a QAOA circuit on a real IBM QPU.
+
+    Builds a depth-`reps` QAOAAnsatz from the encoding's QUBO with the
+    cost Hamiltonian scaled by ``cost_scale``, transpiles it for the
+    target backend, and runs it via SamplerV2 with fixed parameters
+    (β=0.1, γ=0.1 per layer).
+
+    Args:
+        encoding: A compiled PhysicalEncoding from the LIMEN compiler.
+        token: IBM Quantum Platform API token.
+        crn: IBM Quantum service instance CRN.
+        backend_name: IBM backend identifier (default ibm_kingston).
+        shots: Number of measurement shots.
+        reps: Number of QAOA layers.
+        cost_scale: Multiplier applied to the cost Hamiltonian — the
+            gate-model analog of chain strength (scales effective γ).
+
+    Returns:
+        A QiskitResult with samples sorted by energy ascending. The raw
+        bitstring counts, job id, and ideal (noiseless) distribution of
+        the same circuit are stored in metadata.
+
+    Raises:
+        ImportError: If qiskit or qiskit-ibm-runtime is not installed.
+    """
+    try:
+        from qiskit_ibm_runtime import (  # type: ignore[import]
+            QiskitRuntimeService,
+            SamplerV2,
+        )
+        from qiskit.transpiler.preset_passmanagers import (  # type: ignore[import]
+            generate_preset_pass_manager,
+        )
+    except ModuleNotFoundError as exc:
+        raise ImportError(_INSTALL_MSG) from exc
+
+    qubo = encoding.qubo
+    variables: list[str] = sorted({name for pair in qubo for name in pair})
+
+    ansatz = _build_qaoa_ansatz(qubo, variables, reps, cost_scale)
+    params = [0.1] * ansatz.num_parameters
+    ideal = _ideal_distribution(ansatz, params)
+
+    measured = ansatz.copy()
+    measured.measure_all()
+
+    service = QiskitRuntimeService(
+        channel="ibm_quantum_platform", token=token, instance=crn
+    )
+    backend = service.backend(backend_name)
+    pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
+    transpiled = pm.run(measured)
+
+    sampler = SamplerV2(mode=backend)
+    job = sampler.run([(transpiled, params)], shots=shots)
+    pub_result = job.result()[0]
+    counts: dict[str, int] = pub_result.data.meas.get_counts()
+
+    samples, energies = _counts_to_samples(counts, qubo, variables)
+
+    return QiskitResult(
+        samples=samples,
+        energies=energies,
+        best_assignment={k: int(v) for k, v in samples[0].items()},
+        best_energy=float(energies[0]),
+        circuit_depth=transpiled.depth(),
+        metadata={
+            "algorithm": "qaoa",
+            "reps": reps,
+            "num_shots": shots,
+            "backend": backend_name,
+            "cost_scale": cost_scale,
+            "counts": counts,
+            "ideal_distribution": ideal,
+            "job_id": job.job_id(),
+        },
+    )
+
+
+def ibm_noise_fn(
+    token: str,
+    crn: str,
+    backend_name: str = "ibm_kingston",
+    shots: int = 1000,
+    reps: int = 1,
+    base_chain_strength: float | None = None,
+) -> Callable[[PhysicalEncoding], float]:
+    """Return a chain_break_fraction_fn for run_codesign backed by IBM QPU noise.
+
+    The gate-model analog of the D-Wave chain-break fraction: each call
+    runs the encoding's QAOA circuit on the QPU and returns the total
+    variation distance between the measured and ideal (noiseless)
+    bitstring distributions — a hardware-noise fraction in [0, 1] that
+    feeds the κ scoring's cbf term.
+
+    The encoding's chain strength is mapped to the circuit through the
+    cost-Hamiltonian scale: cost_scale = chain_strength / base_chain_strength,
+    so the Stackelberg leader's chain-strength moves change the physical
+    circuit just as they change annealer penalties.
+
+    The returned callable records per-iteration telemetry on its
+    ``history`` attribute (cost_scale, tvd, optimal rate, counts, job id).
+
+    Args:
+        token: IBM Quantum Platform API token.
+        crn: IBM Quantum service instance CRN.
+        backend_name: IBM backend identifier (default ibm_kingston).
+        shots: Shots per iteration.
+        reps: Number of QAOA layers.
+        base_chain_strength: Chain strength corresponding to cost_scale 1.0.
+            When None, captured from the first encoding seen.
+
+    Returns:
+        A callable (PhysicalEncoding) → float for the
+        chain_break_fraction_fn argument of run_codesign.
+    """
+    state: dict[str, Any] = {"base": base_chain_strength}
+    history: list[dict[str, Any]] = []
+
+    def _fn(encoding: PhysicalEncoding) -> float:
+        if state["base"] is None:
+            state["base"] = encoding.chain_strength
+        cost_scale = encoding.chain_strength / state["base"]
+
+        result = run_qiskit_qpu(
+            encoding,
+            token=token,
+            crn=crn,
+            backend_name=backend_name,
+            shots=shots,
+            reps=reps,
+            cost_scale=cost_scale,
+        )
+
+        counts: dict[str, int] = result.metadata["counts"]
+        ideal: dict[str, float] = result.metadata["ideal_distribution"]
+        total = sum(counts.values())
+        measured = {bs: cnt / total for bs, cnt in counts.items()}
+        all_bs = set(measured) | set(ideal)
+        tvd = 0.5 * sum(
+            abs(measured.get(bs, 0.0) - ideal.get(bs, 0.0)) for bs in all_bs
+        )
+
+        optimal_energy = min(
+            _qubo_energy(encoding.qubo, a)
+            for a in _enumerate_assignments(encoding.qubo)
+        )
+        optimal_rate = (
+            sum(1 for e in result.energies if abs(e - optimal_energy) < 1e-9)
+            / len(result.energies)
+            if result.energies
+            else 0.0
+        )
+
+        history.append(
+            {
+                "chain_strength": encoding.chain_strength,
+                "cost_scale": cost_scale,
+                "tvd": tvd,
+                "qpu_optimal_rate": optimal_rate,
+                "best_energy": result.best_energy,
+                "job_id": result.metadata["job_id"],
+            }
+        )
+        return tvd
+
+    _fn.history = history  # type: ignore[attr-defined]
+    return _fn
+
+
+def _enumerate_assignments(
+    qubo: dict[tuple[str, str], float],
+) -> "list[dict[str, int]]":
+    """All 2^n binary assignments over a QUBO's variables (n must be small)."""
+    from itertools import product as iproduct
+
+    variables = sorted({name for pair in qubo for name in pair})
+    return [
+        dict(zip(variables, bits))
+        for bits in iproduct((0, 1), repeat=len(variables))
+    ]
