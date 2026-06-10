@@ -47,8 +47,7 @@ module-name = "limen_core"
 features = ["pyo3/extension-module"]
 
 [tool.pyright]
-pythonVersion = "3.12"
-pythonPath = "C:/ProgramData/anaconda3/python.exe"
+pythonVersion = "3.13"
 venvPath = "."
 venv = ".venv"
 extraPaths = ["."]
