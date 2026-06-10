@@ -1,6 +1,65 @@
 use pyo3::prelude::*;
 use std::collections::HashMap;
 
+/// Compute the exact operator-norm of an Ising error Hamiltonian.
+///
+/// Enumerates all 2^n spin configurations and returns
+/// `max_{s ∈ {-1,+1}^n} |ΔE(s)|`, where
+/// `ΔE(s) = Σ_i dh_i·s_i + Σ_{i<j} dJ_ij·s_i·s_j`.
+///
+/// This is the equality part of Theorem 1 in
+/// `limen/docs/universality_theorem.md`. The Python fallback in
+/// `limen.analog.certificate.certify_ising` calls this function when
+/// `limen_core` is available and falls back to a pure-Python loop otherwise.
+///
+/// # Arguments
+/// * `dh`      - Linear error coefficients as `[(site, Δh_i)]`.
+/// * `dJ`      - Quadratic error coefficients as `[((site_i, site_j), ΔJ_ij)]`.
+/// * `n_sites` - Number of sites. Must be ≤ 20.
+///
+/// # Errors
+/// Returns `SizeViolation` when `n_sites > 20`.
+#[pyfunction]
+pub fn exact_ising_norm(
+    dh: Vec<(usize, f64)>,
+    dj: Vec<((usize, usize), f64)>,
+    n_sites: usize,
+) -> PyResult<f64> {
+    if n_sites > 20 {
+        return Err(crate::SizeViolation::new_err(
+            "SizeViolation: exact_ising_norm requires n_sites <= 20",
+        ));
+    }
+    if n_sites == 0 || (dh.is_empty() && dj.is_empty()) {
+        return Ok(0.0);
+    }
+
+    let num_states: usize = 1 << n_sites;
+    let mut max_abs: f64 = 0.0;
+
+    for state_idx in 0..num_states {
+        // Map bit i → spin +1 if bit set, −1 otherwise.
+        let spins: Vec<f64> = (0..n_sites)
+            .map(|i| if (state_idx >> i) & 1 == 1 { 1.0 } else { -1.0 })
+            .collect();
+
+        let mut energy: f64 = 0.0;
+        for (i, v) in &dh {
+            energy += v * spins[*i];
+        }
+        for ((i, j), v) in &dj {
+            energy += v * spins[*i] * spins[*j];
+        }
+
+        let abs_e = energy.abs();
+        if abs_e > max_abs {
+            max_abs = abs_e;
+        }
+    }
+
+    Ok(max_abs)
+}
+
 #[pyclass]
 #[derive(Clone)]
 pub struct Variable {

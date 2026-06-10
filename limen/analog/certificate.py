@@ -168,10 +168,18 @@ def certify_ising(
         if n_sites == 0 or (not dh and not dJ):
             op_norm = 0.0
         else:
-            op_norm = max(
-                abs(_delta_energy(dh, dJ, spins))
-                for spins in product((1, -1), repeat=n_sites)
-            )
+            try:
+                from limen_core import exact_ising_norm as _rust_norm
+                op_norm = _rust_norm(
+                    list(dh.items()),
+                    list(dJ.items()),
+                    n_sites,
+                )
+            except ImportError:
+                op_norm = max(
+                    abs(_delta_energy(dh, dJ, spins))
+                    for spins in product((1, -1), repeat=n_sites)
+                )
 
     cert_notes = list(notes) if notes else []
     if op_norm is None:

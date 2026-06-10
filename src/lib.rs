@@ -18,6 +18,8 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(delta::apply_detuning_correction, m)?)?;
     m.add_function(wrap_pyfunction!(delta::apply_coupling_correction, m)?)?;
 
+    m.add_function(wrap_pyfunction!(sim::ising_backend::exact_ising_norm, m)?)?;
+
     let sim = PyModule::new_bound(m.py(), "sim")?;
     sim.add_class::<sim::ising_backend::IsingSimulator>()?;
     sim.add_class::<sim::ising_backend::LogicalGraph>()?;
