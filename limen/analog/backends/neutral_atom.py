@@ -26,6 +26,13 @@ interactions realise only positive (antiferromagnetic-type) ZZ couplings,
 so targets with any J_ij < 0 are flagged and routed to the parity-encoding
 universality result (Theorem 3) for exact compilation.
 
+A geometric embeddability check (Theorem 2, geometry condition) is run
+before the spring layout: the required inter-atom distances are derived from
+the target couplings, and the Schoenberg/MDS test checks whether those
+distances can be realized in the 2-D plane. A failed geometry check flags
+natively_realizable=False even when all couplings are positive. The check
+uses numpy when available; without it the check is skipped.
+
 An optional HardwareDeltaModel pre-distorts the submitted detunings and
 couplings so the as-executed Hamiltonian matches the intended one; the
 certificate is then computed against the predicted as-executed couplings.
@@ -53,6 +60,156 @@ _C6_MHZ_UM6: float = 862_690.0
 
 # Default global Rabi frequency in MHz. Typical value for QuEra / Pasqal devices.
 _OMEGA_MHZ: float = 1.0
+
+
+@dataclass
+class GeometricEmbeddabilityResult:
+    """Result of the Schoenberg/MDS 2-D embeddability check (Theorem 2 geometry condition).
+
+    Attributes:
+        embeddable: True when the required inter-atom distances are realizable
+            in the 2-D Euclidean plane (Gram matrix PSD with rank ≤ 2).
+        psd_satisfied: True when the Gram matrix is PSD (necessary for ANY
+            Euclidean embedding, not just 2-D).
+        gram_min_eigenvalue: Smallest eigenvalue of the doubly-centered
+            squared-distance Gram matrix. Negative values indicate geometric
+            frustration. None when numpy is not available.
+        gram_rank: Number of eigenvalues above the PSD tolerance (estimate of
+            the embedding dimension required). None when numpy is not available.
+        checked: True when the test was actually run (numpy available and at
+            least 4 constrained sites were present).
+        n_constrained_sites: Number of sites involved in constrained pairs.
+        notes: Human-readable observations.
+    """
+
+    embeddable: bool
+    psd_satisfied: bool
+    gram_min_eigenvalue: float | None
+    gram_rank: int | None
+    checked: bool
+    n_constrained_sites: int
+    notes: list[str] = field(default_factory=list)
+
+
+def check_geometric_embeddability(
+    target_J: dict[tuple[int, int], float],
+    c6: float = _C6_MHZ_UM6,
+    tol: float = 1e-8,
+) -> GeometricEmbeddabilityResult:
+    """Check whether the required coupling distances can be realized in the 2-D plane.
+
+    Implements the Schoenberg test (Theorem 2 geometry condition from
+    limen/docs/universality_theorem.md): given target ZZ coupling strengths
+    J_ij > 0, the required inter-atom distances are d_ij = (C6 / (4 J_ij))^{1/6}.
+    The distance set is 2-D Euclidean-embeddable iff the doubly-centered
+    squared-distance matrix G = -½ J D² J (J = I - (1/n)·11^T) is positive
+    semidefinite with rank ≤ 2.
+
+    Only positive couplings are checked; negative couplings are an independent
+    sign obstruction already handled by the native-realizability sign check.
+
+    Requires numpy for the eigenvalue computation. When numpy is unavailable
+    or fewer than 4 constrained sites are present (trivially 2-D embeddable),
+    the result is returned with checked=False.
+
+    Args:
+        target_J: Dict mapping (i, j) pairs (i < j) to ZZ coupling strengths.
+            Only positive entries are considered.
+        c6: Van der Waals C6 coefficient in MHz·μm^6. Default: Rb-87 value.
+        tol: Tolerance for treating eigenvalues as zero. Default 1e-8.
+
+    Returns:
+        GeometricEmbeddabilityResult.
+    """
+    positive_J = {k: v for k, v in target_J.items() if v > 0.0}
+
+    if not positive_J:
+        return GeometricEmbeddabilityResult(
+            embeddable=True, psd_satisfied=True,
+            gram_min_eigenvalue=None, gram_rank=None,
+            checked=False, n_constrained_sites=0,
+            notes=["No positive-coupling pairs; geometry check trivially satisfied."],
+        )
+
+    # Collect unique sites involved in positive-coupling pairs.
+    sites_set: set[int] = set()
+    for i, j in positive_J:
+        sites_set.update((i, j))
+    sites = sorted(sites_set)
+    n = len(sites)
+    site_idx = {s: k for k, s in enumerate(sites)}
+
+    if n < 4:
+        # n ≤ 3 constrained sites are always 2-D embeddable (a triangle always
+        # lies in a plane).
+        return GeometricEmbeddabilityResult(
+            embeddable=True, psd_satisfied=True,
+            gram_min_eigenvalue=None, gram_rank=None,
+            checked=False, n_constrained_sites=n,
+            notes=[
+                f"Only {n} constrained site(s); 2-D embeddability holds trivially "
+                f"(any ≤ 3 points lie in a plane)."
+            ],
+        )
+
+    try:
+        import numpy as np
+    except ImportError:
+        return GeometricEmbeddabilityResult(
+            embeddable=True, psd_satisfied=True,
+            gram_min_eigenvalue=None, gram_rank=None,
+            checked=False, n_constrained_sites=n,
+            notes=["numpy not available; geometry check skipped."],
+        )
+
+    # Build n×n squared-distance matrix D²; unconstrained pairs get 0 (free).
+    D2 = np.zeros((n, n), dtype=float)
+    for (a, b), J_val in positive_J.items():
+        ia, ib = site_idx[a], site_idx[b]
+        d_req = (c6 / (4.0 * J_val)) ** (1.0 / 6.0)
+        D2[ia, ib] = D2[ib, ia] = d_req * d_req
+
+    # Doubly-center: G = -½ J D² J   where J = I - (1/n)·11^T.
+    # Equivalent row/column mean subtraction:
+    row_mean = D2.mean(axis=1, keepdims=True)
+    col_mean = D2.mean(axis=0, keepdims=True)
+    grand_mean = D2.mean()
+    G = -0.5 * (D2 - row_mean - col_mean + grand_mean)
+
+    eigvals = np.linalg.eigvalsh(G)
+    min_eigval = float(eigvals.min())
+    gram_rank = int(np.sum(eigvals > tol))
+    psd_ok = min_eigval >= -tol
+    embeddable_2d = psd_ok and gram_rank <= 2
+
+    notes: list[str] = []
+    if not psd_ok:
+        notes.append(
+            f"Gram matrix has negative eigenvalue {min_eigval:.3e} (< -{tol}); "
+            f"required distances are not realizable in any Euclidean space. "
+            f"Native neutral-atom compilation requires the LHZ parity-encoding route."
+        )
+    elif gram_rank > 2:
+        notes.append(
+            f"Gram matrix rank {gram_rank} > 2; required distances need a "
+            f"{gram_rank}-D embedding, not achievable in a 2-D atom array. "
+            f"Native neutral-atom compilation requires the LHZ parity-encoding route."
+        )
+    else:
+        notes.append(
+            f"Gram matrix is PSD with rank {gram_rank} ≤ 2; "
+            f"required distances are 2-D Euclidean-embeddable."
+        )
+
+    return GeometricEmbeddabilityResult(
+        embeddable=embeddable_2d,
+        psd_satisfied=psd_ok,
+        gram_min_eigenvalue=min_eigval,
+        gram_rank=gram_rank,
+        checked=True,
+        n_constrained_sites=n,
+        notes=notes,
+    )
 
 
 @dataclass
@@ -91,6 +248,7 @@ class NeutralAtomResult:
     simulated: bool
     message: str
     certificate: CompilationCertificate | None = None
+    geometry: GeometricEmbeddabilityResult | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -229,6 +387,12 @@ def run_neutral_atom(
     n = hamiltonian.n_sites
     h, target_J = _extract_h_J(hamiltonian)
 
+    # Geometric embeddability check (Theorem 2 geometry condition): run before
+    # the spring layout so we can flag non-realizable geometry early.
+    geo = check_geometric_embeddability(
+        {k: v for k, v in target_J.items() if v > 0.0}
+    )
+
     # Pre-distort target couplings so as-executed couplings land on target.
     if delta_model is not None and target_J:
         submit_J = delta_model.apply_coupling_correction(target_J)
@@ -273,11 +437,17 @@ def run_neutral_atom(
     if delta_model is not None:
         detunings = delta_model.apply_detuning_correction(detunings)
 
-    # Native realizability (Theorem 2): vdW realises only positive ZZ.
-    natively_realizable = all(J > 0.0 for J in target_J.values())
+    # Native realizability (Theorem 2): vdW realises only positive ZZ (sign
+    # condition), AND the required distances must be 2-D embeddable (geometry
+    # condition checked above).
+    sign_ok = all(J > 0.0 for J in target_J.values())
+    natively_realizable = sign_ok and (not geo.checked or geo.embeddable)
 
     # Compilation certificate (Theorem 1). Linear terms are realised exactly
     # by the detuning formula, so dh = 0; the error lives in the couplings.
+    cert_notes = ["Linear (Z) terms realised exactly via detuning formula."]
+    if geo.checked and not geo.embeddable:
+        cert_notes += geo.notes
     certificate = certify_ising(
         target_h=h,
         target_J=target_J,
@@ -285,7 +455,7 @@ def run_neutral_atom(
         compiled_J=as_executed,
         n_sites=n,
         natively_realizable=natively_realizable,
-        notes=["Linear (Z) terms realised exactly via detuning formula."],
+        notes=cert_notes,
     )
 
     # Classical simulation for small instances.
@@ -312,12 +482,18 @@ def run_neutral_atom(
             f"coupling RMS error={rms_err:.4f}"
         ),
         certificate=certificate,
+        geometry=geo,
         metadata={
             "c6_mhz_um6": _C6_MHZ_UM6,
             "rabi_frequency_mhz": _OMEGA_MHZ,
             "n_zz_pairs": len(target_J),
             "coupling_rms_error": rms_err,
             "natively_realizable": natively_realizable,
+            "sign_ok": sign_ok,
+            "geometry_embeddable": geo.embeddable,
+            "geometry_checked": geo.checked,
+            "gram_min_eigenvalue": geo.gram_min_eigenvalue,
+            "gram_rank": geo.gram_rank,
             "delta_model_device": (
                 delta_model.device_id if delta_model is not None else None
             ),
@@ -325,8 +501,8 @@ def run_neutral_atom(
             "note": (
                 "Heuristic van der Waals layout with exact compilation "
                 "certificate (Theorem 1, limen/docs/universality_theorem.md). "
-                "Targets with negative J require the parity-encoding route "
-                "(Theorem 3)."
+                "Targets with negative J or non-2D-embeddable distances require "
+                "the parity-encoding route (Theorem 3)."
             ),
         },
     )
