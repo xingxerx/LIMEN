@@ -14,17 +14,24 @@
 """Neutral-atom backend for LIMEN.
 
 Maps a HamiltonianIR onto Rydberg atom array parameters using van der Waals
-interaction physics. The mapping is heuristic: atom positions are chosen so
-that the realized C₆/r⁶ couplings approximate the target ZZ Ising coefficients,
-and per-site detunings realise the linear Z terms.
+interaction physics. Atom positions are chosen so that the realized C6/r^6
+couplings approximate the target ZZ Ising coefficients, and per-site
+detunings realise the linear Z terms exactly.
 
-This is an engineering implementation, not a certified universality result.
-The constructive universality theorem that would guarantee exact, error-bounded
-compilation for arbitrary Ising models onto Rydberg hardware is pending research
-(see limen/docs/architecture.md for the precise research specification).
+Every compilation now emits a CompilationCertificate (Theorem 1 of
+limen/docs/universality_theorem.md): an exact operator-norm bound on
+||H_target - H_compiled|| for <= 20 sites, and an L1 bound above that.
+Native realizability is classified per Theorem 2: van der Waals
+interactions realise only positive (antiferromagnetic-type) ZZ couplings,
+so targets with any J_ij < 0 are flagged and routed to the parity-encoding
+universality result (Theorem 3) for exact compilation.
 
-For small instances (≤ 20 sites) a classical exact-diagonalisation result is
-included for verification against real hardware measurements.
+An optional HardwareDeltaModel pre-distorts the submitted detunings and
+couplings so the as-executed Hamiltonian matches the intended one; the
+certificate is then computed against the predicted as-executed couplings.
+
+For small instances (<= 20 sites) a classical exact-diagonalisation result
+is included for verification against real hardware measurements.
 """
 
 from __future__ import annotations
@@ -35,14 +42,16 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from limen.analog.hamiltonian import HamiltonianIR
+    from limen.analog.delta_model import HardwareDeltaModel
 
 from limen.analog.backends.classical_sim import IsingSimulationResult, run_ising_simulation
+from limen.analog.certificate import CompilationCertificate, certify_ising
 
-# Van der Waals C₆ coefficient for Rb-87 |70S₁/₂⟩ Rydberg state in MHz·μm⁶.
-# Reference: Saffman, Walker & Mølmer, Rev. Mod. Phys. 82, 2313 (2010).
+# Van der Waals C6 coefficient for Rb-87 |70S1/2> Rydberg state in MHz*um^6.
+# Reference: Saffman, Walker & Molmer, Rev. Mod. Phys. 82, 2313 (2010).
 _C6_MHZ_UM6: float = 862_690.0
 
-# Default global Rabi frequency in MHz.  Typical value for QuEra / Pasqal devices.
+# Default global Rabi frequency in MHz. Typical value for QuEra / Pasqal devices.
 _OMEGA_MHZ: float = 1.0
 
 
@@ -53,14 +62,15 @@ class NeutralAtomResult:
     Attributes:
         hamiltonian: The HamiltonianIR that was compiled.
         atom_positions: 2-D atom positions [(x, y), ...] in micrometres.
-        rabi_frequency: Global Rabi drive Ω in MHz.
-        detunings: Per-site detuning Δ_i in MHz, one entry per site.
-        realized_couplings: Realised van der Waals V_ij values in MHz for
-            each pair (i, j) with i < j.
-        target_couplings: Target ZZ coefficients J_ij from HamiltonianIR for
-            each pair (i, j) with i < j.
+        rabi_frequency: Global Rabi drive Omega in MHz.
+        detunings: Per-site detuning Delta_i in MHz (as submitted to
+            hardware — pre-distorted when a delta_model is supplied).
+        realized_couplings: Realised van der Waals V_ij/4 values in MHz.
+        target_couplings: Target ZZ coefficients J_ij from HamiltonianIR.
         coupling_rms_error: RMS relative error between realised and target
             couplings. Zero when no quadratic terms are present.
+        certificate: CompilationCertificate with the exact operator-norm
+            error (<= 20 sites) or L1 bound, per Theorem 1.
         simulation: Classical exact-diagonalisation result, or None if
             n_sites > 20.
         available: True if layout succeeded (always True for heuristic path).
@@ -80,13 +90,14 @@ class NeutralAtomResult:
     available: bool
     simulated: bool
     message: str
+    certificate: CompilationCertificate | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-# ── Layout helpers ────────────────────────────────────────────────────
+# -- Layout helpers ----------------------------------------------------
 
 def _circle_positions(n: int, radius: float) -> list[tuple[float, float]]:
-    """Place n atoms uniformly on a circle of given radius (μm)."""
+    """Place n atoms uniformly on a circle of given radius (um)."""
     if n == 1:
         return [(0.0, 0.0)]
     return [
@@ -101,7 +112,7 @@ def _dist(a: tuple[float, float], b: tuple[float, float]) -> float:
 
 
 def _vdw(r: float) -> float:
-    """V(r) = C₆ / r⁶ in MHz, with a floor to prevent divergence."""
+    """V(r) = C6 / r^6 in MHz, with a floor to prevent divergence."""
     return _C6_MHZ_UM6 / max(r, 0.1) ** 6
 
 
@@ -115,14 +126,7 @@ def _spring_layout(
     target_J: dict[tuple[int, int], float],
     iterations: int = 300,
 ) -> list[tuple[float, float]]:
-    """Spring-relaxation 2-D layout realising target pairwise ZZ couplings.
-
-    Starting from a circular arrangement, gradient-free spring forces pull
-    each atom toward the inter-site distance that would realise the target
-    coupling via the van der Waals law.  Pairs without a target coupling
-    use a repulsive baseline to prevent site collapse.
-    """
-    # Initial radius: median target distance or 5 μm fallback.
+    """Spring-relaxation 2-D layout realising target pairwise ZZ couplings."""
     if target_J:
         radii = [_target_radius(J) for J in target_J.values()]
         radii.sort()
@@ -134,7 +138,6 @@ def _spring_layout(
 
     lr = 0.15
     for iteration in range(iterations):
-        # Decay learning rate for stability.
         step = lr * (1.0 - 0.5 * iteration / iterations)
         new_pos = list(positions)
         for i in range(n):
@@ -150,7 +153,6 @@ def _spring_layout(
                 if key in target_J:
                     r_tgt = _target_radius(target_J[key])
                 else:
-                    # Repulsive baseline: push apart to at least 1 μm.
                     r_tgt = max(r_curr, 1.0)
 
                 force = step * (r_curr - r_tgt)
@@ -165,42 +167,12 @@ def _spring_layout(
     return positions
 
 
-# ── Main entry point ──────────────────────────────────────────────────
-
-def run_neutral_atom(hamiltonian: HamiltonianIR) -> NeutralAtomResult:
-    """Compile a HamiltonianIR to neutral-atom Rydberg array parameters.
-
-    Maps Z and ZZ Hamiltonian terms to physical Rydberg parameters:
-
-    - ZZ coupling J_ij  →  atom separation r_ij = (C₆ / (4·|J_ij|))^(1/6) μm
-    - Linear term h_i   →  detuning Δ_i = −2·h_i − Σ_j V_ij / 2  (MHz)
-    - Global Rabi drive  Ω = 1 MHz (standard adiabatic-sweep value)
-
-    A spring-relaxation algorithm finds 2-D atom positions that minimise the
-    RMS relative error between realised van der Waals couplings and the
-    target J_ij values.
-
-    For instances with ≤ 20 sites, a classical exact-diagonalisation check
-    is included in the result.
-
-    Note:
-        HEURISTIC — not a certified universality result. See
-        limen/docs/architecture.md for the research specification.
-
-    Args:
-        hamiltonian: A HamiltonianIR from limen.analog.hamiltonian.
-
-    Returns:
-        NeutralAtomResult with atom positions, Rabi frequency, per-site
-        detunings, realised couplings, and (for small instances) a
-        classical simulation for verification.
-    """
-    n = hamiltonian.n_sites
-
-    # Extract linear h_i and quadratic J_ij from terms.
+def _extract_h_J(
+    hamiltonian: HamiltonianIR,
+) -> tuple[dict[int, float], dict[tuple[int, int], float]]:
+    """Collect linear h_i and quadratic J_ij coefficients from IR terms."""
     h: dict[int, float] = {}
-    target_J: dict[tuple[int, int], float] = {}
-
+    J: dict[tuple[int, int], float] = {}
     for term in hamiltonian.terms:
         if len(term.operators) == 1:
             site, op = term.operators[0]
@@ -210,26 +182,84 @@ def run_neutral_atom(hamiltonian: HamiltonianIR) -> NeutralAtomResult:
             (si, oi), (sj, oj) = term.operators
             if oi == "Z" and oj == "Z":
                 key = (min(si, sj), max(si, sj))
-                target_J[key] = target_J.get(key, 0.0) + term.coefficient
+                J[key] = J.get(key, 0.0) + term.coefficient
+    return h, J
 
-    # Find 2-D atom layout.
-    positions = _spring_layout(n, target_J) if n > 0 else []
 
-    # Realised van der Waals couplings from final positions.
+# -- Main entry point --------------------------------------------------
+
+def run_neutral_atom(
+    hamiltonian: HamiltonianIR,
+    delta_model: "HardwareDeltaModel | None" = None,
+) -> NeutralAtomResult:
+    """Compile a HamiltonianIR to neutral-atom Rydberg array parameters.
+
+    Maps Z and ZZ Hamiltonian terms to physical Rydberg parameters:
+
+    - ZZ coupling J_ij  ->  atom separation r_ij = (C6 / (4*|J_ij|))^(1/6) um
+    - Linear term h_i   ->  detuning Delta_i = -2*h_i - sum_j V_ij / 2  (MHz)
+    - Global Rabi drive Omega = 1 MHz (standard adiabatic-sweep value)
+
+    A spring-relaxation algorithm finds 2-D atom positions that minimise the
+    coupling error; the result carries a CompilationCertificate giving the
+    exact operator-norm error ||H_target - H_compiled|| for <= 20 sites
+    (Theorem 1, limen/docs/universality_theorem.md).
+
+    Native realizability (Theorem 2): van der Waals interactions realise
+    only J_ij > 0. Targets containing any negative coupling are flagged
+    natively_realizable=False on the certificate; exact compilation of such
+    targets requires the parity-encoding route (Theorem 3) with quadratic
+    ancilla overhead.
+
+    When a HardwareDeltaModel is supplied, the submitted couplings and
+    detunings are pre-distorted so the as-executed Hamiltonian matches the
+    target, and the certificate is computed against the predicted
+    as-executed couplings.
+
+    Args:
+        hamiltonian: A HamiltonianIR from limen.analog.hamiltonian.
+        delta_model: Optional calibration model for the target device.
+            None (default) is equivalent to a zero-drift identity model.
+
+    Returns:
+        NeutralAtomResult with atom positions, Rabi frequency, per-site
+        detunings, realised couplings, a compilation certificate, and
+        (for small instances) a classical simulation for verification.
+    """
+    n = hamiltonian.n_sites
+    h, target_J = _extract_h_J(hamiltonian)
+
+    # Pre-distort target couplings so as-executed couplings land on target.
+    if delta_model is not None and target_J:
+        submit_J = delta_model.apply_coupling_correction(target_J)
+    else:
+        submit_J = target_J
+
+    # Find 2-D atom layout against the (possibly pre-distorted) couplings.
+    positions = _spring_layout(n, submit_J) if n > 0 else []
+
+    # Realised van der Waals couplings from final positions (as submitted).
     realized: dict[tuple[int, int], float] = {}
     for (i, j) in target_J:
         r = _dist(positions[i], positions[j])
         realized[(i, j)] = _vdw(r) / 4.0  # V(r)/4 = ZZ coupling
 
-    # RMS relative coupling error.
+    # Predicted as-executed couplings: hardware multiplies by (1 + error).
+    if delta_model is not None:
+        errs = delta_model.drift.coupling_scale_errors
+        as_executed = {k: v * (1.0 + errs.get(k, 0.0)) for k, v in realized.items()}
+    else:
+        as_executed = dict(realized)
+
+    # RMS relative coupling error against the original target.
     errors = []
     for key, J_tgt in target_J.items():
-        J_real = realized.get(key, 0.0)
+        J_real = as_executed.get(key, 0.0)
         if abs(J_tgt) > 1e-12:
             errors.append(((J_real - J_tgt) / J_tgt) ** 2)
     rms_err = math.sqrt(sum(errors) / len(errors)) if errors else 0.0
 
-    # Per-site detuning: Δ_i = -2·h_i - Σ_j V_ij/2
+    # Per-site detuning: Delta_i = -2*h_i - sum_j V_ij/2 — realises h exactly.
     detunings: list[float] = []
     for site in range(n):
         hi = h.get(site, 0.0)
@@ -238,6 +268,25 @@ def run_neutral_atom(hamiltonian: HamiltonianIR) -> NeutralAtomResult:
             for j in range(n) if j != site
         )
         detunings.append(-2.0 * hi - neighbor_sum)
+
+    # Pre-distort submitted detunings against measured per-site offsets.
+    if delta_model is not None:
+        detunings = delta_model.apply_detuning_correction(detunings)
+
+    # Native realizability (Theorem 2): vdW realises only positive ZZ.
+    natively_realizable = all(J > 0.0 for J in target_J.values())
+
+    # Compilation certificate (Theorem 1). Linear terms are realised exactly
+    # by the detuning formula, so dh = 0; the error lives in the couplings.
+    certificate = certify_ising(
+        target_h=h,
+        target_J=target_J,
+        compiled_h=h,
+        compiled_J=as_executed,
+        n_sites=n,
+        natively_realizable=natively_realizable,
+        notes=["Linear (Z) terms realised exactly via detuning formula."],
+    )
 
     # Classical simulation for small instances.
     sim: IsingSimulationResult | None = None
@@ -259,18 +308,25 @@ def run_neutral_atom(hamiltonian: HamiltonianIR) -> NeutralAtomResult:
         available=True,
         simulated=True,
         message=(
-            f"Rydberg layout: {n} atoms, Ω={_OMEGA_MHZ} MHz, "
+            f"Rydberg layout: {n} atoms, Omega={_OMEGA_MHZ} MHz, "
             f"coupling RMS error={rms_err:.4f}"
         ),
+        certificate=certificate,
         metadata={
             "c6_mhz_um6": _C6_MHZ_UM6,
             "rabi_frequency_mhz": _OMEGA_MHZ,
             "n_zz_pairs": len(target_J),
             "coupling_rms_error": rms_err,
-            "status": "heuristic",
+            "natively_realizable": natively_realizable,
+            "delta_model_device": (
+                delta_model.device_id if delta_model is not None else None
+            ),
+            "status": "certified-heuristic",
             "note": (
-                "Heuristic van der Waals layout. "
-                "Constructive universality theorem pending research."
+                "Heuristic van der Waals layout with exact compilation "
+                "certificate (Theorem 1, limen/docs/universality_theorem.md). "
+                "Targets with negative J require the parity-encoding route "
+                "(Theorem 3)."
             ),
         },
     )

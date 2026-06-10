@@ -10,7 +10,7 @@ from limen.core.ir import Interaction, LogicalGraph, Variable
 from limen.frontends.pyqubo import from_pyqubo, from_qubo_dict
 from limen.validator.validator import ValidationResult, validate
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "Variable",
@@ -31,6 +31,8 @@ __all__ = [
     "HamiltonianTerm",
     "SubstrateType",
     "from_physical_encoding",
+    "CompilationCertificate",
+    "certify_ising",
 ]
 
 
@@ -60,5 +62,11 @@ def __getattr__(name: str):
             "HamiltonianTerm": HamiltonianTerm,
             "SubstrateType": SubstrateType,
             "from_physical_encoding": from_physical_encoding,
+        }[name]
+    if name in ("CompilationCertificate", "certify_ising"):
+        from limen.analog.certificate import CompilationCertificate, certify_ising
+        return {
+            "CompilationCertificate": CompilationCertificate,
+            "certify_ising": certify_ising,
         }[name]
     raise AttributeError(f"module 'limen' has no attribute {name!r}")
