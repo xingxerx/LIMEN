@@ -429,14 +429,30 @@ def _build_qaoa_ansatz(
     return QAOAAnsatz(cost_op, reps=reps)
 
 
+_STATEVECTOR_QUBIT_LIMIT = 24  # 2^24 statevector ≈ 256 MB — skip above this
+
+
 def _ideal_distribution(ansatz: Any, params: list[float]) -> dict[str, float]:
-    """Noiseless bitstring distribution of a bound ansatz via statevector."""
+    """Noiseless bitstring distribution of a bound ansatz via statevector.
+
+    Returns an empty dict when the circuit is too large to simulate in memory.
+    Decomposes PauliEvolution gates into basis gates first; without this
+    Qiskit densifies the full 2^n × 2^n operator matrix (64 GiB for n=16).
+    """
+    if ansatz.num_qubits > _STATEVECTOR_QUBIT_LIMIT:
+        return {}
+
+    from qiskit import transpile  # type: ignore[import]
     from qiskit.quantum_info import Statevector  # type: ignore[import]
 
     bound = ansatz.assign_parameters(params)
+    # Decompose PauliEvolution and other high-level gates to primitive gates so
+    # Statevector never calls PauliEvolution.to_matrix() (which densifies the
+    # full 2^n × 2^n sparse exponential — 64 GiB for 16 qubits).
+    decomposed = transpile(bound, basis_gates=["cx", "u", "h", "rx", "ry", "rz"])
     return {
         bs: float(p)
-        for bs, p in Statevector(bound).probabilities_dict().items()
+        for bs, p in Statevector(decomposed).probabilities_dict().items()
     }
 
 
@@ -448,6 +464,7 @@ def run_qiskit_qpu(
     shots: int = 1000,
     reps: int = 1,
     cost_scale: float = 1.0,
+    timeout: float = 600.0,
 ) -> QiskitResult:
     """Execute a PhysicalEncoding as a QAOA circuit on a real IBM QPU.
 
@@ -465,6 +482,8 @@ def run_qiskit_qpu(
         reps: Number of QAOA layers.
         cost_scale: Multiplier applied to the cost Hamiltonian — the
             gate-model analog of chain strength (scales effective γ).
+        timeout: Seconds to wait for the QPU job before raising
+            RuntimeError (default 600). Pass None to wait indefinitely.
 
     Returns:
         A QiskitResult with samples sorted by energy ascending. The raw
@@ -473,6 +492,7 @@ def run_qiskit_qpu(
 
     Raises:
         ImportError: If qiskit or qiskit-ibm-runtime is not installed.
+        RuntimeError: If the job does not complete within ``timeout`` seconds.
     """
     try:
         from qiskit_ibm_runtime import (  # type: ignore[import]
@@ -504,7 +524,7 @@ def run_qiskit_qpu(
 
     sampler = SamplerV2(mode=backend)
     job = sampler.run([(transpiled, params)], shots=shots)
-    pub_result = job.result()[0]
+    pub_result = job.result(timeout=timeout)[0]
     counts: dict[str, int] = pub_result.data.meas.get_counts()
 
     samples, energies = _counts_to_samples(counts, qubo, variables)
@@ -587,10 +607,14 @@ def ibm_noise_fn(
         ideal: dict[str, float] = result.metadata["ideal_distribution"]
         total = sum(counts.values())
         measured = {bs: cnt / total for bs, cnt in counts.items()}
-        all_bs = set(measured) | set(ideal)
-        tvd = 0.5 * sum(
-            abs(measured.get(bs, 0.0) - ideal.get(bs, 0.0)) for bs in all_bs
-        )
+        if ideal:
+            all_bs = set(measured) | set(ideal)
+            tvd = 0.5 * sum(
+                abs(measured.get(bs, 0.0) - ideal.get(bs, 0.0)) for bs in all_bs
+            )
+        else:
+            # Statevector simulation skipped (circuit too large); use worst-case TVD
+            tvd = 1.0
 
         optimal_energy = min(
             _qubo_energy(encoding.qubo, a)

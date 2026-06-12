@@ -249,6 +249,10 @@ def main() -> None:
         help="Number of circuit shots (default 1000)",
     )
     parser.add_argument(
+        "--timeout", type=float, default=600.0,
+        help="Seconds to wait for the QPU job before giving up (default 600)",
+    )
+    parser.add_argument(
         "--sim-only", action="store_true",
         help="Skip QPU, run simulator only even if IBM credentials are present",
     )
@@ -380,6 +384,7 @@ def main() -> None:
             shots=shots,
             reps=_REPS,
             cost_scale=cd.kappa,
+            timeout=args.timeout,
         )
         job_id = qr.metadata.get("job_id")
         print(f"      Job id: {job_id}")
