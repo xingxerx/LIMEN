@@ -119,11 +119,14 @@ def compile_lexicographic(
         for (i, j), w in logical_qubo.items()
     }
 
+    max_levels = max((v.levels for v in graph.variables), default=2)
+
     metadata: dict[str, Any] = {
         "compiler": "lexicographic",
         "seed": seed,
         "hardware_nodes": len(hardware_graph),
         "logical_variables": len(graph.variables),
+        "max_levels": max_levels,
     }
 
     return PhysicalEncoding(

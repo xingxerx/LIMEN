@@ -10,20 +10,22 @@ class Variable:
 
     Attributes:
         name: Unique identifier for the variable.
-        domain: The variable's domain. Currently only 'binary' is supported.
+        domain: The variable's domain. Currently 'binary' or 'd-ary'.
+        levels: The number of discrete states (2 for qubits, d for qudits).
     """
 
     name: str
     domain: str = "binary"
+    levels: int = 2
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize this variable to a plain dict."""
-        return {"name": self.name, "domain": self.domain}
+        return {"name": self.name, "domain": self.domain, "levels": self.levels}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Variable":
         """Deserialize a Variable from a plain dict."""
-        return cls(name=d["name"], domain=d["domain"])
+        return cls(name=d["name"], domain=d.get("domain", "binary"), levels=d.get("levels", 2))
 
 
 @dataclass

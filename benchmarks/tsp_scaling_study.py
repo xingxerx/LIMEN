@@ -156,7 +156,9 @@ def _decode_tour(assignment: dict[str, int], n: int) -> list[int] | None:
 
 def _run_one(n_cities: int, shots: int, use_qpu: bool,
              token: str | None, crn: str | None,
-             sim_limit: int = 20) -> dict:
+             sim_limit: int = 20,
+             dynamical_decoupling: bool = False,
+             twirling: bool = False) -> dict:
     from limen import compile_lexicographic, default_hardware_graph, from_qubo_dict
     from limen.analog.certificate import certify_ising
     from limen.backends.qiskit_backend import _qubo_to_ising, run_qiskit, run_qiskit_qpu
@@ -213,7 +215,9 @@ def _run_one(n_cities: int, shots: int, use_qpu: bool,
         t_run = time.time()
         qr = run_qiskit_qpu(encoding=encoding, token=token, crn=crn,
                              backend_name="ibm_kingston", shots=shots,
-                             reps=1, cost_scale=cd.kappa)
+                             reps=1, cost_scale=cd.kappa,
+                             dynamical_decoupling=dynamical_decoupling,
+                             twirling=twirling)
         backend_used = "ibm_kingston"
         t_run = time.time() - t_run
     else:
@@ -280,6 +284,10 @@ def main() -> None:
     parser.add_argument("--sim-limit",  type=int, default=20,
                         help="Max qubits for Aer simulation; larger problems "
                              "compile but skip the quantum run (default 20)")
+    parser.add_argument("--dynamical-decoupling", action="store_true",
+                        help="Enable dynamical decoupling for QPU runs")
+    parser.add_argument("--twirling", action="store_true",
+                        help="Enable Pauli twirling for QPU runs")
     args = parser.parse_args()
 
     token = os.environ.get("IBM_QUANTUM_TOKEN")
@@ -312,7 +320,8 @@ def main() -> None:
             continue
 
         try:
-            r = _run_one(n, args.shots, args.qpu, token, crn, sim_limit=args.sim_limit)
+            r = _run_one(n, args.shots, args.qpu, token, crn, sim_limit=args.sim_limit,
+                         dynamical_decoupling=args.dynamical_decoupling, twirling=args.twirling)
             results.append(r)
             if r.get("sim_skipped"):
                 print(f"  compile={r['compile_seconds']}s  run=skipped (>{args.sim_limit}q sim limit)")

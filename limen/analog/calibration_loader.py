@@ -155,3 +155,39 @@ def load_ibmq_calibration(source, freq_error_to_detuning_mhz=1000.0):
         n_sites=n_sites,
         metadata=metadata,
     )
+
+
+def load_live_ibmq_calibration(
+    token: str,
+    crn: str,
+    backend_name: str = "ibm_kingston",
+    freq_error_to_detuning_mhz: float = 1000.0,
+):
+    """Query live IBMQ backend properties and return a HardwareDeltaModel representing its current drift.
+
+    Args:
+        token: IBM Quantum Platform API token.
+        crn: IBM Quantum service instance CRN.
+        backend_name: IBM backend identifier.
+        freq_error_to_detuning_mhz: Conversion factor from GHz frequency error
+            to MHz detuning offset.
+
+    Returns:
+        HardwareDeltaModel populated from the backend properties.
+    """
+    try:
+        from qiskit_ibm_runtime import QiskitRuntimeService
+    except ModuleNotFoundError as exc:
+        raise ImportError(
+            "The qiskit-ibm-runtime package is required to load live IBMQ calibration data. "
+            "Install it via: pip install qiskit-ibm-runtime"
+        ) from exc
+
+    service = QiskitRuntimeService(channel="ibm_quantum_platform", token=token, instance=crn)
+    backend = service.backend(backend_name)
+    properties = backend.properties()
+    if properties is None:
+        raise ValueError(f"Backend '{backend_name}' does not expose properties.")
+
+    return load_ibmq_calibration(properties.to_dict(), freq_error_to_detuning_mhz)
+

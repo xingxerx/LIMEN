@@ -25,6 +25,7 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     sim.add_class::<sim::ising_backend::LogicalGraph>()?;
     sim.add_class::<sim::ising_backend::Variable>()?;
     sim.add_class::<sim::ising_backend::Interaction>()?;
+    sim.add_class::<sim::qudit::QuditSimulator>()?;
     m.add_submodule(&sim)?;
 
     let analog = PyModule::new_bound(m.py(), "analog")?;

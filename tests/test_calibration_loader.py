@@ -132,3 +132,122 @@ def test_ibmq_from_json_string_and_file():
         assert load_ibmq_calibration(tmp).n_sites == 7
     finally:
         tmp.unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Live IBMQ calibration & QEM mock tests
+# ---------------------------------------------------------------------------
+
+def test_load_live_ibmq_calibration(monkeypatch):
+    class MockBackend:
+        def properties(self):
+            class MockProperties:
+                def to_dict(self):
+                    return IBMQ_DICT
+            return MockProperties()
+
+    class MockService:
+        def __init__(self, channel, token, instance):
+            pass
+        def backend(self, name):
+            return MockBackend()
+
+    import sys
+    from types import ModuleType
+
+    mock_runtime = ModuleType("qiskit_ibm_runtime")
+    mock_runtime.QiskitRuntimeService = MockService
+    sys.modules["qiskit_ibm_runtime"] = mock_runtime
+
+    try:
+        from limen.analog.calibration_loader import load_live_ibmq_calibration
+        m = load_live_ibmq_calibration(token="mock_token", crn="mock_crn", backend_name="ibm_perth")
+        assert m.device_id == "ibm_perth"
+        assert m.n_sites == 7
+    finally:
+        del sys.modules["qiskit_ibm_runtime"]
+
+
+def test_run_qiskit_qpu_error_mitigation(monkeypatch):
+    class MockJob:
+        def job_id(self):
+            return "mock_job_id"
+        def result(self, timeout=None):
+            class MockPubResult:
+                class MockData:
+                    class MockMeas:
+                        def get_counts(self):
+                            return {"00": 50, "11": 50}
+                    meas = MockMeas()
+                data = MockData()
+            return [MockPubResult()]
+
+    class MockSampler:
+        def __init__(self, mode):
+            class MockOptions:
+                class MockDD:
+                    enable = False
+                    sequence_type = None
+                class MockTwirling:
+                    enable_gates = False
+                    enable_measure = False
+                dynamical_decoupling = MockDD()
+                twirling = MockTwirling()
+            self.options = MockOptions()
+        def run(self, pubs, shots=1000):
+            assert self.options.dynamical_decoupling.enable is True
+            assert self.options.dynamical_decoupling.sequence_type == "XY4"
+            assert self.options.twirling.enable_gates is True
+            assert self.options.twirling.enable_measure is True
+            return MockJob()
+
+    class MockBackend:
+        pass
+
+    class MockService:
+        def __init__(self, channel, token, instance):
+            pass
+        def backend(self, name):
+            return MockBackend()
+
+    import sys
+    from types import ModuleType
+
+    mock_runtime = ModuleType("qiskit_ibm_runtime")
+    mock_runtime.QiskitRuntimeService = MockService
+    mock_runtime.SamplerV2 = MockSampler
+    sys.modules["qiskit_ibm_runtime"] = mock_runtime
+
+    mock_passmanagers = ModuleType("qiskit.transpiler.preset_passmanagers")
+    class MockPM:
+        def run(self, circuit):
+            return circuit
+    def generate_preset_pass_manager(optimization_level, backend):
+        return MockPM()
+    mock_passmanagers.generate_preset_pass_manager = generate_preset_pass_manager
+    sys.modules["qiskit.transpiler.preset_passmanagers"] = mock_passmanagers
+
+    try:
+        from limen.backends.qiskit_backend import run_qiskit_qpu
+        from limen import compile_lexicographic, default_hardware_graph, from_qubo_dict
+        
+        encoding = compile_lexicographic(
+            from_qubo_dict({("q0", "q0"): -1.0, ("q1", "q1"): -1.0}),
+            default_hardware_graph(8)
+        )
+        
+        result = run_qiskit_qpu(
+            encoding,
+            token="mock_token",
+            crn="mock_crn",
+            backend_name="ibm_perth",
+            shots=100,
+            dynamical_decoupling=True,
+            twirling=True,
+        )
+        assert result.metadata["backend"] == "ibm_perth"
+        assert result.metadata["job_id"] == "mock_job_id"
+    finally:
+        del sys.modules["qiskit_ibm_runtime"]
+        del sys.modules["qiskit.transpiler.preset_passmanagers"]
+

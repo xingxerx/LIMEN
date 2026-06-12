@@ -466,6 +466,8 @@ def run_qiskit_qpu(
     reps: int = 1,
     cost_scale: float = 1.0,
     timeout: float = 600.0,
+    dynamical_decoupling: bool = False,
+    twirling: bool = False,
 ) -> QiskitResult:
     """Execute a PhysicalEncoding as a QAOA circuit on a real IBM QPU.
 
@@ -485,6 +487,8 @@ def run_qiskit_qpu(
             gate-model analog of chain strength (scales effective γ).
         timeout: Seconds to wait for the QPU job before raising
             RuntimeError (default 600). Pass None to wait indefinitely.
+        dynamical_decoupling: If True, enables XY4 sequence dynamical decoupling on idle qubits.
+        twirling: If True, enables Pauli and measurement twirling.
 
     Returns:
         A QiskitResult with samples sorted by energy ascending. The raw
@@ -524,6 +528,13 @@ def run_qiskit_qpu(
     transpiled = pm.run(measured)
 
     sampler = SamplerV2(mode=backend)
+    if dynamical_decoupling:
+        sampler.options.dynamical_decoupling.enable = True
+        sampler.options.dynamical_decoupling.sequence_type = "XY4"
+    if twirling:
+        sampler.options.twirling.enable_gates = True
+        sampler.options.twirling.enable_measure = True
+
     job = sampler.run([(transpiled, params)], shots=shots)
     pub_result = job.result(timeout=timeout)[0]
     counts: dict[str, int] = pub_result.data.meas.get_counts()
@@ -556,6 +567,8 @@ def ibm_noise_fn(
     shots: int = 1000,
     reps: int = 1,
     base_chain_strength: float | None = None,
+    dynamical_decoupling: bool = False,
+    twirling: bool = False,
 ) -> Callable[[PhysicalEncoding], float]:
     """Return a chain_break_fraction_fn for run_codesign backed by IBM QPU noise.
 
@@ -581,6 +594,8 @@ def ibm_noise_fn(
         reps: Number of QAOA layers.
         base_chain_strength: Chain strength corresponding to cost_scale 1.0.
             When None, captured from the first encoding seen.
+        dynamical_decoupling: If True, enables XY4 sequence dynamical decoupling on idle qubits.
+        twirling: If True, enables Pauli and measurement twirling.
 
     Returns:
         A callable (PhysicalEncoding) → float for the
@@ -602,6 +617,8 @@ def ibm_noise_fn(
             shots=shots,
             reps=reps,
             cost_scale=cost_scale,
+            dynamical_decoupling=dynamical_decoupling,
+            twirling=twirling,
         )
 
         counts: dict[str, int] = result.metadata["counts"]
