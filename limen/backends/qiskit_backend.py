@@ -230,14 +230,14 @@ def _run_qaoa(
     reps: int,
     seed: int,
 ) -> tuple[list[dict[str, int]], list[float], int | None]:
-    """Run QAOA using Qiskit 1.x primitives + AerSimulator.
+    """Run QAOA using AerSimulator with fixed initial parameters (β=γ=0.1).
 
-    Uses QAOAAnsatz with a fixed initial point and the SamplerV2 primitive
-    from qiskit_aer. Does not depend on qiskit_algorithms.
+    Uses statevector simulation for small circuits and MPS for larger ones
+    to keep memory bounded. Parameters are bound before simulation so this
+    works with any qiskit-aer version that exposes AerSimulator.run().
     """
     try:
         from qiskit_aer import AerSimulator  # type: ignore[import]
-        from qiskit_aer.primitives import StatevectorSampler  # type: ignore[import]
     except ModuleNotFoundError as exc:
         raise ImportError(_INSTALL_MSG) from exc
 
@@ -251,25 +251,28 @@ def _run_qaoa(
     cost_op = _build_cost_hamiltonian(h, J, variables)
 
     ansatz = QAOAAnsatz(cost_op, reps=reps)
-    ansatz.measure_all()
 
-    backend = AerSimulator(seed_simulator=seed)
-    pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
-    transpiled = pm.run(ansatz)
+    n_params = ansatz.num_parameters
+    params = [0.1] * n_params
+
+    n = len(variables)
+    method = "matrix_product_state" if n > _QAOA_MPS_THRESHOLD else "statevector"
+    opt_level = 0 if n > _QAOA_MPS_THRESHOLD else 1
+
+    # Bind parameters before transpilation so AerSimulator.run() receives a
+    # fully concrete circuit — avoids primitive-class version incompatibilities.
+    # Use inplace=True on a copy; assign_parameters(inplace=False) returns
+    # Optional[QuantumCircuit] in the type stubs.
+    bound = ansatz.copy()
+    bound.assign_parameters(dict(zip(bound.parameters, params)), inplace=True)
+    bound.measure_all()
+
+    backend = AerSimulator(method=method, seed_simulator=seed)
+    pm = generate_preset_pass_manager(optimization_level=opt_level, backend=backend)
+    transpiled = pm.run(bound)
     circuit_depth: int | None = transpiled.depth()
 
-    # Fixed initial parameters (β=0.1, γ=0.1 per layer).
-    import numpy as np  # stdlib-free fallback below if numpy absent
-    n_params = ansatz.num_parameters
-    try:
-        params = list(np.full(n_params, 0.1))
-    except Exception:
-        params = [0.1] * n_params
-
-    sampler = StatevectorSampler(seed=seed)
-    job = sampler.run([(transpiled, params)], shots=num_shots)
-    pub_result = job.result()[0]
-    counts = pub_result.data.meas.get_counts()
+    counts = backend.run(transpiled, shots=num_shots, seed_simulator=seed).result().get_counts()
 
     samples, energies = _counts_to_samples(counts, qubo, variables)
     if not samples:
@@ -284,7 +287,7 @@ def _run_vqe(
     reps: int,
     seed: int,
 ) -> tuple[list[dict[str, int]], list[float], int | None]:
-    """Run a sampling-VQE using Qiskit 1.x TwoLocal ansatz + StatevectorSampler.
+    """Run a sampling-VQE using Qiskit 1.x TwoLocal ansatz + AerSimulator.
 
     Uses a fixed initial parameter set; no classical optimiser loop.
     This acts as a variational ansatz sampler rather than a full VQE,
@@ -292,7 +295,6 @@ def _run_vqe(
     """
     try:
         from qiskit_aer import AerSimulator  # type: ignore[import]
-        from qiskit_aer.primitives import StatevectorSampler  # type: ignore[import]
     except ModuleNotFoundError as exc:
         raise ImportError(_INSTALL_MSG) from exc
 
@@ -304,19 +306,19 @@ def _run_vqe(
 
     n = len(variables)
     ansatz = TwoLocal(n, ["ry", "rz"], "cx", reps=reps)
-    ansatz.measure_all()
-
-    backend = AerSimulator(seed_simulator=seed)
-    pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
-    transpiled = pm.run(ansatz)
 
     n_params = ansatz.num_parameters
     params = [0.1] * n_params
 
-    sampler = StatevectorSampler(seed=seed)
-    job = sampler.run([(transpiled, params)], shots=num_shots)
-    pub_result = job.result()[0]
-    counts = pub_result.data.meas.get_counts()
+    bound = ansatz.copy()
+    bound.assign_parameters(dict(zip(bound.parameters, params)), inplace=True)
+    bound.measure_all()
+
+    backend = AerSimulator(seed_simulator=seed)
+    pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
+    transpiled = pm.run(bound)
+
+    counts = backend.run(transpiled, shots=num_shots, seed_simulator=seed).result().get_counts()
 
     samples, energies = _counts_to_samples(counts, qubo, variables)
     if not samples:
@@ -368,9 +370,7 @@ def run_qiskit(
         except ModuleNotFoundError as exc:
             raise ImportError(_INSTALL_MSG) from exc
 
-        service = QiskitRuntimeService(channel="ibm_quantum_platform", token=ibm_token)
-        backend = service.backend(ibm_backend)
-        sampler = SamplerV2(backend)
+        QiskitRuntimeService(channel="ibm_quantum_platform", token=ibm_token)
         # Runtime path falls through to exact as a structural placeholder —
         # full runtime circuit submission requires a compiled QuantumCircuit.
         samples, energies, circuit_depth = _run_exact(qubo, variables, num_shots, seed)
@@ -429,14 +429,31 @@ def _build_qaoa_ansatz(
     return QAOAAnsatz(cost_op, reps=reps)
 
 
+_STATEVECTOR_QUBIT_LIMIT = 24  # 2^24 statevector ≈ 256 MB — skip above this
+_QAOA_MPS_THRESHOLD = 20      # above this, use MPS sampler instead of statevector
+
+
 def _ideal_distribution(ansatz: Any, params: list[float]) -> dict[str, float]:
-    """Noiseless bitstring distribution of a bound ansatz via statevector."""
+    """Noiseless bitstring distribution of a bound ansatz via statevector.
+
+    Returns an empty dict when the circuit is too large to simulate in memory.
+    Decomposes PauliEvolution gates into basis gates first; without this
+    Qiskit densifies the full 2^n × 2^n operator matrix (64 GiB for n=16).
+    """
+    if ansatz.num_qubits > _STATEVECTOR_QUBIT_LIMIT:
+        return {}
+
+    from qiskit import transpile  # type: ignore[import]
     from qiskit.quantum_info import Statevector  # type: ignore[import]
 
     bound = ansatz.assign_parameters(params)
+    # Decompose PauliEvolution and other high-level gates to primitive gates so
+    # Statevector never calls PauliEvolution.to_matrix() (which densifies the
+    # full 2^n × 2^n sparse exponential — 64 GiB for 16 qubits).
+    decomposed = transpile(bound, basis_gates=["cx", "u", "h", "rx", "ry", "rz"])
     return {
         bs: float(p)
-        for bs, p in Statevector(bound).probabilities_dict().items()
+        for bs, p in Statevector(decomposed).probabilities_dict().items()
     }
 
 
@@ -448,6 +465,9 @@ def run_qiskit_qpu(
     shots: int = 1000,
     reps: int = 1,
     cost_scale: float = 1.0,
+    timeout: float = 600.0,
+    dynamical_decoupling: bool = False,
+    twirling: bool = False,
 ) -> QiskitResult:
     """Execute a PhysicalEncoding as a QAOA circuit on a real IBM QPU.
 
@@ -465,6 +485,10 @@ def run_qiskit_qpu(
         reps: Number of QAOA layers.
         cost_scale: Multiplier applied to the cost Hamiltonian — the
             gate-model analog of chain strength (scales effective γ).
+        timeout: Seconds to wait for the QPU job before raising
+            RuntimeError (default 600). Pass None to wait indefinitely.
+        dynamical_decoupling: If True, enables XY4 sequence dynamical decoupling on idle qubits.
+        twirling: If True, enables Pauli and measurement twirling.
 
     Returns:
         A QiskitResult with samples sorted by energy ascending. The raw
@@ -473,6 +497,7 @@ def run_qiskit_qpu(
 
     Raises:
         ImportError: If qiskit or qiskit-ibm-runtime is not installed.
+        RuntimeError: If the job does not complete within ``timeout`` seconds.
     """
     try:
         from qiskit_ibm_runtime import (  # type: ignore[import]
@@ -503,8 +528,15 @@ def run_qiskit_qpu(
     transpiled = pm.run(measured)
 
     sampler = SamplerV2(mode=backend)
+    if dynamical_decoupling:
+        sampler.options.dynamical_decoupling.enable = True
+        sampler.options.dynamical_decoupling.sequence_type = "XY4"
+    if twirling:
+        sampler.options.twirling.enable_gates = True
+        sampler.options.twirling.enable_measure = True
+
     job = sampler.run([(transpiled, params)], shots=shots)
-    pub_result = job.result()[0]
+    pub_result = job.result(timeout=timeout)[0]
     counts: dict[str, int] = pub_result.data.meas.get_counts()
 
     samples, energies = _counts_to_samples(counts, qubo, variables)
@@ -535,6 +567,8 @@ def ibm_noise_fn(
     shots: int = 1000,
     reps: int = 1,
     base_chain_strength: float | None = None,
+    dynamical_decoupling: bool = False,
+    twirling: bool = False,
 ) -> Callable[[PhysicalEncoding], float]:
     """Return a chain_break_fraction_fn for run_codesign backed by IBM QPU noise.
 
@@ -560,6 +594,8 @@ def ibm_noise_fn(
         reps: Number of QAOA layers.
         base_chain_strength: Chain strength corresponding to cost_scale 1.0.
             When None, captured from the first encoding seen.
+        dynamical_decoupling: If True, enables XY4 sequence dynamical decoupling on idle qubits.
+        twirling: If True, enables Pauli and measurement twirling.
 
     Returns:
         A callable (PhysicalEncoding) → float for the
@@ -581,16 +617,22 @@ def ibm_noise_fn(
             shots=shots,
             reps=reps,
             cost_scale=cost_scale,
+            dynamical_decoupling=dynamical_decoupling,
+            twirling=twirling,
         )
 
         counts: dict[str, int] = result.metadata["counts"]
         ideal: dict[str, float] = result.metadata["ideal_distribution"]
         total = sum(counts.values())
         measured = {bs: cnt / total for bs, cnt in counts.items()}
-        all_bs = set(measured) | set(ideal)
-        tvd = 0.5 * sum(
-            abs(measured.get(bs, 0.0) - ideal.get(bs, 0.0)) for bs in all_bs
-        )
+        if ideal:
+            all_bs = set(measured) | set(ideal)
+            tvd = 0.5 * sum(
+                abs(measured.get(bs, 0.0) - ideal.get(bs, 0.0)) for bs in all_bs
+            )
+        else:
+            # Statevector simulation skipped (circuit too large); use worst-case TVD
+            tvd = 1.0
 
         optimal_energy = min(
             _qubo_energy(encoding.qubo, a)

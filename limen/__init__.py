@@ -33,7 +33,11 @@ __all__ = [
     "from_physical_encoding",
     "CompilationCertificate",
     "certify_ising",
+    "load_quera_calibration",
+    "load_ibmq_calibration",
+    "load_live_ibmq_calibration",
 ]
+
 
 
 def __getattr__(name: str):
@@ -69,4 +73,16 @@ def __getattr__(name: str):
             "CompilationCertificate": CompilationCertificate,
             "certify_ising": certify_ising,
         }[name]
+    if name in ("load_quera_calibration", "load_ibmq_calibration", "load_live_ibmq_calibration"):
+        from limen.analog.calibration_loader import (
+            load_quera_calibration,
+            load_ibmq_calibration,
+            load_live_ibmq_calibration,
+        )
+        return {
+            "load_quera_calibration": load_quera_calibration,
+            "load_ibmq_calibration": load_ibmq_calibration,
+            "load_live_ibmq_calibration": load_live_ibmq_calibration,
+        }[name]
     raise AttributeError(f"module 'limen' has no attribute {name!r}")
+

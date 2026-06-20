@@ -34,7 +34,14 @@ For every compiled problem, LIMEN produces a confidence bound not a proof of cor
 
 ---
 
+## Workspace Organization
+
+To help navigate the files and components of LIMEN, see the [Directory Map](DIRECTORY_MAP.md) which labels and defines the role of every directory, script, and source file in the repository.
+
+---
+
 ## Architecture
+
 
 ```
                     [ Domain Problem ]
