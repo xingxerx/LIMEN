@@ -130,8 +130,9 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 - [x] Hamiltonian IR interface specification
 - [x] Classical Ising simulation backend (exact diagonalisation, ≤ 20 sites)
 - [x] Neutral-atom heuristic backend (van der Waals layout, Rydberg parameters)
+- [x] Neutral-atom LHZ parity-encoding fallback (Theorem 3 — automatic for non-natively-realizable targets)
 - [x] Photonic GBS-inspired backend (Arrazola-Bromley adjacency encoding)
-- [ ] Constructive universality theorem (pending research — see limen/docs/architecture.md)
+- [ ] Constructive universality theorem for general analog Hamiltonians (pending research — see limen/docs/architecture.md)
 
 ---
 
