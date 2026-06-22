@@ -220,9 +220,9 @@ def test_run_qiskit_qpu_error_mitigation(monkeypatch):
 
     mock_passmanagers = ModuleType("qiskit.transpiler.preset_passmanagers")
     class MockPM:
-        def run(self, circuit):
+        def run(self, circuit, **kwargs):
             return circuit
-    def generate_preset_pass_manager(optimization_level, backend):
+    def generate_preset_pass_manager(*args, **kwargs):
         return MockPM()
     mock_passmanagers.generate_preset_pass_manager = generate_preset_pass_manager
     sys.modules["qiskit.transpiler.preset_passmanagers"] = mock_passmanagers

@@ -235,6 +235,13 @@ class NeutralAtomResult:
         simulated: True — result includes a classical simulation.
         message: Human-readable status.
         metadata: Compilation annotations.
+        lhz_result: Set when the target was not natively realizable
+            (certificate.natively_realizable is False) and compilation was
+            automatically routed through the LHZ parity encoding (Theorem 3).
+            None when the heuristic van der Waals layout sufficed.
+        lhz_certificate: Penalty-gap certificate for the LHZ route, wrapping
+            the certified compilation of the encoded (local-field) problem.
+            None unless lhz_result is set.
     """
 
     hamiltonian: HamiltonianIR
@@ -253,6 +260,8 @@ class NeutralAtomResult:
     lhz_result: LHZResult | None = None
     lhz_certificate: LHZCertificate | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    lhz_result: LHZResult | None = None
+    lhz_certificate: LHZCertificate | None = None
 
 
 # -- Layout helpers ----------------------------------------------------
@@ -478,6 +487,23 @@ def run_neutral_atom(
         except Exception:
             pass
 
+    # Automatic LHZ fallback (Theorem 3): when the heuristic van der Waals
+    # layout cannot natively realize the target (negative coupling or a
+    # non-2D-embeddable geometry), encode the problem into local fields via
+    # the parity transform and recursively compile *that* — local fields are
+    # always natively realizable (Theorem 2 part 1), so this terminates in
+    # one recursion and yields a real, certified compilation rather than
+    # leaving the caller with only a known-bad heuristic certificate.
+    lhz_result: LHZResult | None = None
+    lhz_certificate: LHZCertificate | None = None
+    if not natively_realizable:
+        lhz_result = lhz_parity_pass(hamiltonian)
+        encoded_compiled = run_neutral_atom(lhz_result.encoded_ir, delta_model=delta_model)
+        lhz_certificate = certify_lhz(
+            lhz_result,
+            compilation_certificate=encoded_compiled.certificate,
+        )
+
     return NeutralAtomResult(
         hamiltonian=hamiltonian,
         atom_positions=positions,
@@ -523,4 +549,6 @@ def run_neutral_atom(
                 "and its correctness certificate."
             ),
         },
+        lhz_result=lhz_result,
+        lhz_certificate=lhz_certificate,
     )

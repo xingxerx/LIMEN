@@ -143,10 +143,15 @@ gadgets. Full constructions and penalty-strength bounds:
 - Rydberg platform background: M. Saffman, T. G. Walker, K. Mølmer,
   Rev. Mod. Phys. **82**, 2313 (2010). ∎
 
-**Status in LIMEN.** Documented route, not yet an implemented compiler pass.
-When `natively_realizable` is False, the certificate notes point here.
-Implementing the LHZ pass (with its penalty-strength certificate, which
-composes with Theorem 1) is the natural Phase 4 / v0.5 work item.
+**Status in LIMEN.** Implemented as an automatic compiler pass
+(`limen/analog/lhz.py`, wired into `run_neutral_atom` in
+`limen/analog/backends/neutral_atom.py`). When `natively_realizable` is
+False, compilation now recurses through `lhz_parity_pass` automatically:
+the encoded Hamiltonian's logical couplings become local fields, which are
+always natively realizable (Theorem 2 part 1), so the recursive compile
+yields a real, certified result (`NeutralAtomResult.lhz_result` /
+`lhz_certificate`) instead of leaving the caller with only the flagged
+heuristic certificate.
 
 ---
 
@@ -220,7 +225,7 @@ underlying lattice geometry, per the cited reference. ∎
 | Every analog compilation carries a provable operator-norm error bound | **Proved** (Thm 1), implemented, tested |
 | Exact norm computable for n ≤ 20 | **Proved** (Thm 1), implemented |
 | vdW neutral-atom: exact characterization of natively realizable targets | **Proved** (Thm 2); sign condition implemented, geometry measured via certificate |
-| Arbitrary-sign quadratic targets compile with quadratic ancilla overhead | **Established in literature** (Thm 3, LHZ); compiler pass not yet implemented |
+| Arbitrary-sign quadratic targets compile with quadratic ancilla overhead | **Established in literature** (Thm 3, LHZ); compiler pass implemented (`run_neutral_atom` auto-fallback) |
 | Photonic GBS device validity for all inputs | **Proved** (Thm 4), implemented, regression-tested |
 | BEC superexchange coefficient exactness + validity domain | **Proved given the DDL effective model** (Thm 5), implemented |
 | Universality for general (non-diagonal, time-dependent) analog Hamiltonians | **Open.** Not claimed. |
