@@ -56,6 +56,7 @@ class DWaveResult:
     best_assignment: dict[str, int]
     best_energy: float
     chain_break_fraction: float = 0.0
+    embedding: dict[str, list] | None = None
 
 
 def _import_bqm():
@@ -81,10 +82,10 @@ def _import_simulator():
         raise ImportError(_INSTALL_MSG) from exc
 
 
-def _import_qpu_sampler(endpoint: str | None, token: str | None):
-    """Return an EmbeddingComposite-wrapped DWaveSampler."""
+def _import_raw_qpu_sampler(endpoint: str | None, token: str | None):
+    """Return a bare DWaveSampler (no embedding composite)."""
     try:
-        from dwave.system import DWaveSampler, EmbeddingComposite  # type: ignore[import]
+        from dwave.system import DWaveSampler  # type: ignore[import]
     except ModuleNotFoundError as exc:
         raise ImportError(_INSTALL_MSG) from exc
 
@@ -93,7 +94,69 @@ def _import_qpu_sampler(endpoint: str | None, token: str | None):
         kwargs["endpoint"] = endpoint
     if token:
         kwargs["token"] = token
-    return EmbeddingComposite(DWaveSampler(**kwargs))
+    return DWaveSampler(**kwargs)
+
+
+def _find_pegasus_embedding(bqm: Any, raw_sampler: Any) -> "tuple[Any, dict[str, list]]":
+    """Find a Pegasus minor-embedding for bqm using minorminer.
+
+    Args:
+        bqm: A dimod BinaryQuadraticModel whose variables need embedding.
+        raw_sampler: A bare DWaveSampler providing the hardware edge list.
+
+    Returns:
+        (FixedEmbeddingComposite, embedding) where embedding maps each BQM
+        variable to a list of physical Pegasus qubit labels.
+
+    Raises:
+        ImportError: If minorminer or dwave-system is not installed.
+        RuntimeError: If no embedding can be found for the given problem size.
+    """
+    try:
+        import minorminer  # type: ignore[import]
+        from dwave.system import FixedEmbeddingComposite  # type: ignore[import]
+    except ModuleNotFoundError as exc:
+        raise ImportError(_INSTALL_MSG) from exc
+
+    source_edges = list(bqm.quadratic)
+    target_edges = raw_sampler.edgelist
+    embedding = minorminer.find_embedding(source_edges, target_edges)
+    if not embedding:
+        raise RuntimeError(
+            f"minorminer could not find a Pegasus embedding for "
+            f"{len(bqm.variables)} variables. "
+            "Reduce the problem size or switch to the simulator."
+        )
+    return FixedEmbeddingComposite(raw_sampler, embedding), embedding
+
+
+def pegasus_hardware_graph(m: int = 16) -> "dict[str, list[str]]":
+    """Return the Pegasus-m hardware graph as an adjacency dict.
+
+    The returned dict is suitable for passing directly to
+    compile_lexicographic() so the compiler knows the actual hardware
+    connectivity rather than assuming a complete graph.
+
+    Args:
+        m: Pegasus parameter. Pegasus-16 (the default) matches the
+            Advantage QPU topology (~5000 qubits).
+
+    Returns:
+        Adjacency dict mapping str(qubit_label) -> [str(neighbor), ...].
+
+    Raises:
+        ImportError: If dwave-networkx is not installed.
+    """
+    try:
+        import dwave_networkx as dnx  # type: ignore[import]
+    except ModuleNotFoundError as exc:
+        raise ImportError(
+            "dwave-networkx is required for Pegasus graph generation. "
+            "Install it with: pip install dwave-networkx"
+        ) from exc
+
+    G = dnx.pegasus_graph(m)
+    return {str(node): [str(n) for n in G.neighbors(node)] for node in G.nodes()}
 
 
 def run_dwave(
@@ -126,8 +189,10 @@ def run_dwave(
 
     bqm = BinaryQuadraticModel.from_qubo(encoding.qubo)
 
+    phys_embedding: dict[str, list] | None = None
     if use_qpu:
-        sampler = _import_qpu_sampler(qpu_endpoint, qpu_token)
+        raw = _import_raw_qpu_sampler(qpu_endpoint, qpu_token)
+        sampler, phys_embedding = _find_pegasus_embedding(bqm, raw)
         sampleset = sampler.sample(
             bqm,
             num_reads=num_reads,
@@ -162,6 +227,7 @@ def run_dwave(
         best_assignment={k: int(v) for k, v in samples[0].items()},
         best_energy=energies[0],
         chain_break_fraction=cbf,
+        embedding=phys_embedding,
     )
 
 

@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 
 from limen.analog.backends.classical_sim import IsingSimulationResult, run_ising_simulation
 from limen.analog.certificate import CompilationCertificate, certify_ising
+from limen.analog.lhz import LHZCertificate, LHZResult, certify_lhz, lhz_parity_pass
 
 # Van der Waals C6 coefficient for Rb-87 |70S1/2> Rydberg state in MHz*um^6.
 # Reference: Saffman, Walker & Molmer, Rev. Mod. Phys. 82, 2313 (2010).
@@ -249,6 +250,8 @@ class NeutralAtomResult:
     message: str
     certificate: CompilationCertificate | None = None
     geometry: GeometricEmbeddabilityResult | None = None
+    lhz_result: LHZResult | None = None
+    lhz_certificate: LHZCertificate | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -458,6 +461,15 @@ def run_neutral_atom(
         notes=cert_notes,
     )
 
+    # LHZ fallback: when the problem isn't natively realizable (negative
+    # couplings or non-2D-embeddable geometry), encode it via parity mapping
+    # so the caller has an immediately usable exact-compilation route.
+    lhz_enc: LHZResult | None = None
+    lhz_cert: LHZCertificate | None = None
+    if not natively_realizable:
+        lhz_enc = lhz_parity_pass(hamiltonian)
+        lhz_cert = certify_lhz(lhz_enc, certificate)
+
     # Classical simulation for small instances.
     sim: IsingSimulationResult | None = None
     if n <= 20:
@@ -483,6 +495,8 @@ def run_neutral_atom(
         ),
         certificate=certificate,
         geometry=geo,
+        lhz_result=lhz_enc,
+        lhz_certificate=lhz_cert,
         metadata={
             "c6_mhz_um6": _C6_MHZ_UM6,
             "rabi_frequency_mhz": _OMEGA_MHZ,
@@ -498,11 +512,15 @@ def run_neutral_atom(
                 delta_model.device_id if delta_model is not None else None
             ),
             "status": "certified-heuristic",
+            "lhz_fallback_applied": lhz_enc is not None,
+            "lhz_n_physical": lhz_enc.n_physical if lhz_enc is not None else None,
             "note": (
                 "Heuristic van der Waals layout with exact compilation "
                 "certificate (Theorem 1, limen/docs/universality_theorem.md). "
-                "Targets with negative J or non-2D-embeddable distances require "
-                "the parity-encoding route (Theorem 3)."
+                "Targets with negative J or non-2D-embeddable distances are "
+                "automatically LHZ-encoded (Theorem 3); see result.lhz_result "
+                "and result.lhz_certificate for the parity-encoded Hamiltonian "
+                "and its correctness certificate."
             ),
         },
     )

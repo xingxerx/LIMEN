@@ -53,3 +53,41 @@ def test_maxcut_best_energy_non_positive():
 
     assert result.best_energy <= 0.0
     assert all(v in (0, 1) for v in result.best_assignment.values())
+
+
+def test_simulator_embedding_is_none():
+    """Simulator path must leave embedding=None (no Pegasus embedding needed)."""
+    encoding = _make_encoding(_TRIVIAL_QUBO)
+    result = run_dwave(encoding, num_reads=10, seed=0)
+    assert result.embedding is None
+
+
+def test_pegasus_hardware_graph_structure():
+    """pegasus_hardware_graph returns a non-empty adjacency dict with symmetric edges."""
+    pytest.importorskip("dwave_networkx", reason="dwave-networkx not installed")
+    from limen.backends.dwave import pegasus_hardware_graph
+
+    g = pegasus_hardware_graph(m=2)  # small m for speed
+    assert len(g) > 0
+    for node, neighbours in g.items():
+        assert isinstance(node, str)
+        for nb in neighbours:
+            assert node in g[nb], f"edge {node}-{nb} not symmetric"
+
+
+def test_find_pegasus_embedding_raises_on_bad_sampler():
+    """_find_pegasus_embedding must raise RuntimeError when no embedding exists."""
+    pytest.importorskip("minorminer", reason="minorminer not installed")
+    from unittest.mock import MagicMock
+
+    from dimod import BinaryQuadraticModel  # type: ignore[import]
+    from limen.backends.dwave import _find_pegasus_embedding
+
+    # A BQM with no quadratic edges on an empty edge list forces minorminer
+    # to return an empty embedding, which must surface as RuntimeError.
+    bqm = BinaryQuadraticModel({"x": -1.0}, {}, 0.0, "BINARY")
+    fake_sampler = MagicMock()
+    fake_sampler.edgelist = []
+
+    with pytest.raises(RuntimeError, match="minorminer could not find"):
+        _find_pegasus_embedding(bqm, fake_sampler)
