@@ -260,8 +260,6 @@ class NeutralAtomResult:
     lhz_result: LHZResult | None = None
     lhz_certificate: LHZCertificate | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    lhz_result: LHZResult | None = None
-    lhz_certificate: LHZCertificate | None = None
 
 
 # -- Layout helpers ----------------------------------------------------
@@ -470,15 +468,6 @@ def run_neutral_atom(
         notes=cert_notes,
     )
 
-    # LHZ fallback: when the problem isn't natively realizable (negative
-    # couplings or non-2D-embeddable geometry), encode it via parity mapping
-    # so the caller has an immediately usable exact-compilation route.
-    lhz_enc: LHZResult | None = None
-    lhz_cert: LHZCertificate | None = None
-    if not natively_realizable:
-        lhz_enc = lhz_parity_pass(hamiltonian)
-        lhz_cert = certify_lhz(lhz_enc, certificate)
-
     # Classical simulation for small instances.
     sim: IsingSimulationResult | None = None
     if n <= 20:
@@ -521,8 +510,6 @@ def run_neutral_atom(
         ),
         certificate=certificate,
         geometry=geo,
-        lhz_result=lhz_enc,
-        lhz_certificate=lhz_cert,
         metadata={
             "c6_mhz_um6": _C6_MHZ_UM6,
             "rabi_frequency_mhz": _OMEGA_MHZ,
@@ -538,8 +525,8 @@ def run_neutral_atom(
                 delta_model.device_id if delta_model is not None else None
             ),
             "status": "certified-heuristic",
-            "lhz_fallback_applied": lhz_enc is not None,
-            "lhz_n_physical": lhz_enc.n_physical if lhz_enc is not None else None,
+            "lhz_fallback_applied": lhz_result is not None,
+            "lhz_n_physical": lhz_result.n_physical if lhz_result is not None else None,
             "note": (
                 "Heuristic van der Waals layout with exact compilation "
                 "certificate (Theorem 1, limen/docs/universality_theorem.md). "
