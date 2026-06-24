@@ -40,9 +40,11 @@ High-level overview documentation for LIMEN.
 Practical entry-point examples showcasing how to use LIMEN's components.
 * **`analog_demo.py`** — Demonstrates the compilation pipeline from LogicalGraph to physical neutral-atom and photonic topologies.
 * **`codesign_demo.py`** — Showcases the joint hardware-software Stackelberg co-design loop for optimizing embeddings and penalty margins.
+* **`communication_demo.py`** — Showcases state teleportation and QKD (BB84) key exchange protocols.
 * **`ibm_codesign_qpu.py`** — Demonstrates physical co-design mapping running on IBM gate-model hardware.
 * **`ibm_qpu_demo.py`** — Standard circuit compilation and execution walkthrough using the IBM Qiskit backend.
 * **`max_cut.py`** — Compiles a classical Max-Cut graph problem into a Hamiltonian suitable for physical hardware execution.
+
 
 ---
 
@@ -69,7 +71,12 @@ The primary Python package namespace containing compiler layers, adapters, and v
 * **`dwave.py`** — Adapter for D-Wave quantum annealers leveraging the Ocean SDK.
 * **`qiskit_backend.py`** — Adapter for gate-model IBM hardware leveraging Qiskit Runtime.
 
+### 📁 `limen/communication/` — Quantum Communication Primitives
+* **`__init__.py`** — Exports QuantumChannel and protocol result schemas.
+* **`channel.py`** — Implements quantum teleportation (Bell measurement + feedforward) and BB84 QKD.
+
 ### 📁 `limen/codesign/` — Hardware-Software Co-Design Engine
+
 * **`__init__.py`** — Exposes codesign solvers and portfolio compilation.
 * **`_pyfallback.py`** — Pure-Python fallback implementing the Stackelberg co-design learning loop.
 * **`portfolio.py`** — Portfolio selection compiler that ranks and routes workloads across available physical slots.
@@ -131,7 +138,9 @@ Comprehensive automated testing suite verifying compiler passes, adapters, math 
 * **`test_certificate.py`** — Validates Theorem 1 realizability certification.
 * **`test_codesign.py`** — Verifies Stackelberg solver correctness against simulated baselines.
 * **`test_codesign_cbf.py`** — Validates chain-break fraction feedback loops.
+* **`test_communication.py`** — Verifies QuantumChannel teleportation fidelity and QKD eavesdropper detection.
 * **`test_core.py`** — Test suite for basic lexicographic compiler and IR schemas.
+
 * **`test_delta_model.py`** — Tests drift model regression and calibration scaling bounds.
 * **`test_geometry.py`** — Exercises layout distance calculations and spatial mappings.
 * **`test_lhz.py`** — Exercises triangular LHZ layout transformations.
