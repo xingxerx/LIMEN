@@ -8,9 +8,12 @@ grpc = pytest.importorskip("grpc")
 
 from limen.analog.delta_model import HardwareDeltaModel
 from limen.analog.hamiltonian import SubstrateType
+from limen.core.compiler import compile_lexicographic
+from limen.core.ir import Interaction, LogicalGraph, Variable
 from limen.distributed.client import CoordinationClient
 from limen.distributed.config import NodeConfig
 from limen.distributed.node import NodeInfo
+from limen.distributed.partition import namespaced_hardware_graph
 from limen.distributed.registry import NodeRegistry
 from limen.distributed.server import serve
 
@@ -44,6 +47,18 @@ class TestCoordinationServer(unittest.TestCase):
     def test_sync_calibration_unknown_device_raises(self):
         with self.assertRaises(grpc.RpcError):
             self.client.sync_calibration("does-not-exist")
+
+    def test_compile_partition_round_trip(self):
+        graph = LogicalGraph(
+            variables=[Variable("x0"), Variable("x1")],
+            interactions=[Interaction("x0", "x0", -1.0), Interaction("x0", "x1", 2.0)],
+        )
+
+        remote = self.client.compile_partition("0", graph, "p0")
+        local = compile_lexicographic(graph, namespaced_hardware_graph(2, "p0"))
+
+        self.assertEqual(remote.qubo, local.qubo)
+        self.assertEqual(remote.embedding, local.embedding)
 
 
 if __name__ == "__main__":
