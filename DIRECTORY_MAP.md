@@ -82,6 +82,16 @@ The primary Python package namespace containing compiler layers, adapters, and v
 * **`portfolio.py`** — Portfolio selection compiler that ranks and routes workloads across available physical slots.
 * **`solver.py`** — Core optimizer computing game-theoretic equilibria for compiler parameters.
 
+### 📁 `limen/distributed/` — Multi-Node Coordination Layer
+* **`__init__.py`** — Exports `NodeConfig`, `NodeInfo`, `NodeRegistry`. Requires the `distributed` extra (grpcio).
+* **`node.py`** — `NodeInfo`: identity and reachability (`node_id`, `host`, `port`, `device_ids`) of a LIMEN node.
+* **`config.py`** — `NodeConfig.from_env()`: reads `LIMEN_NODE_ID`/`LIMEN_NODE_HOST`/`LIMEN_NODE_PORT`/`LIMEN_NODE_DEVICE_IDS`/`LIMEN_KNOWN_PEERS`.
+* **`registry.py`** — `NodeRegistry`: peer table with TTL eviction, wrapping the existing `DeltaModelRegistry` and caching remotely-fetched `HardwareDeltaModel`s with a TTL.
+* **`marshal.py`** — Conversions between LIMEN dataclasses and protobuf messages, built on the existing `to_dict()`/`from_dict()` convention.
+* **`server.py`** — gRPC `CoordinationServicer` (Register/Heartbeat/SyncCalibration/ListPeers) and the `python -m limen.distributed.server` entry point.
+* **`client.py`** — `CoordinationClient`: thin wrapper for calling a peer's Coordination service.
+* **📂 `proto/`** — `coordination.proto` service definition plus its generated `coordination_pb2.py` / `coordination_pb2_grpc.py` (regenerate via `scripts/gen_proto.py`; do not hand-edit).
+
 ### 📁 `limen/core/` — Lexicographic Compiler & Logical IR
 * **`__init__.py`** — Exports core compilation routines and IR constructs.
 * **`compiler.py`** — Translates the LogicalGraph IR to a PhysicalEncoding IR deterministically.
@@ -101,6 +111,11 @@ The primary Python package namespace containing compiler layers, adapters, and v
 ### 📁 `limen/validator/` — Probabilistic Verification Loop
 * **`__init__.py`** — Exports verification routines.
 * **`validator.py`** — Performs small-instance brute force verification and computes statistical confidence metrics.
+
+---
+
+## 📂 `scripts/` — Developer Tooling
+* **`gen_proto.py`** — Regenerates `limen/distributed/proto/coordination_pb2*.py` from `coordination.proto` via `grpc_tools.protoc`.
 
 ---
 
@@ -142,6 +157,8 @@ Comprehensive automated testing suite verifying compiler passes, adapters, math 
 * **`test_core.py`** — Test suite for basic lexicographic compiler and IR schemas.
 
 * **`test_delta_model.py`** — Tests drift model regression and calibration scaling bounds.
+* **`test_distributed_registry.py`** — Unit tests for `NodeRegistry` peer add/evict/TTL cache and calibration resolution.
+* **`test_distributed_server.py`** — End-to-end tests of the Coordination gRPC service (register/heartbeat/list-peers/sync-calibration) against a real server.
 * **`test_geometry.py`** — Exercises layout distance calculations and spatial mappings.
 * **`test_lhz.py`** — Exercises triangular LHZ layout transformations.
 * **`test_lhz_certificate.py`** — Tests correctness of LHZ realizability checks.

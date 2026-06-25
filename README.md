@@ -102,6 +102,18 @@ To help navigate the files and components of LIMEN, see the [Directory Map](DIRE
 
 ---
 
+## Quantum Communication
+
+LIMEN's quantum-channel module also runs and certifies real-hardware protocols, not just optimization circuits. As a cross-layout fidelity case study, the standard 3-qubit teleportation circuit was submitted to `ibm_kingston` on two physical qubit mappings that share the state and Alice qubits but differ in the Bob relay qubit: q[10,11,12] (job `d8u5qqkbp3hs7385g0mg`) and q[10,11,18] (job `d8u6b6kbp3hs7385gil0`), 1000 shots each. The q[10,11,12] layout achieved fidelity 0.954 versus 0.938 for q[10,11,18] — a 1.6 percentage-point gap — isolating the effect of Bob relay qubit choice on end-to-end teleportation fidelity while holding the state and Alice qubits fixed, and demonstrating LIMEN's ability to certify protocol performance sensitivity to physical qubit mapping on real NISQ hardware. Full counts, timestamps, and verified job layouts: [`results/teleport_summary.json`](results/teleport_summary.json).
+
+---
+
+## Multi-Node Coordination
+
+LIMEN instances can discover each other and exchange hardware calibration state over a gRPC `Coordination` service (`limen.distributed`): each node advertises its `node_id` and the device IDs it serves, registers with a static list of known peers on startup, and can pull a peer's `HardwareDeltaModel` on demand via `SyncCalibration`. This is the coordination substrate that distributed QUBO partitioning and cross-node classical feedforward transport (planned) will run on top of. See [`limen/docs/architecture.md`](limen/docs/architecture.md#multi-node-coordination-layer) for the design and [`limen/distributed/`](limen/distributed/) for the implementation. Requires the `distributed` extra: `pip install limen[distributed]`.
+
+---
+
 ## What LIMEN Is Not
 
 LIMEN is not a quantum computing framework. It does not manage qubits, run circuits, or simulate quantum mechanics. It is a **compiler** — its job is translation, not execution.
@@ -133,6 +145,11 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 - [x] Neutral-atom LHZ parity-encoding fallback (Theorem 3 — automatic for non-natively-realizable targets)
 - [x] Photonic GBS-inspired backend (Arrazola-Bromley adjacency encoding)
 - [ ] Constructive universality theorem for general analog Hamiltonians (pending research — see limen/docs/architecture.md)
+
+### Phase 4 — Multi-Node Distributed Architecture (In Progress)
+- [x] Milestone 1: node identity, registry, and gRPC coordination service (discovery, heartbeat, calibration sync)
+- [ ] Milestone 2: distributed QUBO partitioning across nodes
+- [ ] Milestone 3: classical feedforward transport over `QuantumChannel`
 
 ---
 
@@ -170,7 +187,7 @@ print(result.confidence)  # 0.0 – 1.0
 
 **Hardware agnostic formulation, hardware explicit compilation.** The logical IR knows nothing about hardware topology. The compiler knows everything. The boundary between them is hard and intentional.
 
-**Open core.** The compiler, IR, validator, and hardware adapters are Apache 2.0. Production features (Stackelberg co-design, portfolio compilation, drift-aware margin selection) will be offered under a commercial license for enterprise deployments.
+**Open core.** The compiler, IR, validator, and hardware adapters are source-available under the Elastic License 2.0. Production features (Stackelberg co-design, portfolio compilation, drift-aware margin selection) will be offered under a commercial license for enterprise deployments.
 
 ---
 
@@ -189,9 +206,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE) for details.
+Elastic License 2.0 (ELv2) — see [LICENSE](LICENSE) for details.
 
-The patent grant clause is intentional. Quantum computing is a patent-dense field. LIMEN's Apache 2.0 license protects contributors and users explicitly.
+LIMEN is source-available: anyone can read, fork, and use the code for
+research and internal purposes. ELv2 prohibits offering LIMEN as a hosted
+or managed service without a commercial license. Use is also subject to
+the restrictions in [ACCEPTABLE_USE.md](ACCEPTABLE_USE.md), which
+prohibits weapons development, mass surveillance, unauthorized
+cryptanalysis, and attacks on critical infrastructure.
+
+As of v0.3.1, LIMEN changed from Apache 2.0 to ELv2. Copies obtained under
+Apache 2.0 retain their Apache 2.0 rights; all new versions are licensed
+under ELv2.
 
 ---
 

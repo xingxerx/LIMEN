@@ -33,9 +33,10 @@ python -c "import limen; from limen_core import StackelbergSolver; print(limen._
 Optional SDK installs for hardware backend tests:
 
 ```bash
-pip install limen[dwave]    # D-Wave Ocean SDK
-pip install limen[ibm]      # Qiskit + Qiskit Aer
-pip install limen[pyqubo]   # PyQUBO frontend
+pip install limen[dwave]        # D-Wave Ocean SDK
+pip install limen[ibm]          # Qiskit + Qiskit Aer
+pip install limen[pyqubo]       # PyQUBO frontend
+pip install limen[distributed]  # grpcio, for limen.distributed (multi-node coordination)
 ```
 
 ## Running Tests
@@ -54,6 +55,8 @@ Test files and what they cover:
 - `tests/test_analog.py` — Hamiltonian IR, analog backend stubs
 - `tests/test_backend_dwave.py` — D-Wave adapter (requires Ocean SDK)
 - `tests/test_backend_qiskit.py` — Qiskit adapter (requires Qiskit)
+- `tests/test_distributed_registry.py` — `NodeRegistry` peer/cache logic (no extra required)
+- `tests/test_distributed_server.py` — Coordination gRPC service end-to-end (requires `grpcio`, skipped otherwise)
 
 ## Adding a New Backend Adapter
 

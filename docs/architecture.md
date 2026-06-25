@@ -141,6 +141,20 @@ This is a non-trivial result because binary variables map awkwardly onto the con
 
 ---
 
+## Multi-Node Coordination Layer
+
+`limen.distributed` is the foundation for running LIMEN across more than one process: node identity, a peer registry, and a gRPC `Coordination` service for discovery and `HardwareDeltaModel` sync. It is deliberately scoped — this is the transport that distributed QUBO partitioning and cross-node classical feedforward transport will dispatch over, not those features themselves.
+
+A node is identified by `NodeInfo` (`node_id`, `host`, `port`, the `device_ids` it serves) and configured from the environment via `NodeConfig.from_env()` (`LIMEN_NODE_ID`, `LIMEN_NODE_HOST`/`PORT`, `LIMEN_NODE_DEVICE_IDS`, `LIMEN_KNOWN_PEERS`). There is no service-discovery infrastructure (no etcd, no consul) — peers are a static list configured per node and exchanged via mutual self-registration at startup. For two nodes that each list the other in `LIMEN_KNOWN_PEERS`, registration becomes symmetric without any merge logic: A's `Register` call against B populates B's registry with A, and B's own startup call against A populates A's registry with B.
+
+`NodeRegistry` wraps the existing single-process `DeltaModelRegistry` (`limen/analog/delta_model.py`) rather than replacing it. Local device lookups behave exactly as they did before this layer existed. A device ID not found locally falls through to a TTL'd cache of models fetched from peers via `SyncCalibration` — the registry itself does no network I/O; callers populate the cache after a round trip through `CoordinationClient`.
+
+Wire messages mirror the project's existing `to_dict()` / `from_dict()` JSON-safe-dict convention rather than introducing a parallel schema (`limen/distributed/marshal.py`): a `HardwareDeltaModelProto` has the same shape as `HardwareDeltaModel.to_dict()`, down to the stringified tuple keys for `coupling_scale_errors`. The one deliberate lossy spot is `metadata`, which is `map<string, string>` on the wire — non-string metadata values are coerced via `str()` and will not round-trip to their original type. No caller needed richer metadata for milestone 1.
+
+Explicitly out of scope for this layer: TLS/auth on the gRPC channel (fine for a LAN/VPN-trusted pair of nodes; flagged as a follow-up once topology is proven), and any external service-discovery system. The static peer list is sufficient to validate the two-node case; it is not meant to scale to large clusters without revisiting node discovery.
+
+---
+
 ## PyO3 Bridge
 
 The inner scoring loop (`StackelbergSolver.solve`, `compute`, `compute_stability`) lives in Rust and is exposed to Python via PyO3. The reasons are iteration speed, absence of the GIL during the inner loop, and deterministic floating-point behavior across platforms (Rust's `f64` operations are IEEE 754 strict in the same way across all targets LIMEN supports).
@@ -159,3 +173,4 @@ These are the architectural invariants that must never be violated:
 3. **Optional SDKs.** All hardware SDK dependencies (`dwave-ocean-sdk`, `qiskit`, `pyqubo`) are optional at import time. A bare `import limen` with none of these installed must succeed.
 4. **Optional Rust.** The `limen_core` Rust extension is optional at import time. All functionality except the Stackelberg co-design loop is available without it.
 5. **License hygiene.** Apache 2.0 throughout. No copyleft dependencies. The patent grant clause is intentional.
+6. **Optional distributed deps.** `grpcio`/`grpcio-tools`/`protobuf` are only required by `limen.distributed` (the `distributed` extra). A bare `import limen` with none of these installed must succeed.
