@@ -35,7 +35,15 @@ dependencies = []
 pyqubo = ["pyqubo>=1.4"]
 dwave = ["dwave-ocean-sdk>=6.0"]
 ibm = ["qiskit>=1.0"]
-all = ["pyqubo>=1.4", "dwave-ocean-sdk>=6.0", "qiskit>=1.0"]
+distributed = ["grpcio>=1.60", "grpcio-tools>=1.60", "protobuf>=4.25"]
+all = [
+  "pyqubo>=1.4",
+  "dwave-ocean-sdk>=6.0",
+  "qiskit>=1.0",
+  "grpcio>=1.60",
+  "grpcio-tools>=1.60",
+  "protobuf>=4.25",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/xingxerx/LIMEN"
