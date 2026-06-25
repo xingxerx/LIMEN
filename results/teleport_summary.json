@@ -1,0 +1,85 @@
+{
+  "experiment": "quantum_teleportation_cross_layout_fidelity",
+  "description": "Comparison of LIMEN teleportation-circuit fidelity on ibm_kingston across two physical qubit mappings: q[10, 11, 12] vs q[10, 11, 18], sharing the state and Alice qubits but differing in the Bob relay qubit.",
+  "backend": "ibm_kingston",
+  "circuit": "limen.quantum_channel.teleport.teleport_circuit (3-qubit standard teleportation)",
+  "methodology": "Fidelity estimated as fraction of shots where Bobs qubit (leftmost classical bit, c2) measures 0, matching the prepared |0> input state, per limen.quantum_channel.teleport_analysis.estimate_fidelity. Physical qubit layout and timestamps extracted from the IBM Runtime job object (job.inputs transpiled-circuit layout, job.metrics) via examples/fetch_qpu_job.py, not transcribed from screenshots.",
+  "shots_per_run": 1000,
+  "runs": [
+    {
+      "job_id": "d8u5qqkbp3hs7385g0mg",
+      "physical_qubits": [
+        10,
+        11,
+        12
+      ],
+      "timestamps": {
+        "created": "2026-06-24T22:42:50.804023Z",
+        "finished": "2026-06-25T07:26:35.341198Z",
+        "running": "2026-06-25T07:26:23.675716Z"
+      },
+      "counts": {
+        "000": 253,
+        "001": 248,
+        "011": 227,
+        "100": 9,
+        "010": 226,
+        "101": 15,
+        "110": 13,
+        "111": 9
+      },
+      "shots": 1000,
+      "fidelity_estimate": 0.954,
+      "success": true
+    },
+    {
+      "job_id": "d8u6b6kbp3hs7385gil0",
+      "physical_qubits": [
+        10,
+        11,
+        18
+      ],
+      "timestamps": {
+        "created": "2026-06-24T23:17:46.128533Z",
+        "finished": "2026-06-25T07:26:51.875618Z",
+        "running": "2026-06-25T07:26:34.436042Z"
+      },
+      "counts": {
+        "011": 218,
+        "010": 225,
+        "000": 234,
+        "001": 261,
+        "100": 13,
+        "101": 18,
+        "110": 16,
+        "111": 15
+      },
+      "shots": 1000,
+      "fidelity_estimate": 0.938,
+      "success": true
+    }
+  ],
+  "comparison": {
+    "layout_a": {
+      "job_id": "d8u5qqkbp3hs7385g0mg",
+      "physical_qubits": [
+        10,
+        11,
+        12
+      ],
+      "fidelity": 0.954
+    },
+    "layout_b": {
+      "job_id": "d8u6b6kbp3hs7385gil0",
+      "physical_qubits": [
+        10,
+        11,
+        18
+      ],
+      "fidelity": 0.938
+    },
+    "fidelity_delta": 0.016,
+    "better_layout": "q[10, 11, 12]",
+    "interpretation": "The q[10, 11, 12] layout outperforms q[10, 11, 18] by 1.6 percentage points (95.4% vs 93.8%), isolating the effect of Bob relay qubit choice on end-to-end teleportation fidelity while holding the state and Alice qubits fixed. Demonstrates LIMEN can certify protocol performance sensitivity to physical qubit mapping on real NISQ hardware."
+  }
+}
