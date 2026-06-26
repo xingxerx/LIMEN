@@ -1,0 +1,88 @@
+// Copyright 2026 LIMEN Contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+// Node coordination service for LIMEN multi-node deployments: discovery,
+// liveness, and HardwareDeltaModel sync between peer LIMEN instances.
+
+syntax = "proto3";
+
+package limen.distributed;
+
+message NodeInfo {
+  string node_id = 1;
+  string host = 2;
+  int32 port = 3;
+  repeated string device_ids = 4;
+}
+
+message RegisterAck {
+  bool accepted = 1;
+}
+
+message HeartbeatRequest {
+  string node_id = 1;
+}
+
+message HeartbeatAck {
+  bool alive = 1;
+}
+
+message DeviceDriftProto {
+  // JSON-encoded site_detuning_offsets dict (string keys -> float values).
+  map<string, double> site_detuning_offsets = 1;
+  // JSON-encoded coupling_scale_errors; keys are "(i, j)" string tuples.
+  map<string, double> coupling_scale_errors = 2;
+  double global_rabi_error = 3;
+  double timestamp = 4;
+  map<string, string> metadata = 5;
+}
+
+message HardwareDeltaModelProto {
+  string device_id = 1;
+  string substrate = 2;
+  DeviceDriftProto drift = 3;
+  int32 n_sites = 4;
+  map<string, string> metadata = 5;
+}
+
+message SyncCalibrationRequest {
+  string device_id = 1;
+}
+
+message Empty {}
+
+message NodeList {
+  repeated NodeInfo nodes = 1;
+}
+
+message CompilePartitionRequest {
+  string partition_id = 1;
+  // JSON-encoded LogicalGraph.to_dict() for this partition.
+  string graph_json = 2;
+  // Namespace prefix for this partition's physical qubit labels (e.g. "p0").
+  string hardware_prefix = 3;
+}
+
+message CompilePartitionResult {
+  // JSON-encoded PhysicalEncoding.to_dict() for this partition.
+  string encoding_json = 1;
+}
+
+service Coordination {
+  rpc Register(NodeInfo) returns (RegisterAck);
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatAck);
+  rpc SyncCalibration(SyncCalibrationRequest) returns (HardwareDeltaModelProto);
+  rpc ListPeers(Empty) returns (NodeList);
+  rpc CompilePartition(CompilePartitionRequest) returns (CompilePartitionResult);
+}
