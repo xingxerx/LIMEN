@@ -8,6 +8,7 @@ from limen.core.compiler import (
 )
 from limen.core.ir import Interaction, LogicalGraph, Variable
 from limen.frontends.pyqubo import from_pyqubo, from_qubo_dict
+from limen.frontends.vrp import decode_routes, distance_matrix, from_vrp, vrp_qubo
 from limen.validator.validator import ValidationResult, validate
 
 __version__ = "0.4.0"
@@ -23,6 +24,10 @@ __all__ = [
     "validate",
     "from_qubo_dict",
     "from_pyqubo",
+    "vrp_qubo",
+    "from_vrp",
+    "decode_routes",
+    "distance_matrix",
     "CoDesignResult",
     "run_codesign",
     "PortfolioResult",
