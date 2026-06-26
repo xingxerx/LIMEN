@@ -56,6 +56,7 @@ class EndToEndCertificate:
     n_logical_qubits: int
     notes: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    distributed_compilation: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +74,11 @@ class EndToEndCertificate:
             "n_logical_qubits": self.n_logical_qubits,
             "notes": list(self.notes),
             "metadata": dict(self.metadata),
+            "distributed_compilation": (
+                dict(self.distributed_compilation)
+                if self.distributed_compilation is not None
+                else None
+            ),
         }
 
 
@@ -122,6 +128,65 @@ def _grid_search(
     return best_params, best_dist
 
 
+def _distributed_compile(
+    graph: LogicalGraph, server_addresses: list[str], num_partitions: int | None
+) -> tuple[dict[str, Any], list[str]]:
+    """Compile `graph` across peer nodes via the Coordination CompilePartition RPC.
+
+    Partitions the graph, dispatches each partition to a peer over gRPC,
+    merges the returned encodings, and verifies the merged encoding is
+    energetically equivalent to a local single-shot compile. Requires the
+    distributed extra (grpcio); imports are deferred so the local pipeline
+    has no hard dependency on it.
+    """
+    from limen.core.compiler import compile_lexicographic, default_hardware_graph
+    from limen.distributed.partition import (
+        dispatch_partitions,
+        merge_partition_results,
+        partition_graph,
+    )
+    from limen.validator.validator import validate
+
+    n_vars = len(graph.variables)
+    k = max(1, min(num_partitions or len(server_addresses), n_vars))
+
+    partitions = partition_graph(graph, k)
+    encodings = dispatch_partitions(partitions, server_addresses)
+    merged = merge_partition_results(partitions, encodings, graph)
+
+    single_shot = compile_lexicographic(graph, default_hardware_graph(n_vars))
+    merged_energy = validate(merged, runs=200).classical_energy
+    single_energy = validate(single_shot, runs=200).classical_energy
+    verified = (
+        None
+        if merged_energy is None or single_energy is None
+        else abs(merged_energy - single_energy) < 1e-9
+    )
+
+    info: dict[str, Any] = {
+        "num_partitions": len(partitions),
+        "server_addresses": list(server_addresses),
+        "n_physical_qubits": len(merged.embedding),
+        "chain_strength": merged.chain_strength,
+        "verified_equivalent_to_single_shot": verified,
+    }
+    notes = [
+        f"Distributed compilation: graph split into {len(partitions)} partition(s) "
+        f"dispatched to {len(server_addresses)} peer(s) via the CompilePartition RPC."
+    ]
+    if verified is True:
+        notes.append(
+            "Merged distributed encoding is energetically equivalent to a "
+            "single-shot local compile."
+        )
+    elif verified is False:
+        notes.append(
+            "WARNING: merged distributed encoding does NOT match the "
+            "single-shot compile energy."
+        )
+    return info, notes
+
+
 def run_pipeline(
     qubo: dict[tuple[str, str], float],
     *,
@@ -130,6 +195,8 @@ def run_pipeline(
     distance: int = 3,
     physical_error_rate: float | None = None,
     encode_logical: bool = True,
+    server_addresses: list[str] | None = None,
+    num_partitions: int | None = None,
     seed: int = 42,
 ) -> EndToEndCertificate:
     """Run a QUBO end-to-end through the gate-model track and certify it.
@@ -142,6 +209,13 @@ def run_pipeline(
         physical_error_rate: Per-qubit bit-flip rate for the ECC term;
             if None, the logical-qubit certificate is skipped.
         encode_logical: Whether to compute the surface-code certificate.
+        server_addresses: Optional "host:port" peer addresses. If given, the
+            logical graph is compiled across these peers via the Coordination
+            CompilePartition RPC instead of only locally, and the merged
+            encoding is recorded on the certificate. Requires the distributed
+            extra (grpcio).
+        num_partitions: Number of partitions to split the graph into when
+            dispatching to peers; defaults to len(server_addresses).
         seed: Reserved for reproducibility; the pipeline is deterministic.
 
     Returns:
@@ -203,6 +277,13 @@ def run_pipeline(
     elif is_optimal is False:
         notes.append("QAOA most-likely outcome is sub-optimal; raise qaoa_layers/grid_size.")
 
+    distributed_compilation: dict[str, Any] | None = None
+    if server_addresses:
+        distributed_compilation, dist_notes = _distributed_compile(
+            graph, server_addresses, num_partitions
+        )
+        notes.extend(dist_notes)
+
     return EndToEndCertificate(
         solution=solution,
         energy=energy,
@@ -222,4 +303,5 @@ def run_pipeline(
             "seed": seed,
             "roundtrip_corrects_all_weight1": roundtrip_corrects_all_weight1,
         },
+        distributed_compilation=distributed_compilation,
     )

@@ -58,6 +58,11 @@ class TestEndToEndPipeline(unittest.TestCase):
         self.assertIn("logical_error_rate", d)
         self.assertIn("qaoa_params", d)
 
+    def test_distributed_compilation_absent_by_default(self):
+        cert = run_pipeline({("a", "a"): -1.0}, encode_logical=False)
+        self.assertIsNone(cert.distributed_compilation)
+        self.assertIsNone(cert.to_dict()["distributed_compilation"])
+
 
 if __name__ == "__main__":
     unittest.main()

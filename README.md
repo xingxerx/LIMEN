@@ -110,7 +110,7 @@ LIMEN's quantum-channel module also runs and certifies real-hardware protocols, 
 
 ## Multi-Node Coordination
 
-LIMEN instances can discover each other and exchange hardware calibration state over a gRPC `Coordination` service (`limen.distributed`): each node advertises its `node_id` and the device IDs it serves, registers with a static list of known peers on startup, and can pull a peer's `HardwareDeltaModel` on demand via `SyncCalibration`. This is the coordination substrate that distributed QUBO partitioning and cross-node classical feedforward transport (planned) will run on top of. See [`limen/docs/architecture.md`](limen/docs/architecture.md#multi-node-coordination-layer) for the design and [`limen/distributed/`](limen/distributed/) for the implementation. Requires the `distributed` extra: `pip install limen[distributed]`.
+LIMEN instances can discover each other and exchange hardware calibration state over a gRPC `Coordination` service (`limen.distributed`): each node advertises its `node_id` and the device IDs it serves, registers with a static list of known peers on startup, and can pull a peer's `HardwareDeltaModel` on demand via `SyncCalibration`. On top of this substrate, a QUBO can be **compiled across nodes**: the logical graph is partitioned, each partition is dispatched to a peer via the `CompilePartition` RPC, and the returned encodings are merged into a single encoding energetically equivalent to a one-shot local compile. The end-to-end pipeline exposes this directly — pass `server_addresses=[...]` to `run_pipeline` (see [Getting Started](#getting-started)). See [`limen/docs/architecture.md`](limen/docs/architecture.md#multi-node-coordination-layer) for the design and [`limen/distributed/`](limen/distributed/) for the implementation. Requires the `distributed` extra: `pip install limen[distributed]`.
 
 ---
 
@@ -148,7 +148,7 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 
 ### Phase 4 — Multi-Node Distributed Architecture (In Progress)
 - [x] Milestone 1: node identity, registry, and gRPC coordination service (discovery, heartbeat, calibration sync)
-- [ ] Milestone 2: distributed QUBO partitioning across nodes
+- [x] Milestone 2: distributed QUBO partitioning across nodes (`CompilePartition` RPC, wired into `run_pipeline`)
 - [ ] Milestone 3: classical feedforward transport over `QuantumChannel`
 
 ---
@@ -175,6 +175,29 @@ encoding = compile_lexicographic(graph, default_hardware_graph(4))
 # Validate confidence
 result = validate(encoding, runs=1000)
 print(result.confidence)  # 0.0 – 1.0
+```
+
+### End-to-end pipeline (gate-model + ECC, optionally distributed)
+
+`run_pipeline` threads a QUBO through the whole stack — QAOA compilation, statevector execution, classical optimality check, and a surface-code logical-error certificate — and returns a single `EndToEndCertificate`:
+
+```python
+import limen
+
+cert = limen.run_pipeline(
+    {('x0', 'x0'): -1.0, ('x1', 'x1'): -1.0, ('x0', 'x1'): 2.0},
+    physical_error_rate=0.01,
+)
+print(cert.solution, cert.is_optimal, cert.logical_error_rate)
+
+# Compile across peer nodes over the Coordination CompilePartition RPC
+# (requires the `distributed` extra and reachable peers):
+cert = limen.run_pipeline(
+    {('x0', 'x0'): -1.0, ('x1', 'x1'): -1.0, ('x0', 'x1'): 2.0},
+    server_addresses=["127.0.0.1:50051"],
+    num_partitions=2,
+)
+print(cert.distributed_compilation)
 ```
 
 ---
