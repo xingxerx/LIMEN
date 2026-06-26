@@ -40,14 +40,18 @@ High-level overview documentation for LIMEN.
 Practical entry-point examples showcasing how to use LIMEN's components.
 * **`analog_demo.py`** — Demonstrates the compilation pipeline from LogicalGraph to physical neutral-atom and photonic topologies.
 * **`codesign_demo.py`** — Showcases the joint hardware-software Stackelberg co-design loop for optimizing embeddings and penalty margins.
+* **`communication_demo.py`** — Showcases state teleportation and QKD (BB84) key exchange protocols.
 * **`ibm_codesign_qpu.py`** — Demonstrates physical co-design mapping running on IBM gate-model hardware.
 * **`ibm_qpu_demo.py`** — Standard circuit compilation and execution walkthrough using the IBM Qiskit backend.
 * **`max_cut.py`** — Compiles a classical Max-Cut graph problem into a Hamiltonian suitable for physical hardware execution.
+
 
 ---
 
 ## 📂 `limen/` — Core Python Package
 The primary Python package namespace containing compiler layers, adapters, and validators.
+* **`pipeline.py`** *(new — Phase 5)* — `run_pipeline(qubo, ...)`: end-to-end orchestrator. Converts a QUBO dict to a `LogicalGraph`, compiles to a QAOA `CircuitIR`, runs it on the statevector simulator, verifies optimality against brute force, optionally runs an ECC logical-error certificate, and optionally delegates compilation to peer nodes via the `CompilePartition` gRPC RPC. Returns an `EndToEndCertificate`.
+
 
 ### 📁 `limen/analog/` — Physical Analog Compilation & Layouts
 * **`LAYOUT.md`** — Detailed technical description of coordinate mappings, LHZ transformations, and geometry logic.
@@ -69,16 +73,47 @@ The primary Python package namespace containing compiler layers, adapters, and v
 * **`dwave.py`** — Adapter for D-Wave quantum annealers leveraging the Ocean SDK.
 * **`qiskit_backend.py`** — Adapter for gate-model IBM hardware leveraging Qiskit Runtime.
 
+### 📁 `limen/communication/` — Quantum Communication Primitives (canonical)
+* **`__init__.py`** — Exports the full unified symbol set: `QuantumChannel`, `ChannelDeltaModel`, `TeleportResult`, `SiftedKeyResult`, `QKDResult`, `teleport_circuit`, `run_teleport_qpu`, `bb84_circuit`, `sift_and_evaluate`, `estimate_fidelity`.
+* **`channel.py`** — Single canonical source for all quantum-channel code. Implements: `ChannelDeltaModel` (coherence/latency model), `QuantumChannel` (Teleportation + BB84 QKD), `teleport_circuit`/`run_teleport_qpu`, `bb84_circuit`/`sift_and_evaluate`, `estimate_fidelity`.
+
+### 📁 `limen/ecc/` — Error Correction & Certification *(new — Phase 5)*
+* **`__init__.py`** — Exports `LogicalErrorCertificate`, surface-code primitives, and roundtrip helpers.
+* **`certificate.py`** — `LogicalErrorCertificate`: computes per-qubit and aggregate logical error rates from the distance-3 surface code analytic formula.
+* **`decoder.py`** — `LookupDecoder`: maps a syndrome bit-pattern to the most likely single-qubit correction operator via a pre-computed lookup table.
+* **`encoder.py`** — `run_logical_roundtrip`: builds and executes the full syndrome-extraction circuit on the statevector simulator; returns corrected state and correction flags.
+* **`surface_code.py`** — `SurfaceCode`: distance-3 rotated surface-code definition — data qubits, X/Z stabilisers, ancilla layout, logical operators.
+* **`syndrome.py`** — `build_syndrome_circuit`: constructs a `CircuitIR` that implements stabiliser measurement (Hadamard-sandwiched for X, direct CX for Z) into ancilla qubits.
+
 ### 📁 `limen/codesign/` — Hardware-Software Co-Design Engine
+
 * **`__init__.py`** — Exposes codesign solvers and portfolio compilation.
 * **`_pyfallback.py`** — Pure-Python fallback implementing the Stackelberg co-design learning loop.
 * **`portfolio.py`** — Portfolio selection compiler that ranks and routes workloads across available physical slots.
 * **`solver.py`** — Core optimizer computing game-theoretic equilibria for compiler parameters.
 
+### 📁 `limen/distributed/` — Multi-Node Coordination Layer
+* **`__init__.py`** — Exports `NodeConfig`, `NodeInfo`, `NodeRegistry`. Requires the `distributed` extra (grpcio).
+* **`node.py`** — `NodeInfo`: identity and reachability (`node_id`, `host`, `port`, `device_ids`) of a LIMEN node.
+* **`config.py`** — `NodeConfig.from_env()`: reads `LIMEN_NODE_ID`/`LIMEN_NODE_HOST`/`LIMEN_NODE_PORT`/`LIMEN_NODE_DEVICE_IDS`/`LIMEN_KNOWN_PEERS`.
+* **`registry.py`** — `NodeRegistry`: peer table with TTL eviction, wrapping the existing `DeltaModelRegistry` and caching remotely-fetched `HardwareDeltaModel`s with a TTL.
+* **`marshal.py`** — Conversions between LIMEN dataclasses and protobuf messages, built on the existing `to_dict()`/`from_dict()` convention.
+* **`server.py`** — gRPC `CoordinationServicer` (Register/Heartbeat/SyncCalibration/ListPeers) and the `python -m limen.distributed.server` entry point.
+* **`client.py`** — `CoordinationClient`: thin wrapper for calling a peer's Coordination service.
+* **📂 `proto/`** — `coordination.proto` service definition plus its generated `coordination_pb2.py` / `coordination_pb2_grpc.py` (regenerate via `scripts/gen_proto.py`; do not hand-edit).
+
 ### 📁 `limen/core/` — Lexicographic Compiler & Logical IR
 * **`__init__.py`** — Exports core compilation routines and IR constructs.
 * **`compiler.py`** — Translates the LogicalGraph IR to a PhysicalEncoding IR deterministically.
 * **`ir.py`** — Defines the LogicalGraph (nodes, edges, quadratic/linear weights) and PhysicalEncoding representations.
+
+### 📁 `limen/gates/` — Gate-Model Intermediate Representation & Execution *(new — Phase 5)*
+* **`__init__.py`** — Exports `CircuitIR`, `GateInstr`, `KNOWN_GATES`, `compile_qaoa`, `StatevectorSimulator`, `decompose_unitary_1q`.
+* **`ir.py`** — `CircuitIR` + `GateInstr`: typed gate-model circuit IR. `KNOWN_GATES` registry maps gate name → `(arity, param_count)`. Validates qubit indices, arity, and parameter counts at construction time.
+* **`qaoa.py`** — `compile_qaoa`: translates a `LogicalGraph` QUBO to a `CircuitIR` using the QAOA ansatz (alternating problem and mixer layers). Includes `qubo_to_ising` conversion and a grid-search parameter optimiser that drives the statevector simulator to maximise the success probability.
+* **`qiskit_exec.py`** — `to_qiskit_circuit`: converts a `CircuitIR` to a Qiskit `QuantumCircuit` for optional QPU submission. Requires the `qiskit` extra; import is deferred so that `import limen` succeeds without Qiskit installed.
+* **`simulator.py`** — `StatevectorSimulator`: pure-Python exact statevector simulator. Implements all gates in `KNOWN_GATES` as numpy matrix operations. Provides `run(circuit)` → statevector, `sample(circuit, shots)` → measurement counts, `probabilities(circuit)` → probability distribution.
+* **`synthesis.py`** — `decompose_unitary_1q`: decomposes an arbitrary 2×2 unitary into a `(rz, ry, rz)` Euler-angle sequence plus a global phase, emitting a sub-list of `GateInstr` objects.
 
 ### 📁 `limen/docs/` — Library Architecture & Mathematical Proofs
 * **`architecture.md`** — Design documents detailing the lexicographic compiler, IR specifications, and system APIs.
@@ -91,9 +126,22 @@ The primary Python package namespace containing compiler layers, adapters, and v
 * **`__init__.py`** — Exports standard problem parses.
 * **`pyqubo.py`** — Parser to convert PyQUBO model definitions into the LogicalGraph IR.
 
+### 📁 `limen/quantum_channel/` — Backward-Compatibility Shims *(refactored — Phase 5)*
+All logic has been moved to `limen/communication/channel.py`. These files are thin re-export shims so that existing code importing the old module paths continues to work unchanged.
+* **`__init__.py`** — Re-exports `QuantumChannel`, `ChannelDeltaModel`, `QKDResult`, `TeleportResult`, `SiftedKeyResult` from `limen.communication.channel`.
+* **`channel_delta.py`** — Re-exports `ChannelDeltaModel`.
+* **`qkd.py`** — Re-exports `SiftedKeyResult as QKDResult` (alias preserved for callers that imported the old name).
+* **`teleport.py`** — Re-exports `TeleportResult`, `teleport_circuit`, `run_teleport_qpu`.
+* **`teleport_analysis.py`** — Re-exports `estimate_fidelity`.
+
 ### 📁 `limen/validator/` — Probabilistic Verification Loop
 * **`__init__.py`** — Exports verification routines.
 * **`validator.py`** — Performs small-instance brute force verification and computes statistical confidence metrics.
+
+---
+
+## 📂 `scripts/` — Developer Tooling
+* **`gen_proto.py`** — Regenerates `limen/distributed/proto/coordination_pb2*.py` from `coordination.proto` via `grpc_tools.protoc`.
 
 ---
 
@@ -121,7 +169,7 @@ High-performance computational modules written in Rust to accelerate co-design m
 ---
 
 ## 📂 `tests/` — Test Suites
-Comprehensive automated testing suite verifying compiler passes, adapters, math solvers, and certificates.
+Comprehensive automated testing suite verifying compiler passes, adapters, math solvers, and certificates. **235 tests passing, 6 skipped.**
 * **`test_analog.py`** — Verifies basic analog layout logic and hardware targets.
 * **`test_backend_dwave.py`** — Exercises the D-Wave compile and offline verification adapters.
 * **`test_backend_qiskit.py`** — Exercises the IBM Qiskit backend compiler pipeline.
@@ -131,11 +179,30 @@ Comprehensive automated testing suite verifying compiler passes, adapters, math 
 * **`test_certificate.py`** — Validates Theorem 1 realizability certification.
 * **`test_codesign.py`** — Verifies Stackelberg solver correctness against simulated baselines.
 * **`test_codesign_cbf.py`** — Validates chain-break fraction feedback loops.
+* **`test_communication.py`** — Verifies unified `QuantumChannel` teleportation fidelity and QKD eavesdropper detection (`limen.communication.channel`).
 * **`test_core.py`** — Test suite for basic lexicographic compiler and IR schemas.
+* **`test_decoder.py`** *(new — Phase 5)* — Unit tests for `LookupDecoder`: every weight-1 error corrected, empty syndrome is a no-op, unknown syndromes fall back gracefully.
 * **`test_delta_model.py`** — Tests drift model regression and calibration scaling bounds.
+* **`test_distributed_registry.py`** — Unit tests for `NodeRegistry` peer add/evict/TTL cache and calibration resolution.
+* **`test_distributed_server.py`** — End-to-end tests of the Coordination gRPC service (register/heartbeat/list-peers/sync-calibration) against a real server.
+* **`test_ecc_roundtrip.py`** *(new — Phase 5)* — Circuit-level ECC round-trip: all weight-1 X errors corrected by gate-executed syndrome circuit, no-error path is identity, gate-executed syndrome matches analytic calculation.
+* **`test_gate_exec.py`** *(new — Phase 5)* — `CircuitIR` → Qiskit conversion: Bell state measurement distribution, invalid circuit rejection, hand-written circuit matching.
+* **`test_gate_ir.py`** *(new — Phase 5)* — `CircuitIR` validation: rejects unknown gates, wrong arity, wrong param count, out-of-range qubit indices; valid circuit round-trips.
+* **`test_gate_simulator.py`** *(new — Phase 5)* — `StatevectorSimulator` correctness: Bell state probabilities and statevector, norm preservation, SWAP gate, U-gate matching Hadamard, X-flip, sample counts deterministic.
+* **`test_gate_synthesis.py`** *(new — Phase 5)* — `decompose_unitary_1q`: identity, Pauli-X, Hadamard, arbitrary-angle round-trips, rejection of non-unitary and multi-qubit matrices.
 * **`test_geometry.py`** — Exercises layout distance calculations and spatial mappings.
 * **`test_lhz.py`** — Exercises triangular LHZ layout transformations.
 * **`test_lhz_certificate.py`** — Tests correctness of LHZ realizability checks.
+* **`test_lhz_fallback.py`** *(new — Phase 5)* — Confirms that geometrically frustrated and negative-coupling problems auto-route through the LHZ fallback; natively realizable inputs skip it.
+* **`test_logical_certificate.py`** *(new — Phase 5)* — `LogicalErrorCertificate`: field correctness, quadratic scaling with physical error rate, IBM Kingston rate suppression, zero-error edge case.
+* **`test_partition.py`** *(new — Phase 4)* — `partition_graph`: balanced split, cross-edge ownership, no interaction dropped or duplicated, invalid partition count rejected; `NamespacedHardwareGraph` collision test; merge correctness vs single-shot compile.
 * **`test_phase3_completion.py`** — Aggregated validation tests for Phase 3 functionality.
+* **`test_physics_validation.py`** *(new — Phase 5)* — **Physics-first tests**: random QUBO vs brute-force (QAOA never beats exact minimum), energy consistency, 2-var and 3–4-var optimum discovery rates, logical error monotonicity, distance-3 super-linear suppression, weight-1 correction, weight-2 uncorrectable boundary, BB84 eavesdrop QBER detection.
+* **`test_pipeline.py`** *(new — Phase 5)* — `run_pipeline` unit tests: optimum energy, unique optimum, single-variable, certificate serialization, ECC certificate composed with/without error rate, distributed compilation absent by default.
+* **`test_pipeline_distributed.py`** *(new — Phase 5)* — Live gRPC round-trip: `run_pipeline(server_addresses=[...])` compiles over `CompilePartition` RPC, result is serializable, solution is still certified.
 * **`test_pyfallback.py`** — Asserts that python fallbacks align mathematically with Rust routines.
-* **`test_sim.py`** — Unit tests for the exact-diagonalization simulator.
+* **`test_qaoa.py`** *(new — Phase 5)* — `qubo_to_ising` mapping (linear and quadratic terms), `compile_qaoa` circuit validity, layer count scaling, Hadamard opening layer, mismatched-params error, bitstring-to-assignment ordering.
+* **`test_quantum_channel.py`** — Backward-compatibility test for the old `limen.quantum_channel` import path; all symbols resolve to the unified `limen.communication.channel` implementation.
+* **`test_sim.py`** — Unit tests for the exact-diagonalization (Rust) Ising simulator.
+* **`test_surface_code.py`** *(new — Phase 5)* — `SurfaceCode` structure: 9 data qubits, 8 stabilizers, correct weights (2 or 4), logical operators spanning 3 qubits, weight-1 error detectability, no undetected weight-≤2 logical error.
+* **`test_syndrome_circuit.py`** *(new — Phase 5)* — `build_syndrome_circuit`: `CircuitIR` validity, qubit count = data + ancilla, X-stabiliser Hadamard sandwich, Z-stabiliser CX-into-ancilla pattern.

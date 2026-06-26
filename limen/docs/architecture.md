@@ -74,6 +74,99 @@ A κ standard deviation of 0.18 (moderate oscillation) reduces the effective lea
 
 ---
 
+## The Gate-Model Track
+
+The gate-model track is a parallel compilation path that branches from the `LogicalGraph` IR. Where the lexicographic compiler produces a `PhysicalEncoding` for annealing or analog hardware, the gate-model track produces a `CircuitIR` — a typed, validated sequence of quantum gate instructions — and then executes, certifies, and returns a single `EndToEndCertificate`.
+
+### QAOA Compiler (`limen.gates.qaoa`)
+
+`compile_qaoa(graph, layers, grid_size)` implements the Quantum Approximate Optimization Algorithm ansatz:
+
+1. **QUBO → Ising substitution** (`qubo_to_ising`): `x_i = (1 - z_i) / 2` maps each binary variable to a spin. Linear QUBO coefficients become single-site Z fields; quadratic coefficients become ZZ coupling terms.
+2. **Circuit construction**: For each QAOA layer, a problem unitary `exp(-i γ H_P)` (implemented as `rz(2γ J_ij)` + `cx` for each ZZ coupling, `rz(2γ h_i)` for each Z field) is followed by a mixer unitary `exp(-i β H_M)` (implemented as `rx(2β)` on each qubit), preceded by a uniform superposition layer (H on every qubit).
+3. **Parameter optimisation**: A grid search over `(γ, β)` ∈ `[0, π] × [0, π]` drives the statevector simulator to maximise the probability of the optimal bitstring. The grid resolution is `grid_size × grid_size` (default 20×20).
+
+The output is a `CircuitIR` and a variable-order mapping used to interpret bitstrings back into named assignments.
+
+### Statevector Simulator (`limen.gates.simulator`)
+
+`StatevectorSimulator` is a pure-Python exact simulator with no external SDK dependency. It maintains a 2ⁿ complex statevector and applies gates as numpy matrix operations.
+
+- All gates in `KNOWN_GATES` are supported: `h`, `x`, `y`, `z`, `s`, `t`, `rx`, `ry`, `rz`, `u`, `cx`, `cz`, `swap`.
+- `run(circuit)` → statevector (exact).
+- `probabilities(circuit)` → measurement probability distribution over all 2ⁿ bitstrings.
+- `sample(circuit, shots)` → simulated measurement count dict (deterministic with a fixed seed).
+
+Practical ceiling: ~14 logical qubits before memory pressure becomes significant on a laptop. This is intentional — the simulator is a certification tool, not a production execution backend. For QPU execution, `limen.gates.qiskit_exec` converts a `CircuitIR` to a Qiskit `QuantumCircuit` for submission to IBM hardware.
+
+### Gate Synthesis (`limen.gates.synthesis`)
+
+`decompose_unitary_1q(U)` decomposes an arbitrary 2×2 unitary into a `(rz, ry, rz)` Euler-angle sequence plus a global phase. This makes the gate-model IR complete for arbitrary single-qubit operations: any 1-qubit gate can be expressed as a sequence of native `rz`/`ry` instructions already in `KNOWN_GATES`.
+
+---
+
+## Surface-Code ECC & Logical Error Certification
+
+### Surface Code (`limen.ecc.surface_code`)
+
+The `SurfaceCode` class implements the distance-3 rotated surface code:
+- **9 data qubits** arranged in a 3×3 patch.
+- **8 stabilisers** (4 X-type, 4 Z-type); all boundary stabilisers have weight 2, bulk stabilisers have weight 4.
+- **Logical X** and **logical Z** operators each span 3 qubits across the patch.
+- Code distance 3: any single-qubit error produces a unique, non-trivial syndrome.
+
+### Syndrome Circuit (`limen.ecc.syndrome`)
+
+`build_syndrome_circuit(code)` constructs a `CircuitIR` that performs stabiliser extraction:
+- **Z stabilisers**: one ancilla qubit per stabiliser, CX from each data qubit in the stabiliser support into the ancilla.
+- **X stabilisers**: Hadamard on the ancilla before and after the CX sequence (standard Hadamard sandwich).
+
+The circuit runs on the `StatevectorSimulator` and returns syndrome bits as measurement outcomes.
+
+### Lookup Decoder (`limen.ecc.decoder`)
+
+`LookupDecoder` pre-computes a table mapping each weight-1 error pattern (9 single-qubit X errors) to its syndrome, then inverts the table for decoding. Given a syndrome pattern from the simulator output, the decoder returns the most likely single-qubit correction. Unknown syndromes (weight-2 or higher) fall back to no correction — this is the intentional boundary enforcement: a d=3 code corrects all weight-1 errors and is not guaranteed to correct weight-2.
+
+### ECC Round-Trip (`limen.ecc.encoder`)
+
+`run_logical_roundtrip(code, simulator)` performs the full gate-executed ECC verification loop:
+
+1. For each data qubit `i`, inject a single-qubit X error on qubit `i`.
+2. Run the syndrome extraction circuit on the simulator.
+3. Decode the syndrome using the lookup decoder.
+4. Apply the correction and verify that the post-correction state matches the original (no error) state.
+
+Returns a dict of `{qubit_index: corrected}` booleans. A certificate passes `roundtrip_corrects_all_weight1` if all 9 are `True`.
+
+### Logical Error Certificate (`limen.ecc.certificate`)
+
+`LogicalErrorCertificate` computes the analytic per-qubit logical error rate using the leading-order code-distance formula:
+
+```
+p_L ≈ C(d, ⌊(d+1)/2⌋) * p^⌈(d+1)/2⌉
+```
+
+For d=3: `p_L ≈ 3 p²` (three weight-2 configurations that lead to logical failure). At `p = 0.01`, this gives `p_L ≈ 1.73 × 10⁻³`, a ~5.8× suppression over the physical rate.
+
+The aggregate rate across all `n` logical qubits is `1 - (1 - p_L)^n`.
+
+---
+
+## The `run_pipeline` Orchestrator
+
+`limen.pipeline.run_pipeline(qubo, ...)` is the single entry point for the gate-model track. Its steps:
+
+1. **QUBO → LogicalGraph** (`from_qubo_dict`).
+2. **Partitioning** (if `server_addresses` provided): split the `LogicalGraph` into `num_partitions` sub-graphs via `partition_graph`, dispatch each to a peer node's `CompilePartition` gRPC RPC, merge the returned encodings.
+3. **QAOA compilation** (`compile_qaoa`): QUBO → QAOA `CircuitIR` with parameter optimisation.
+4. **Simulation** (`StatevectorSimulator.probabilities`): exact measurement distribution.
+5. **Solution extraction**: most-likely bitstring → named assignment via variable-order mapping.
+6. **Optimality check**: brute-force QUBO energy evaluation over all 2ⁿ assignments (skipped above 20 variables).
+7. **ECC certification** (if `physical_error_rate` provided): `LogicalErrorCertificate` analytic rate + gate-executed `run_logical_roundtrip`.
+8. **Certificate assembly**: `EndToEndCertificate` with solution, is_optimal, energy, QAOA success probability, ECC metadata, and notes.
+
+---
+
 ## Portfolio Compilation
 
 Portfolio compilation (`compile_portfolio`) runs the co-design loop independently for each candidate backend and ranks the results by κ. The output is an ordered list of `(encoding, κ)` pairs, one per backend slot. The `SwitchingCondition` mechanism allows runtime selection between backends based on conditions that are not known at compile time — hardware availability, queue depth, cost constraints.
@@ -133,11 +226,38 @@ This is a non-trivial result because binary variables map awkwardly onto the con
 
 ---
 
+## Multi-Node Coordination Layer
+
+`limen.distributed` is the foundation for running LIMEN across more than one process: node identity, a peer registry, and a gRPC `Coordination` service for discovery, `HardwareDeltaModel` sync, and distributed QUBO compilation. The `CompilePartition` RPC is fully wired into `run_pipeline(server_addresses=[...])` — passing one or more peer addresses delegates graph partitioning and sub-graph compilation to remote nodes, with the merged result certified locally.
+
+A node is identified by `NodeInfo` (`node_id`, `host`, `port`, the `device_ids` it serves) and configured from the environment via `NodeConfig.from_env()` (`LIMEN_NODE_ID`, `LIMEN_NODE_HOST`/`PORT`, `LIMEN_NODE_DEVICE_IDS`, `LIMEN_KNOWN_PEERS`). There is no service-discovery infrastructure (no etcd, no consul) — peers are a static list configured per node and exchanged via mutual self-registration at startup. For two nodes that each list the other in `LIMEN_KNOWN_PEERS`, registration becomes symmetric without any merge logic: A's `Register` call against B populates B's registry with A, and B's own startup call against A populates A's registry with B.
+
+`NodeRegistry` wraps the existing single-process `DeltaModelRegistry` (`limen/analog/delta_model.py`) rather than replacing it. Local device lookups behave exactly as they did before this layer existed. A device ID not found locally falls through to a TTL'd cache of models fetched from peers via `SyncCalibration` — the registry itself does no network I/O; callers populate the cache after a round trip through `CoordinationClient`.
+
+Wire messages mirror the project's existing `to_dict()` / `from_dict()` JSON-safe-dict convention rather than introducing a parallel schema (`limen/distributed/marshal.py`): a `HardwareDeltaModelProto` has the same shape as `HardwareDeltaModel.to_dict()`, down to the stringified tuple keys for `coupling_scale_errors`. The one deliberate lossy spot is `metadata`, which is `map<string, string>` on the wire — non-string metadata values are coerced via `str()` and will not round-trip to their original type. No caller needed richer metadata for milestone 1.
+
+Explicitly out of scope for this layer: TLS/auth on the gRPC channel (fine for a LAN/VPN-trusted pair of nodes; flagged as a follow-up once topology is proven), and any external service-discovery system. The static peer list is sufficient to validate the two-node case; it is not meant to scale to large clusters without revisiting node discovery.
+
+---
+
 ## PyO3 Bridge
 
 The inner scoring loop (`StackelbergSolver.solve`, `compute`, `compute_stability`) lives in Rust and is exposed to Python via PyO3. The reasons are iteration speed, absence of the GIL during the inner loop, and deterministic floating-point behavior across platforms (Rust's `f64` operations are IEEE 754 strict in the same way across all targets LIMEN supports).
 
 The PyO3 boundary is thin. What crosses from Python to Rust: `Vec<f64>` for confidence, energy, and chain-break histories; `f64` for chain strength and learning rate; `usize` for iteration counts. What stays on the Python side: the `PhysicalEncoding` dataclass, the `LogicalGraph` IR, and all recompilation logic. Rust owns the scoring function and convergence decision; Python owns the compilation and the loop structure. This division means the Rust extension is optional — if `limen_core` is not built, `run_codesign` raises `ImportError` cleanly and the rest of the library continues to function.
+
+---
+
+## Unified Quantum Channel
+
+All quantum communication code lives in `limen.communication.channel` — the single canonical source. The old `limen.quantum_channel.*` module tree still exists as a set of thin re-export shims so existing code does not break, but contains no logic of its own. Callers should import from `limen.communication` going forward.
+
+The unified module provides:
+- `ChannelDeltaModel` — coherence time and latency model for a physical channel.
+- `QuantumChannel` — high-level protocol runner for Teleportation and BB84 QKD.
+- `teleport_circuit` / `run_teleport_qpu` — Bell-measurement circuit builder and QPU submission.
+- `bb84_circuit` / `sift_and_evaluate` — BB84 basis preparation and sifting.
+- `estimate_fidelity` — cross-layout fidelity analysis helper.
 
 ---
 
@@ -151,3 +271,4 @@ These are the architectural invariants that must never be violated:
 3. **Optional SDKs.** All hardware SDK dependencies (`dwave-ocean-sdk`, `qiskit`, `pyqubo`) are optional at import time. A bare `import limen` with none of these installed must succeed.
 4. **Optional Rust.** The `limen_core` Rust extension is optional at import time. All functionality except the Stackelberg co-design loop is available without it.
 5. **License hygiene.** Apache 2.0 throughout. No copyleft dependencies. The patent grant clause is intentional.
+6. **Optional distributed deps.** `grpcio`/`grpcio-tools`/`protobuf` are only required by `limen.distributed` (the `distributed` extra). A bare `import limen` with none of these installed must succeed.

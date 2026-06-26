@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "limen"
-version = "0.4.0"
+version = "0.6.0"
 description = "A physics-aware compiler stack for translating classical optimization problems into native quantum and analog substrates."
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -35,7 +35,15 @@ dependencies = []
 pyqubo = ["pyqubo>=1.4"]
 dwave = ["dwave-ocean-sdk>=6.0"]
 ibm = ["qiskit>=1.0"]
-all = ["pyqubo>=1.4", "dwave-ocean-sdk>=6.0", "qiskit>=1.0"]
+distributed = ["grpcio>=1.60", "grpcio-tools>=1.60", "protobuf>=4.25"]
+all = [
+  "pyqubo>=1.4",
+  "dwave-ocean-sdk>=6.0",
+  "qiskit>=1.0",
+  "grpcio>=1.60",
+  "grpcio-tools>=1.60",
+  "protobuf>=4.25",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/xingxerx/LIMEN"

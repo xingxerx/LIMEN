@@ -86,6 +86,47 @@ def test_negative_coupling_flags_not_natively_realizable():
     assert any("parity" in note.lower() for note in cert.notes)
 
 
+def test_lhz_fallback_populated_on_negative_coupling():
+    """When natively_realizable=False, result must carry an LHZ encoding."""
+    from limen.analog.lhz import LHZCertificate, LHZResult
+
+    terms = [
+        HamiltonianTerm(coefficient=-1.0, operators=[(0, "Z"), (1, "Z")]),
+        HamiltonianTerm(coefficient=0.5, operators=[(1, "Z"), (2, "Z")]),
+    ]
+    ir = HamiltonianIR(terms=terms, n_sites=3, substrate=SubstrateType.NEUTRAL_ATOM)
+    result = run_neutral_atom(ir)
+
+    assert result.certificate is not None
+    assert result.certificate.natively_realizable is False
+
+    assert isinstance(result.lhz_result, LHZResult)
+    assert isinstance(result.lhz_certificate, LHZCertificate)
+
+    enc = result.lhz_result
+    # n_physical = number of unique (i,j) pairs = 2
+    assert enc.n_physical == 2
+    assert enc.n_logical == 3
+    # penalty gap must be positive (encoding is self-consistent)
+    assert result.lhz_certificate.penalty_gap > 0.0
+
+    assert result.metadata["lhz_fallback_applied"] is True
+    assert result.metadata["lhz_n_physical"] == 2
+
+
+def test_lhz_fallback_absent_when_natively_realizable():
+    """Positive-only problems must not trigger LHZ encoding."""
+    terms = [
+        HamiltonianTerm(coefficient=1.0, operators=[(0, "Z"), (1, "Z")]),
+    ]
+    ir = HamiltonianIR(terms=terms, n_sites=2, substrate=SubstrateType.NEUTRAL_ATOM)
+    result = run_neutral_atom(ir)
+
+    assert result.lhz_result is None
+    assert result.lhz_certificate is None
+    assert result.metadata["lhz_fallback_applied"] is False
+
+
 def test_neutral_atom_certificate_norm_bounded_by_l1():
     result = run_neutral_atom(_make_ir())
     cert = result.certificate

@@ -5,6 +5,5 @@ dist/
 build/
 *.egg-info/
 target/
-limen/
 .venv/
 venv/

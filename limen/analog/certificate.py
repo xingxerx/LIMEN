@@ -36,7 +36,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from itertools import product
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from limen.quantum_channel.qkd import QKDResult
+    from limen.quantum_channel.teleport import TeleportResult
 
 MAX_EXACT_SITES: int = 20
 
@@ -205,3 +209,27 @@ def certify_ising(
         notes=cert_notes,
         metadata={"theorem": "universality_theorem.md#theorem-1"},
     )
+
+
+def attach_quantum_channel_results(
+    cert: CompilationCertificate,
+    qkd_result: QKDResult | None = None,
+    teleport_result: TeleportResult | None = None,
+) -> None:
+    """Record quantum-channel primitive results on a certificate's metadata.
+
+    Lets a CompilationCertificate double as the single source of truth for
+    an entire quantum network compilation run: the analog/Ising compilation
+    error bound alongside the QKD and teleportation primitives that moved
+    data over the same channel.
+    """
+    if qkd_result is not None:
+        cert.metadata["qber"] = qkd_result.qber
+        cert.metadata["qkd_secure"] = qkd_result.secure
+        cert.metadata["qkd_backend"] = qkd_result.backend
+        cert.metadata["qkd_job_id"] = qkd_result.job_id
+    if teleport_result is not None:
+        cert.metadata["teleport_fidelity"] = teleport_result.fidelity_estimate
+        cert.metadata["teleport_success"] = teleport_result.success
+        cert.metadata["teleport_backend"] = teleport_result.backend
+        cert.metadata["teleport_job_id"] = teleport_result.job_id

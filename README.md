@@ -18,19 +18,22 @@ LIMEN fixes this.
 
 ## What LIMEN Does
 
-LIMEN provides four things that don't exist together anywhere today:
+LIMEN provides five things that don't exist together anywhere today:
 
 **1. A deterministic logical graph IR**
-A hardware agnostic intermediate representation for optimization problems. The same problem always compiles the same way. Swap the backend: D-Wave, IBM, classical simulator. Without touching your formulation.
+A hardware-agnostic intermediate representation for optimization problems. The same problem always compiles the same way. Swap the backend — D-Wave, IBM, classical simulator — without touching your formulation.
 
 **2. A lexicographic compiler**
-Single pass, deterministic compilation from logical IR to physical encoding. No heuristic randomness. No undocumented magic. Reproducible output every time.
+Single-pass, deterministic compilation from logical IR to physical encoding. No heuristic randomness. No undocumented magic. Reproducible output every time.
 
 **3. Hardware adapters**
-Clean interfaces to D-Wave (via Ocean SDK) and IBM Quantum (via Qiskit) out of the box. New backends are first-class citizens, write an adapter, plug it in.
+Clean interfaces to D-Wave (via Ocean SDK) and IBM Quantum (via Qiskit) out of the box. New backends are first-class citizens: write an adapter, plug it in.
 
-**4. A probabilistic validator**
-For every compiled problem, LIMEN produces a confidence bound not a proof of correctness, but a measurable signal. Small instance classical verification, cross architecture sampling, and distribution analysis tell you how much to trust the result.
+**4. A gate-model pipeline with error-correction certification**
+An end-to-end path from QUBO to a certified result: QAOA compilation, exact statevector simulation, classical optimality verification, and a gate-executed surface-code ECC round-trip — all offline, no QPU required. Returns a single `EndToEndCertificate` with solution, optimality flag, logical error rate, and ECC metadata.
+
+**5. A probabilistic validator**
+For every compiled problem, LIMEN produces a confidence bound — not a proof of correctness, but a measurable signal. Small-instance classical verification, cross-architecture sampling, and distribution analysis tell you how much to trust the result.
 
 ---
 
@@ -44,71 +47,83 @@ To help navigate the files and components of LIMEN, see the [Directory Map](DIRE
 
 
 ```
-                    [ Domain Problem ]
-                            │
-                            ▼
-                ┌─────────────────────────────┐
-                │ SEMANTIC FRONTEND           │
-                │ PyQUBO · OpenFermion · PDE  │
-                └─────────────┬───────────────┘
-                              │  LogicalGraph IR
-                              ▼
-                ┌─────────────────────────────┐
-                │ LEXICOGRAPHIC COMPILER      │
-                │ Deterministic · Fixed seed  │
-                │ Greedy minor-embedding      │
-                └─────────────┬───────────────┘
-                              │  PhysicalEncoding
-                              ▼
-                ┌─────────────────────────────┐
-                │ PROBABILISTIC VALIDATOR     │
-                │ Brute-force small instances │
-                │ Confidence bounds           │
-                └──────┬──────────────────────┘
-                       │
-          ┌────────────┴────────────────────────┐
-          │  open-loop path                     │  co-design path
-          ▼                                     ▼
-┌──────────────────┐             ┌───────────────────────────┐
-│ PHYSICAL         │             │ STACKELBERG CO-DESIGN LOOP│
-│ EXECUTION        │             │ Rust core (limen_core)    │
-│ D-Wave · IBM     │             │ κ scoring · stability     │
-│ Simulator        │             │ Adaptive learning rate    │
-└──────────────────┘             └────────────┬──────────────┘
-                                              │  optimised
-                                              │  PhysicalEncoding
-                                              ▼
-                                ┌───────────────────────────┐
-                                │ PORTFOLIO COMPILER        │
-                                │ Multi-backend ranking     │
-                                │ Runtime switching         │
-                                └────────────┬──────────────┘
-                                             │
-                                             ▼
-                                ┌───────────────────────────┐
-                                │ HAMILTONIAN IR            │
-                                │ Z-basis Ising mapping     │
-                                │ Substrate-agnostic        │
-                                └────────────┬──────────────┘
-                                             │
-                              ┌──────────────┴──────────────┐
-                              ▼                             ▼
-                  ┌────────────────────┐      ┌─────────────────────┐
-                  │ NEUTRAL-ATOM STUB  │      │   PHOTONIC STUB     │
-                  │ Rydberg blockade   │      │   CV optical        │
-                  │ [pending theorem]  │      │   [pending theorem] │
-                  └────────────────────┘      └─────────────────────┘
+                         [ Domain Problem ]
+                                 │
+                                 ▼
+                 ┌───────────────────────────────┐
+                 │ SEMANTIC FRONTEND             │
+                 │ PyQUBO · OpenFermion · PDE    │
+                 └──────────────┬────────────────┘
+                                │  LogicalGraph IR
+             ┌──────────────────┴──────────────────┐
+             │  analog / annealing track            │  gate-model track
+             ▼                                      ▼
+┌────────────────────────────┐        ┌─────────────────────────────┐
+│ LEXICOGRAPHIC COMPILER     │        │ QAOA COMPILER               │
+│ Deterministic · fixed seed │        │ QUBO → Ising → CircuitIR    │
+│ Greedy minor-embedding     │        │ Grid-search parameter opt.  │
+└────────────┬───────────────┘        └──────────────┬──────────────┘
+             │  PhysicalEncoding                      │  CircuitIR
+             ▼                                        ▼
+┌────────────────────────────┐        ┌─────────────────────────────┐
+│ PROBABILISTIC VALIDATOR    │        │ STATEVECTOR SIMULATOR       │
+│ Brute-force ≤ 20 vars      │        │ Exact · pure-Python         │
+│ Confidence bounds          │        │ No sampling noise           │
+└────┬───────────────────────┘        └──────────────┬──────────────┘
+     │                                               │  probs + solution
+     ├── open-loop ──► D-Wave · IBM · Simulator      ▼
+     │                                ┌─────────────────────────────┐
+     └── co-design ──►                │ SURFACE-CODE ECC            │
+         ┌──────────────────────┐     │ d=3 rotated patch           │
+         │ STACKELBERG LOOP     │     │ Gate-executed syndrome      │
+         │ κ scoring · Rust     │     │ Lookup decoder              │
+         │ Adaptive learning    │     └──────────────┬──────────────┘
+         └──────────┬───────────┘                    │  LogicalErrorCertificate
+                    ▼                                 │
+         ┌──────────────────────┐                    │
+         │ PORTFOLIO COMPILER   │                    │
+         │ Multi-backend rank   │                    │
+         │ Runtime switching    │                    │
+         └──────────┬───────────┘                    │
+                    ▼                                 │
+         ┌──────────────────────┐                    │
+         │ HAMILTONIAN IR       │◄───────────────────┘
+         │ Z-basis Ising        │  EndToEndCertificate
+         │ Substrate-agnostic   │  (solution · optimality ·
+         └──────┬───────────────┘   logical error rate ·
+                │                   distributed compilation)
+       ┌────────┴────────┐
+       ▼                 ▼
+┌─────────────┐   ┌────────────────┐
+│ NEUTRAL-ATOM│   │ PHOTONIC STUB  │
+│ Rydberg     │   │ CV optical     │
+│[pending thm]│   │[pending thm]   │
+└─────────────┘   └────────────────┘
 ```
+
+---
+
+## Quantum Communication
+
+LIMEN's quantum-channel module also runs and certifies real-hardware protocols, not just optimization circuits. As a cross-layout fidelity case study, the standard 3-qubit teleportation circuit was submitted to `ibm_kingston` on two physical qubit mappings that share the state and Alice qubits but differ in the Bob relay qubit: q[10,11,12] (job `d8u5qqkbp3hs7385g0mg`) and q[10,11,18] (job `d8u6b6kbp3hs7385gil0`), 1000 shots each. The q[10,11,12] layout achieved fidelity 0.954 versus 0.938 for q[10,11,18] — a 1.6 percentage-point gap — isolating the effect of Bob relay qubit choice on end-to-end teleportation fidelity while holding the state and Alice qubits fixed, and demonstrating LIMEN's ability to certify protocol performance sensitivity to physical qubit mapping on real NISQ hardware. Full counts, timestamps, and verified job layouts: [`results/teleport_summary.json`](results/teleport_summary.json).
+
+---
+
+## Multi-Node Coordination
+
+LIMEN instances can discover each other and exchange hardware calibration state over a gRPC `Coordination` service (`limen.distributed`): each node advertises its `node_id` and the device IDs it serves, registers with a static list of known peers on startup, and can pull a peer's `HardwareDeltaModel` on demand via `SyncCalibration`. On top of this substrate, a QUBO can be **compiled across nodes**: the logical graph is partitioned, each partition is dispatched to a peer via the `CompilePartition` RPC, and the returned encodings are merged into a single encoding energetically equivalent to a one-shot local compile. The end-to-end pipeline exposes this directly — pass `server_addresses=[...]` to `run_pipeline` (see [Getting Started](#getting-started)). See [`limen/docs/architecture.md`](limen/docs/architecture.md#multi-node-coordination-layer) for the design and [`limen/distributed/`](limen/distributed/) for the implementation. Requires the `distributed` extra: `pip install limen[distributed]`.
 
 ---
 
 ## What LIMEN Is Not
 
-LIMEN is not a quantum computing framework. It does not manage qubits, run circuits, or simulate quantum mechanics. It is a **compiler** — its job is translation, not execution.
+LIMEN is not a general-purpose quantum computing framework or a user-facing circuit runner. It does not replace Qiskit or Cirq. Its job is **translation and certification**, not general quantum execution.
+
+LIMEN *does* include a pure-Python statevector simulator (`limen.gates.simulator`), but its purpose is narrow: it provides an exact, dependency-free backend for offline ECC certification and QAOA parameter validation — without requiring a QPU or an SDK installation. It is capped at roughly 14 logical qubits before memory pressure becomes significant. It is not intended for production circuit workloads.
 
 LIMEN does not claim to solve NP-hard problems. It claims to translate them correctly and reproducibly onto hardware that attempts to solve them, and to give you a measurable signal about how much to trust the result.
 
-The analog substrate layer (BEC, photonic, continuous-variable) is defined as an interface not yet implemented. The mathematics required for a constructive universality theorem on those substrates does not yet exist. When it does, LIMEN will be ready to receive it.
+The analog substrate layer (BEC, photonic, continuous-variable) is defined as an interface not yet fully implemented. The mathematics required for a constructive universality theorem on those substrates does not yet exist. When it does, LIMEN will be ready to receive it.
 
 ---
 
@@ -133,6 +148,23 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 - [x] Neutral-atom LHZ parity-encoding fallback (Theorem 3 — automatic for non-natively-realizable targets)
 - [x] Photonic GBS-inspired backend (Arrazola-Bromley adjacency encoding)
 - [ ] Constructive universality theorem for general analog Hamiltonians (pending research — see limen/docs/architecture.md)
+
+### Phase 4 — Multi-Node Distributed Architecture (In Progress)
+- [x] Milestone 1: node identity, registry, and gRPC coordination service (discovery, heartbeat, calibration sync)
+- [x] Milestone 2: distributed QUBO partitioning across nodes (`CompilePartition` RPC, wired into `run_pipeline`)
+- [ ] Milestone 3: classical feedforward transport over `QuantumChannel`
+
+### Phase 5 — Gate-Model Track & ECC Certification (Complete)
+- [x] QAOA compiler: QUBO → Ising → `CircuitIR` with grid-search parameter optimisation
+- [x] Pure-Python statevector simulator (exact, no external SDK, ~14-qubit ceiling)
+- [x] Gate-model synthesis: arbitrary 1-qubit unitary decomposition into `(rz, ry, rz)` + `cx`
+- [x] Distance-3 rotated surface-code ECC: stabilisers, syndrome extraction, lookup decoder
+- [x] Gate-executed ECC round-trip: syndrome circuit run on the statevector simulator
+- [x] `EndToEndCertificate`: solution + optimality + QAOA success rate + logical error rate + ECC metadata
+- [x] `run_pipeline` end-to-end orchestrator (local and distributed)
+- [x] Physics-validation test suite (random QUBO vs brute-force, error-rate sweep, distance scaling, weight-2 uncorrectable boundary, BB84 eavesdrop detection)
+- [ ] QPU backend integration for pipeline execution step (IBM/D-Wave real hardware)
+- [ ] Classical feedforward transport over `QuantumChannel` (Milestone 3 dependency)
 
 ---
 
@@ -160,6 +192,29 @@ result = validate(encoding, runs=1000)
 print(result.confidence)  # 0.0 – 1.0
 ```
 
+### End-to-end pipeline (gate-model + ECC, optionally distributed)
+
+`run_pipeline` threads a QUBO through the whole stack — QAOA compilation, statevector execution, classical optimality check, and a surface-code logical-error certificate — and returns a single `EndToEndCertificate`:
+
+```python
+import limen
+
+cert = limen.run_pipeline(
+    {('x0', 'x0'): -1.0, ('x1', 'x1'): -1.0, ('x0', 'x1'): 2.0},
+    physical_error_rate=0.01,
+)
+print(cert.solution, cert.is_optimal, cert.logical_error_rate)
+
+# Compile across peer nodes over the Coordination CompilePartition RPC
+# (requires the `distributed` extra and reachable peers):
+cert = limen.run_pipeline(
+    {('x0', 'x0'): -1.0, ('x1', 'x1'): -1.0, ('x0', 'x1'): 2.0},
+    server_addresses=["127.0.0.1:50051"],
+    num_partitions=2,
+)
+print(cert.distributed_compilation)
+```
+
 ---
 
 ## Design Principles
@@ -170,7 +225,7 @@ print(result.confidence)  # 0.0 – 1.0
 
 **Hardware agnostic formulation, hardware explicit compilation.** The logical IR knows nothing about hardware topology. The compiler knows everything. The boundary between them is hard and intentional.
 
-**Open core.** The compiler, IR, validator, and hardware adapters are Apache 2.0. Production features (Stackelberg co-design, portfolio compilation, drift-aware margin selection) will be offered under a commercial license for enterprise deployments.
+**Open core.** The compiler, IR, validator, and hardware adapters are source-available under the Elastic License 2.0. Production features (Stackelberg co-design, portfolio compilation, drift-aware margin selection) will be offered under a commercial license for enterprise deployments.
 
 ---
 
@@ -189,15 +244,24 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE) for details.
+Elastic License 2.0 (ELv2) — see [LICENSE](LICENSE) for details.
 
-The patent grant clause is intentional. Quantum computing is a patent-dense field. LIMEN's Apache 2.0 license protects contributors and users explicitly.
+LIMEN is source-available: anyone can read, fork, and use the code for
+research and internal purposes. ELv2 prohibits offering LIMEN as a hosted
+or managed service without a commercial license. Use is also subject to
+the restrictions in [ACCEPTABLE_USE.md](ACCEPTABLE_USE.md), which
+prohibits weapons development, mass surveillance, unauthorized
+cryptanalysis, and attacks on critical infrastructure.
+
+As of v0.3.1, LIMEN changed from Apache 2.0 to ELv2. Copies obtained under
+Apache 2.0 retain their Apache 2.0 rights; all new versions are licensed
+under ELv2.
 
 ---
 
 ## Status
 
-**v0.3.1 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Hardware validated.**
+**v0.4.0 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Phase 4 Milestone 2 complete · Hardware validated.**
 Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend
 adapters shipped and tested. Stackelberg co-design loop operational with
 Rust-backed κ scoring, stability-penalised learning rate, chain-break fraction
@@ -209,10 +273,18 @@ encoding), HardwareDeltaModel calibration layer.
 Pure-Python fallback for all Rust-backed paths. Constructive universality
 theorem pending research — formal specification in limen/docs/architecture.md.
 
+**Gate-model track fully operational**: QUBO → QAOA compilation → exact
+statevector simulation → surface-code (d=3) ECC syndrome extraction and
+logical-error certification, end-to-end with no external SDK required.
+`run_pipeline` returns a single `EndToEndCertificate` with solution, optimality
+flag, QAOA success probability, per-qubit logical error rate, and ECC roundtrip
+verification. Distributed compilation over gRPC (`CompilePartition` RPC) wired
+into `run_pipeline(server_addresses=[...])`.
+
 **First real hardware validation: IBM ibm_kingston (Heron R2, 156 qubits),
 June 9 2026. Benchmark results in benchmarks/RESULTS.md.**
 
-54+ tests passing across six test suites.
+235 tests passing, 6 skipped. Zero regressions.
 
 If you are building in this space and want to collaborate, open an issue.
 

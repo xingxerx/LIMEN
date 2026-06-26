@@ -36,6 +36,11 @@ __all__ = [
     "load_quera_calibration",
     "load_ibmq_calibration",
     "load_live_ibmq_calibration",
+    "QuantumChannel",
+    "TeleportationResult",
+    "QKDResult",
+    "EndToEndCertificate",
+    "run_pipeline",
 ]
 
 
@@ -84,5 +89,23 @@ def __getattr__(name: str):
             "load_ibmq_calibration": load_ibmq_calibration,
             "load_live_ibmq_calibration": load_live_ibmq_calibration,
         }[name]
+    if name in ("QuantumChannel", "TeleportationResult", "QKDResult"):
+        from limen.communication.channel import (
+            QuantumChannel,
+            TeleportationResult,
+            QKDResult,
+        )
+        return {
+            "QuantumChannel": QuantumChannel,
+            "TeleportationResult": TeleportationResult,
+            "QKDResult": QKDResult,
+        }[name]
+    if name in ("EndToEndCertificate", "run_pipeline"):
+        from limen.pipeline import EndToEndCertificate, run_pipeline
+        return {
+            "EndToEndCertificate": EndToEndCertificate,
+            "run_pipeline": run_pipeline,
+        }[name]
     raise AttributeError(f"module 'limen' has no attribute {name!r}")
+
 

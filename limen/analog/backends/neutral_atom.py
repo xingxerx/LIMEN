@@ -359,10 +359,8 @@ class NeutralAtomResult:
     message: str
     certificate: CompilationCertificate | None = None
     geometry: GeometricEmbeddabilityResult | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
     lhz_result: LHZResult | None = None
     lhz_certificate: LHZCertificate | None = None
-    plaquette_geometry: PlaquetteGeometryResult | None = None
 
 
 # -- Layout helpers ----------------------------------------------------
@@ -632,11 +630,15 @@ def run_neutral_atom(
                 delta_model.device_id if delta_model is not None else None
             ),
             "status": "certified-heuristic",
+            "lhz_fallback_applied": lhz_result is not None,
+            "lhz_n_physical": lhz_result.n_physical if lhz_result is not None else None,
             "note": (
                 "Heuristic van der Waals layout with exact compilation "
                 "certificate (Theorem 1, limen/docs/universality_theorem.md). "
-                "Targets with negative J or non-2D-embeddable distances require "
-                "the parity-encoding route (Theorem 3)."
+                "Targets with negative J or non-2D-embeddable distances are "
+                "automatically LHZ-encoded (Theorem 3); see result.lhz_result "
+                "and result.lhz_certificate for the parity-encoded Hamiltonian "
+                "and its correctness certificate."
             ),
         },
         lhz_result=lhz_result,
