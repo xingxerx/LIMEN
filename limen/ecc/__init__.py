@@ -8,6 +8,12 @@ quantifies quantum logical error rate instead.
 
 from limen.ecc.certificate import LogicalErrorCertificate, certify_logical_qubit
 from limen.ecc.decoder import LookupDecoder
+from limen.ecc.encoder import (
+    RoundTripResult,
+    build_z_syndrome_circuit,
+    run_logical_roundtrip,
+    verify_corrects_all_weight_one,
+)
 from limen.ecc.surface_code import SurfaceCodePatch, build_surface_code
 from limen.ecc.syndrome import build_syndrome_circuit
 
@@ -18,4 +24,8 @@ __all__ = [
     "LookupDecoder",
     "LogicalErrorCertificate",
     "certify_logical_qubit",
+    "RoundTripResult",
+    "build_z_syndrome_circuit",
+    "run_logical_roundtrip",
+    "verify_corrects_all_weight_one",
 ]

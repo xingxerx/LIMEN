@@ -14,13 +14,32 @@
 """Communication package for LIMEN."""
 
 from limen.communication.channel import (
-    QuantumChannel,
-    TeleportationResult,
+    ChannelDeltaModel,
     QKDResult,
+    QuantumChannel,
+    SiftedKeyResult,
+    TeleportationResult,
+    TeleportResult,
+    bb84_circuit,
+    estimate_fidelity,
+    run_teleport_qpu,
+    sift_and_evaluate,
+    teleport_circuit,
 )
 
 __all__ = [
+    # High-level (simulator) API
     "QuantumChannel",
     "TeleportationResult",
     "QKDResult",
+    # Hardware-level channel model
+    "ChannelDeltaModel",
+    # Low-level QPU-execution API
+    "TeleportResult",
+    "SiftedKeyResult",
+    "teleport_circuit",
+    "bb84_circuit",
+    "run_teleport_qpu",
+    "estimate_fidelity",
+    "sift_and_evaluate",
 ]

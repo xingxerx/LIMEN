@@ -30,6 +30,7 @@ from typing import Any
 from limen.core.ir import LogicalGraph
 from limen.ecc.certificate import certify_logical_qubit
 from limen.ecc.decoder import LookupDecoder
+from limen.ecc.encoder import verify_corrects_all_weight_one
 from limen.ecc.surface_code import build_surface_code
 from limen.frontends.pyqubo import from_qubo_dict
 from limen.gates.qaoa import bitstring_to_assignment, compile_qaoa, variable_order
@@ -172,16 +173,27 @@ def run_pipeline(
 
     logical_rate: float | None = None
     aggregate_rate: float | None = None
+    roundtrip_corrects_all_weight1: bool | None = None
     notes: list[str] = []
     if encode_logical and physical_error_rate is not None:
         patch = build_surface_code(distance)
-        cert = certify_logical_qubit(patch, LookupDecoder(patch), physical_error_rate)
+        decoder = LookupDecoder(patch)
+        cert = certify_logical_qubit(patch, decoder, physical_error_rate)
         logical_rate = cert.logical_error_rate
         aggregate_rate = 1.0 - (1.0 - logical_rate) ** n
+        # Back the analytic certificate with executed gate circuits: run
+        # the syndrome-extraction loop on the simulator for every weight-1
+        # X error and confirm the code corrects them all.
+        roundtrip_corrects_all_weight1 = verify_corrects_all_weight_one(patch, decoder)
         notes.append(
             f"Logical-qubit budget: distance-{distance} surface code at physical "
             f"error rate {physical_error_rate} gives per-qubit logical error "
             f"{logical_rate:.3e} ({n} logical qubits)."
+        )
+        notes.append(
+            "Gate-executed round-trip "
+            + ("corrects" if roundtrip_corrects_all_weight1 else "FAILS to correct")
+            + " all weight-1 X errors."
         )
     elif encode_logical:
         notes.append("ECC certificate skipped: no physical_error_rate supplied.")
@@ -205,5 +217,9 @@ def run_pipeline(
         distance=distance if logical_rate is not None else None,
         n_logical_qubits=n,
         notes=notes,
-        metadata={"variable_order": order, "seed": seed},
+        metadata={
+            "variable_order": order,
+            "seed": seed,
+            "roundtrip_corrects_all_weight1": roundtrip_corrects_all_weight1,
+        },
     )

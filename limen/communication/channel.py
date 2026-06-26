@@ -15,13 +15,17 @@
 
 Implements quantum teleportation and Quantum Key Distribution (QKD) BB84 protocols
 run on simulators or physical QPU backends using Qiskit.
+
+This is the single canonical module for all quantum-channel functionality.
+``limen.quantum_channel`` is a thin compatibility re-export layer that points here.
 """
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 _INSTALL_MSG = (
     "The Qiskit SDK is required to use the QuantumChannel. "
@@ -364,3 +368,299 @@ class QuantumChannel:
                 "seed": self.seed,
             },
         )
+
+
+# ---------------------------------------------------------------------------
+# Hardware-level channel model (feedforward latency / coherence)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ChannelDeltaModel:
+    """Models classical feedforward latency and its effect on qubit coherence.
+
+    Analogous to HardwareDeltaModel but for the inter-node classical channel
+    rather than QPU calibration.
+
+    Attributes:
+        latency_ms: Classical channel round-trip latency in milliseconds.
+        t2_us: QPU T2 coherence time in microseconds.
+        gate_time_us: Single-qubit gate time in microseconds.
+    """
+
+    latency_ms: float
+    t2_us: float
+    gate_time_us: float = 0.1
+
+    def within_coherence(self) -> bool:
+        """True if feedforward completes before T2 decay."""
+        return (self.latency_ms * 1000.0) < self.t2_us
+
+    def fidelity_penalty(self) -> float:
+        """Exponential decay estimate: exp(-latency / T2)."""
+        t_us = self.latency_ms * 1000.0
+        return math.exp(-t_us / self.t2_us)
+
+    def to_dict(self) -> dict:
+        return {
+            "latency_ms": self.latency_ms,
+            "t2_us": self.t2_us,
+            "gate_time_us": self.gate_time_us,
+            "within_coherence": self.within_coherence(),
+            "fidelity_penalty": self.fidelity_penalty(),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Low-level teleportation result (QPU execution path)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TeleportResult:
+    """Low-level result from a QPU teleportation job.
+
+    Returned by :func:`run_teleport_qpu` and :func:`estimate_fidelity`.
+    The high-level simulator path returns :class:`TeleportationResult` instead.
+
+    Attributes:
+        fidelity_estimate: Fraction of shots that matched the expected outcome.
+        success: True if fidelity_estimate > 0.5.
+        backend: Backend name used for the job.
+        job_id: IBM job ID, if available.
+        channel_delta: Optional coherence model derived from live T2 calibration.
+    """
+
+    fidelity_estimate: float
+    success: bool
+    backend: str
+    job_id: Optional[str] = None
+    channel_delta: Optional[ChannelDeltaModel] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "fidelity_estimate": self.fidelity_estimate,
+            "success": self.success,
+            "backend": self.backend,
+            "job_id": self.job_id,
+            "channel_delta": self.channel_delta.to_dict() if self.channel_delta else None,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Low-level sifted-key QKD result (basis-sifting path)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SiftedKeyResult:
+    """Result of the BB84 basis-sifting step returned by :func:`sift_and_evaluate`.
+
+    This is the *low-level* result that carries raw key lists and per-index
+    information.  The high-level :class:`QKDResult` returned by
+    :meth:`QuantumChannel.qkd_bb84` carries the final shared key string instead.
+
+    Attributes:
+        raw_key: Alice's full bit string before sifting.
+        sifted_key: Bits retained after basis matching.
+        qber: Quantum Bit Error Rate over the sifted key.
+        secure: True if QBER is below the 11 % abort threshold.
+        backend: Backend identifier used for the job.
+        job_id: Job ID, if submitted to a QPU.
+    """
+
+    raw_key: list[int]
+    sifted_key: list[int]
+    qber: float
+    secure: bool
+    backend: str
+    job_id: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "sifted_key_length": len(self.sifted_key),
+            "qber": self.qber,
+            "secure": self.secure,
+            "backend": self.backend,
+            "job_id": self.job_id,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Low-level circuit builders (gated on qiskit)
+# ---------------------------------------------------------------------------
+
+def teleport_circuit():
+    """Build a standard 3-qubit teleportation circuit.
+
+    q0 = state to send; q1/q2 = Bell pair (Node A / Node B).
+    Requires qiskit; raises :exc:`ImportError` if not installed.
+    """
+    _check_qiskit()
+    from qiskit import QuantumCircuit  # type: ignore[import]
+
+    qc = QuantumCircuit(3, 3)
+    qc.h(1)
+    qc.cx(1, 2)
+    qc.cx(0, 1)
+    qc.h(0)
+    qc.measure([0, 1], [0, 1])
+    qc.cx(1, 2)
+    qc.cz(0, 2)
+    qc.measure(2, 2)
+    return qc
+
+
+def bb84_circuit(n_bits: int):
+    """Build a BB84 QKD circuit for *n_bits*.
+
+    Returns ``(circuit, alice_bases, alice_bits, bob_bases)``.
+    Requires qiskit; raises :exc:`ImportError` if not installed.
+    """
+    _check_qiskit()
+    from qiskit import QuantumCircuit  # type: ignore[import]
+
+    alice_bits = [random.randint(0, 1) for _ in range(n_bits)]
+    alice_bases = [random.randint(0, 1) for _ in range(n_bits)]
+    bob_bases = [random.randint(0, 1) for _ in range(n_bits)]
+
+    qc = QuantumCircuit(n_bits, n_bits)
+    for i in range(n_bits):
+        if alice_bits[i] == 1:
+            qc.x(i)
+        if alice_bases[i] == 1:
+            qc.h(i)
+    for i in range(n_bits):
+        if bob_bases[i] == 1:
+            qc.h(i)
+    qc.measure(range(n_bits), range(n_bits))
+
+    return qc, alice_bases, alice_bits, bob_bases
+
+
+# ---------------------------------------------------------------------------
+# Analysis helpers
+# ---------------------------------------------------------------------------
+
+def estimate_fidelity(
+    counts: dict[str, int],
+    backend: str,
+    job_id: Optional[str] = None,
+    expected_bit: str = "0",
+) -> TeleportResult:
+    """Estimate teleportation fidelity from raw IBM job measurement counts.
+
+    :func:`teleport_circuit` always prepares q0 in |0>, so a faithful
+    teleportation measures Bob's qubit (q2, classical bit 2) as
+    ``expected_bit``.  Qiskit formats counts keys as ``"c2c1c0"``
+    (bit 2 leftmost), so *fidelity_estimate* is the fraction of shots
+    whose leftmost character matches *expected_bit*.
+    """
+    total_shots = sum(counts.values())
+    if total_shots == 0:
+        return TeleportResult(
+            fidelity_estimate=0.0, success=False, backend=backend, job_id=job_id
+        )
+
+    correct_outcomes = sum(
+        count
+        for bitstring, count in counts.items()
+        if bitstring.replace(" ", "")[0] == expected_bit
+    )
+    fidelity_estimate = correct_outcomes / total_shots
+    return TeleportResult(
+        fidelity_estimate=fidelity_estimate,
+        success=fidelity_estimate > 0.5,
+        backend=backend,
+        job_id=job_id,
+    )
+
+
+def sift_and_evaluate(
+    alice_bits: list[int],
+    alice_bases: list[int],
+    bob_bases: list[int],
+    bob_results: list[int],
+    backend: str = "classical",
+    job_id: Optional[str] = None,
+) -> SiftedKeyResult:
+    """Sift keys on matching bases, compute QBER, return :class:`SiftedKeyResult`."""
+    sifted_alice: list[int] = []
+    sifted_bob: list[int] = []
+    for i in range(len(alice_bases)):
+        if alice_bases[i] == bob_bases[i]:
+            sifted_alice.append(alice_bits[i])
+            sifted_bob.append(bob_results[i])
+
+    if not sifted_alice:
+        return SiftedKeyResult([], [], 1.0, False, backend, job_id)
+
+    errors = sum(a != b for a, b in zip(sifted_alice, sifted_bob))
+    qber = errors / len(sifted_alice)
+
+    return SiftedKeyResult(
+        raw_key=alice_bits,
+        sifted_key=sifted_alice,
+        qber=qber,
+        secure=qber < 0.11,
+        backend=backend,
+        job_id=job_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Full QPU execution path
+# ---------------------------------------------------------------------------
+
+_DEFAULT_FEEDFORWARD_LATENCY_MS = 0.001
+
+
+def run_teleport_qpu(
+    token: str,
+    crn: str,
+    backend_name: str = "ibm_kingston",
+    shots: int = 1000,
+) -> TeleportResult:
+    """Submit the teleportation circuit to a real IBM QPU and estimate fidelity.
+
+    Requires qiskit and qiskit-ibm-runtime; raises :exc:`ImportError` if not
+    installed.
+    """
+    _check_qiskit()
+    from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2  # type: ignore[import]
+    from qiskit.transpiler.preset_passmanagers import (  # type: ignore[import]
+        generate_preset_pass_manager,
+    )
+
+    qc = teleport_circuit()
+
+    service = QiskitRuntimeService(
+        channel="ibm_quantum_platform",
+        token=token,
+        instance=crn,
+    )
+    backend = service.backend(backend_name)
+    pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
+    transpiled = pm.run(qc)
+
+    sampler = SamplerV2(mode=backend)
+    job = sampler.run([transpiled], shots=shots)
+    job_id = job.job_id()
+    pub_result = job.result()[0]
+    counts: dict[str, int] = pub_result.data.c.get_counts()
+
+    result = estimate_fidelity(counts, backend=backend_name, job_id=job_id)
+    result.channel_delta = _channel_delta_from_backend(backend)
+    return result
+
+
+def _channel_delta_from_backend(backend: Any) -> Optional[ChannelDeltaModel]:
+    """Build a :class:`ChannelDeltaModel` from a backend's live T2 calibration."""
+    t2_values = [
+        props.t2
+        for q in range(backend.num_qubits)
+        if (props := backend.qubit_properties(q)) is not None and props.t2
+    ]
+    if not t2_values:
+        return None
+    median_t2_us = sorted(t2_values)[len(t2_values) // 2] * 1e6
+    return ChannelDeltaModel(
+        latency_ms=_DEFAULT_FEEDFORWARD_LATENCY_MS, t2_us=median_t2_us
+    )
