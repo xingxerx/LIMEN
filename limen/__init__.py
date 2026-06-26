@@ -39,6 +39,8 @@ __all__ = [
     "QuantumChannel",
     "TeleportationResult",
     "QKDResult",
+    "EndToEndCertificate",
+    "run_pipeline",
 ]
 
 
@@ -97,6 +99,12 @@ def __getattr__(name: str):
             "QuantumChannel": QuantumChannel,
             "TeleportationResult": TeleportationResult,
             "QKDResult": QKDResult,
+        }[name]
+    if name in ("EndToEndCertificate", "run_pipeline"):
+        from limen.pipeline import EndToEndCertificate, run_pipeline
+        return {
+            "EndToEndCertificate": EndToEndCertificate,
+            "run_pipeline": run_pipeline,
         }[name]
     raise AttributeError(f"module 'limen' has no attribute {name!r}")
 

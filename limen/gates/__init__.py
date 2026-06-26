@@ -6,6 +6,13 @@ callers, following the same optional-SDK convention as the rest of LIMEN.
 """
 
 from limen.gates.ir import CircuitIR, GateInstruction, KNOWN_GATES
+from limen.gates.qaoa import (
+    bitstring_to_assignment,
+    compile_qaoa,
+    qubo_to_ising,
+    variable_order,
+)
+from limen.gates.simulator import probabilities, sample_counts, statevector
 from limen.gates.synthesis import decompose_unitary_1q, u_matrix
 
 __all__ = [
@@ -14,4 +21,11 @@ __all__ = [
     "KNOWN_GATES",
     "decompose_unitary_1q",
     "u_matrix",
+    "statevector",
+    "probabilities",
+    "sample_counts",
+    "compile_qaoa",
+    "qubo_to_ising",
+    "variable_order",
+    "bitstring_to_assignment",
 ]
