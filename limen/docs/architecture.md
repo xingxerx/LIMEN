@@ -8,7 +8,7 @@ LIMEN is a compiler, not a solver. Its job is to translate a classical optimizat
 
 Determinism is the foundational constraint from which everything else follows. Two researchers running the same LIMEN version on the same problem must produce bit-for-bit identical encodings. This rules out any heuristic randomness in the compilation path. It makes reproducibility across hardware generations possible. It is what separates a scientific instrument from a black box.
 
-The system divides cleanly into two completion states. Phases 1 and 2 — the logical IR, lexicographic compiler, probabilistic validator, Stackelberg co-design loop, and portfolio compiler — are fully implemented and tested. Phase 3, the analog substrate layer, has its interface defined and its stubs in place, but the compilation theorem that would give those stubs real implementations is a research milestone, not an engineering one. That boundary is intentional and documented precisely so that when the theorem arrives, the receiving interface is already there.
+The system divides cleanly into two completion states. Phases 1 and 2 — the logical IR, lexicographic compiler, probabilistic validator, Stackelberg co-design loop, and portfolio compiler — are fully implemented and tested. Phase 3, the analog substrate layer, is *not* a set of unimplemented stubs: `limen/docs/universality_theorem.md` proves restricted-class compilation theorems (Theorems 2, 4, 5) for the neutral-atom, photonic, and BEC backends, each giving an exact, certified coefficient mapping for diagonal Z/ZZ Ising Hamiltonians, and all three backends are implemented and tested against those proofs. What remains a research milestone, not an engineering one, is the fully general theorem described below — covering arbitrary, non-diagonal, time-dependent analog Hamiltonians (e.g. the raw Rydberg blockade Hamiltonian with its Ω/Δ drive terms, or photonic circuits built from non-Gaussian gates) rather than the restricted diagonal class LIMEN currently compiles. That boundary is intentional and documented precisely so that when the general theorem arrives, the receiving interface is already there.
 
 ---
 
@@ -198,7 +198,7 @@ Only Z and ZZ terms are emitted. This is the Ising Z-basis: the natural language
 
 ## The Phase 3 Research Gap
 
-The following is a precise specification of what is missing. The interface is defined in `limen/analog/hamiltonian.py`; what does not exist is the compilation theorem that would give the backend stubs real implementations.
+This section describes the gap that remains *after* the restricted-class theorems (2, 4, 5 in `limen/docs/universality_theorem.md`) were proved and implemented. Those theorems compile arbitrary diagonal Z/ZZ Ising coefficients exactly (with a computable error bound, Theorem 1) onto each substrate's native parameters — that part is done and tested. What follows is a precise specification of the harder, still-open problem: a *general* universality theorem covering the full native Hamiltonian of each substrate (drive terms, non-Gaussian gates, blockade constraints), not just its diagonal Ising sector. The interface for this is defined in `limen/analog/hamiltonian.py`.
 
 ### Neutral-atom backends (Rydberg blockade)
 

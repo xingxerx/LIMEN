@@ -242,7 +242,14 @@ def dwave_chain_break_fn(
     The returned callable submits the encoding to a D-Wave sampler each
     iteration and extracts the mean chain-break fraction. With use_qpu=False
     (the default) this always returns 0.0; set use_qpu=True when Leap
-    credentials are available.
+    credentials are available. This is the D-Wave analog of
+    `limen.backends.qiskit_backend.ibm_noise_fn` — see
+    `examples/dwave_codesign_qpu.py` for a closed-loop Stackelberg run
+    against a real D-Wave QPU.
+
+    The returned callable records per-iteration telemetry on its
+    ``history`` attribute (chain_strength, chain_break_fraction,
+    best_energy, sampler timing info).
 
     Args:
         num_reads: Samples per iteration (kept low to reduce QPU time).
@@ -254,7 +261,7 @@ def dwave_chain_break_fn(
         A callable (PhysicalEncoding) → float for use as the
         chain_break_fraction_fn argument of run_codesign.
     """
-    from typing import Callable as _Callable
+    history: list[dict[str, Any]] = []
 
     def _fn(encoding: PhysicalEncoding) -> float:
         result = run_dwave(
@@ -264,6 +271,15 @@ def dwave_chain_break_fn(
             qpu_endpoint=qpu_endpoint,
             qpu_token=qpu_token,
         )
+        history.append(
+            {
+                "chain_strength": encoding.chain_strength,
+                "chain_break_fraction": result.chain_break_fraction,
+                "best_energy": result.best_energy,
+                "timing": result.timing,
+            }
+        )
         return result.chain_break_fraction
 
+    _fn.history = history  # type: ignore[attr-defined]
     return _fn

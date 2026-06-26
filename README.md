@@ -94,11 +94,11 @@ To help navigate the files and components of LIMEN, see the [Directory Map](DIRE
                 │                   distributed compilation)
        ┌────────┴────────┐
        ▼                 ▼
-┌─────────────┐   ┌────────────────┐
-│ NEUTRAL-ATOM│   │ PHOTONIC STUB  │
-│ Rydberg     │   │ CV optical     │
-│[pending thm]│   │[pending thm]   │
-└─────────────┘   └────────────────┘
+┌─────────────┐    ┌───────────────┐
+│ NEUTRAL-ATOM│    │ PHOTONIC (GBS)│
+│ Rydberg     │    │ CV optical    │
+│ [Thm 2,3 OK]│    │ [Thm 4 OK]    │
+└─────────────┘    └───────────────┘
 ```
 
 ---
@@ -264,8 +264,15 @@ under ELv2.
 **v0.5.0 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Phase 4 complete · Phase 5 complete · Hardware validated.**
 Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend
 adapters shipped and tested. Stackelberg co-design loop operational with
-Rust-backed κ scoring, stability-penalised learning rate, chain-break fraction
-telemetry wired end-to-end, and portfolio compilation across backend slots.
+Rust-backed κ scoring, stability-penalised learning rate, and portfolio
+compilation across backend slots. Chain-break-fraction feedback is wired
+into the loop on both hardware paths: `ibm_noise_fn` (real-hardware total
+variation distance) drives `examples/ibm_codesign_qpu.py`, validated against
+`ibm_kingston`, and `dwave_chain_break_fn` (real chain-break fraction) now
+drives the equivalent closed loop against a live D-Wave QPU in
+`examples/dwave_codesign_qpu.py`. With no callback supplied, chain-break
+fraction defaults to 0.0 (simulation mode) — this is documented behaviour,
+not an inactive feature.
 Analog interface layer implemented: classical Ising simulator (exact
 diagonalisation, ≤20 sites), neutral-atom heuristic backend (van der Waals
 layout, Rydberg parameters), photonic GBS backend (Arrazola-Bromley adjacency

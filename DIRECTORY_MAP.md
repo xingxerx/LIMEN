@@ -41,6 +41,7 @@ Practical entry-point examples showcasing how to use LIMEN's components.
 * **`analog_demo.py`** — Demonstrates the compilation pipeline from LogicalGraph to physical neutral-atom and photonic topologies.
 * **`codesign_demo.py`** — Showcases the joint hardware-software Stackelberg co-design loop for optimizing embeddings and penalty margins.
 * **`communication_demo.py`** — Showcases state teleportation and QKD (BB84) key exchange protocols.
+* **`dwave_codesign_qpu.py`** — D-Wave analog of `ibm_codesign_qpu.py`: closes the Stackelberg co-design loop against a real D-Wave QPU, feeding the measured chain-break fraction back into the κ scoring via `dwave_chain_break_fn`.
 * **`ibm_codesign_qpu.py`** — Demonstrates physical co-design mapping running on IBM gate-model hardware.
 * **`ibm_qpu_demo.py`** — Standard circuit compilation and execution walkthrough using the IBM Qiskit backend.
 * **`max_cut.py`** — Compiles a classical Max-Cut graph problem into a Hamiltonian suitable for physical hardware execution.
