@@ -361,6 +361,8 @@ class NeutralAtomResult:
     geometry: GeometricEmbeddabilityResult | None = None
     lhz_result: LHZResult | None = None
     lhz_certificate: LHZCertificate | None = None
+    plaquette_geometry: PlaquetteGeometryResult | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # -- Layout helpers ----------------------------------------------------
