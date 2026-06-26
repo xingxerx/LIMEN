@@ -79,10 +79,25 @@ message CompilePartitionResult {
   string encoding_json = 1;
 }
 
+message FeedforwardRequest {
+  // Alice's Bell-basis measurement outcomes (0 or 1 each).
+  int32 m0 = 1;
+  int32 m1 = 2;
+  // Optional input-state angles, echoed back for caller-side verification.
+  double theta = 3;
+  double phi = 4;
+}
+
+message FeedforwardResponse {
+  // Pauli correction Bob applied: "I", "X", "Z", or "XZ".
+  string correction = 1;
+}
+
 service Coordination {
   rpc Register(NodeInfo) returns (RegisterAck);
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatAck);
   rpc SyncCalibration(SyncCalibrationRequest) returns (HardwareDeltaModelProto);
   rpc ListPeers(Empty) returns (NodeList);
   rpc CompilePartition(CompilePartitionRequest) returns (CompilePartitionResult);
+  rpc TransportFeedforward(FeedforwardRequest) returns (FeedforwardResponse);
 }

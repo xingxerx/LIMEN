@@ -147,12 +147,12 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 - [x] Neutral-atom heuristic backend (van der Waals layout, Rydberg parameters)
 - [x] Neutral-atom LHZ parity-encoding fallback (Theorem 3 — automatic for non-natively-realizable targets)
 - [x] Photonic GBS-inspired backend (Arrazola-Bromley adjacency encoding)
-- [ ] Constructive universality theorem for general analog Hamiltonians (pending research — see limen/docs/architecture.md)
+- [x] Restricted-class universality results documented and implemented (Theorems 1-5, `limen/docs/universality_theorem.md`); a fully general universality theorem for arbitrary (non-diagonal, time-dependent) analog Hamiltonians remains open research and is not claimed
 
-### Phase 4 — Multi-Node Distributed Architecture (In Progress)
+### Phase 4 — Multi-Node Distributed Architecture (Complete)
 - [x] Milestone 1: node identity, registry, and gRPC coordination service (discovery, heartbeat, calibration sync)
 - [x] Milestone 2: distributed QUBO partitioning across nodes (`CompilePartition` RPC, wired into `run_pipeline`)
-- [ ] Milestone 3: classical feedforward transport over `QuantumChannel`
+- [x] Milestone 3: classical feedforward transport over `QuantumChannel` — `TransportFeedforward` RPC carries Alice's Bell-measurement bits to a peer node, which applies Bob's correction and echoes it back; `run_distributed_feedforward_teleport` measures real round-trip latency and feeds it into `ChannelDeltaModel`
 
 ### Phase 5 — Gate-Model Track & ECC Certification (Complete)
 - [x] QAOA compiler: QUBO → Ising → `CircuitIR` with grid-search parameter optimisation
@@ -163,8 +163,8 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 - [x] `EndToEndCertificate`: solution + optimality + QAOA success rate + logical error rate + ECC metadata
 - [x] `run_pipeline` end-to-end orchestrator (local and distributed)
 - [x] Physics-validation test suite (random QUBO vs brute-force, error-rate sweep, distance scaling, weight-2 uncorrectable boundary, BB84 eavesdrop detection)
-- [ ] QPU backend integration for pipeline execution step (IBM/D-Wave real hardware)
-- [ ] Classical feedforward transport over `QuantumChannel` (Milestone 3 dependency)
+- [x] QPU backend integration for pipeline execution step: `backend="aer"`/`"qpu"` (real IBM hardware via Qiskit Runtime) and `backend="dwave"` (real D-Wave QPU or simulated annealer) are all wired into `run_pipeline`
+- [x] Classical feedforward transport over `QuantumChannel` (Milestone 3, see Phase 4 above)
 
 ---
 
@@ -261,7 +261,7 @@ under ELv2.
 
 ## Status
 
-**v0.4.0 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Phase 4 Milestone 2 complete · Hardware validated.**
+**v0.5.0 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Phase 4 complete · Phase 5 complete · Hardware validated.**
 Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend
 adapters shipped and tested. Stackelberg co-design loop operational with
 Rust-backed κ scoring, stability-penalised learning rate, chain-break fraction
@@ -270,21 +270,33 @@ Analog interface layer implemented: classical Ising simulator (exact
 diagonalisation, ≤20 sites), neutral-atom heuristic backend (van der Waals
 layout, Rydberg parameters), photonic GBS backend (Arrazola-Bromley adjacency
 encoding), HardwareDeltaModel calibration layer.
-Pure-Python fallback for all Rust-backed paths. Constructive universality
-theorem pending research — formal specification in limen/docs/architecture.md.
+Pure-Python fallback for all Rust-backed paths. Restricted-class universality
+results (Theorems 1-5) documented in `limen/docs/universality_theorem.md`;
+a fully general universality theorem for arbitrary analog Hamiltonians
+remains open research and is not claimed.
 
 **Gate-model track fully operational**: QUBO → QAOA compilation → exact
 statevector simulation → surface-code (d=3) ECC syndrome extraction and
 logical-error certification, end-to-end with no external SDK required.
 `run_pipeline` returns a single `EndToEndCertificate` with solution, optimality
-flag, QAOA success probability, per-qubit logical error rate, and ECC roundtrip
+flag, success probability, per-qubit logical error rate, and ECC roundtrip
 verification. Distributed compilation over gRPC (`CompilePartition` RPC) wired
-into `run_pipeline(server_addresses=[...])`.
+into `run_pipeline(server_addresses=[...])`. The pipeline's execution step now
+also routes to real backends — `backend="aer"`/`"qpu"` (IBM Quantum hardware)
+and `backend="dwave"` (real D-Wave QPU or simulated annealer) — alongside the
+default offline statevector simulator.
+
+**Multi-node coordination is now end-to-end**: beyond discovery and
+calibration sync, nodes can transport the classical feedforward bits of a
+teleportation protocol to a peer over gRPC (`TransportFeedforward` RPC) and
+measure real round-trip latency against the qubit's T2 coherence time
+(`run_distributed_feedforward_teleport`).
 
 **First real hardware validation: IBM ibm_kingston (Heron R2, 156 qubits),
 June 9 2026. Benchmark results in benchmarks/RESULTS.md.**
 
-235 tests passing, 6 skipped. Zero regressions.
+233 tests passing, 8 skipped (skips are environment-gated: D-Wave Ocean SDK
+not installed in this dev environment). Zero regressions.
 
 If you are building in this space and want to collaborate, open an issue.
 

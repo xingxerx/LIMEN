@@ -37,7 +37,7 @@ from limen.gates.qaoa import bitstring_to_assignment, compile_qaoa, variable_ord
 from limen.gates.simulator import probabilities
 from limen.validator.validator import brute_force_solve
 
-_BACKEND_CHOICES = frozenset({"statevector", "aer", "qpu"})
+_BACKEND_CHOICES = frozenset({"statevector", "aer", "qpu", "dwave"})
 
 
 @dataclass
@@ -226,6 +226,58 @@ def _qpu_probabilities(
     return {bits[::-1]: count / total for bits, count in counts.items()}
 
 
+def _dwave_solve(
+    graph: LogicalGraph,
+    num_reads: int,
+    use_qpu: bool,
+    qpu_endpoint: str | None,
+    qpu_token: str | None,
+    seed: int,
+) -> Any:
+    """Compile *graph* to a PhysicalEncoding and submit it to D-Wave.
+
+    Mirrors the lexicographic-compile pattern already used by
+    :func:`_distributed_compile`, but for the single-node D-Wave path.
+    Imports are deferred so the statevector/aer/qpu paths have no hard
+    dependency on the Ocean SDK.
+
+    The compiler's lexicographic embedding is 1-to-1 (one physical qubit
+    per logical variable, no chains), so the returned DWaveResult's
+    sample/assignment keys (physical qubit labels) are translated back to
+    the original logical variable names before being handed back to the
+    caller.
+
+    Raises:
+        ImportError: If the D-Wave Ocean SDK is not installed.
+    """
+    from limen.backends.dwave import run_dwave
+    from limen.core.compiler import compile_lexicographic, default_hardware_graph
+
+    n_vars = len(graph.variables)
+    encoding = compile_lexicographic(graph, default_hardware_graph(n_vars))
+    result = run_dwave(
+        encoding,
+        num_reads=num_reads,
+        use_qpu=use_qpu,
+        qpu_endpoint=qpu_endpoint,
+        qpu_token=qpu_token,
+        seed=seed,
+    )
+
+    # embedding: logical name -> [physical qubit label] (1-to-1).
+    physical_to_logical = {
+        phys[0]: logical for logical, phys in encoding.embedding.items()
+    }
+    result.samples = [
+        {physical_to_logical[p]: v for p, v in sample.items()}
+        for sample in result.samples
+    ]
+    result.best_assignment = {
+        physical_to_logical[p]: v for p, v in result.best_assignment.items()
+    }
+    return result
+
+
 def _distributed_compile(
     graph: LogicalGraph, server_addresses: list[str], num_partitions: int | None
 ) -> tuple[dict[str, Any], list[str]]:
@@ -301,6 +353,10 @@ def run_pipeline(
     qpu_shots: int = 1000,
     qpu_token: str | None = None,
     qpu_instance: str | None = None,
+    dwave_num_reads: int = 1000,
+    dwave_use_qpu: bool = False,
+    dwave_endpoint: str | None = None,
+    dwave_token: str | None = None,
 ) -> EndToEndCertificate:
     """Run a QUBO end-to-end through the gate-model track and certify it.
 
@@ -330,6 +386,11 @@ def run_pipeline(
             - ``"qpu"`` — real IBM Quantum hardware via Qiskit Runtime;
               requires *qpu_token*, *qpu_instance*, and
               ``pip install limen[ibm]``.
+            - ``"dwave"`` — direct QUBO annealing on a D-Wave sampler
+              (simulated annealer by default, or a real D-Wave QPU via
+              *dwave_use_qpu*); requires ``pip install limen[dwave]``.
+              This path skips the QAOA grid-search and circuit execution
+              entirely, since D-Wave samples the QUBO directly.
 
         qpu_backend_name: Backend name forwarded to Aer or IBM Runtime
             (e.g. ``"aer_simulator"``, ``"ibm_kingston"``).
@@ -337,6 +398,13 @@ def run_pipeline(
             or ``"qpu"`` backend.
         qpu_token: IBM Quantum Platform API token (``"qpu"`` only).
         qpu_instance: IBM Quantum CRN instance string (``"qpu"`` only).
+        dwave_num_reads: Number of samples to draw (``"dwave"`` only).
+        dwave_use_qpu: If True, submit to a real D-Wave QPU instead of
+            the local simulated annealer (``"dwave"`` only).
+        dwave_endpoint: D-Wave Leap API endpoint URL; required when
+            *dwave_use_qpu* is True.
+        dwave_token: D-Wave Leap API token; required when *dwave_use_qpu*
+            is True.
 
     Returns:
         An EndToEndCertificate composing the QAOA solution with the
@@ -346,8 +414,11 @@ def run_pipeline(
         ValueError: If *backend* is not one of the supported choices.
         ValueError: If ``backend="qpu"`` but *qpu_token* or *qpu_instance*
             is not provided.
+        ValueError: If ``backend="dwave"`` and *dwave_use_qpu* is True
+            but *dwave_endpoint* or *dwave_token* is not provided.
         ImportError: If ``backend="aer"`` or ``"qpu"`` and qiskit is not
-            installed.
+            installed, or ``backend="dwave"`` and the D-Wave Ocean SDK is
+            not installed.
     """
     if backend not in _BACKEND_CHOICES:
         raise ValueError(
@@ -358,38 +429,55 @@ def run_pipeline(
         raise ValueError(
             "backend='qpu' requires both qpu_token and qpu_instance."
         )
+    if backend == "dwave" and dwave_use_qpu and not (dwave_endpoint and dwave_token):
+        raise ValueError(
+            "backend='dwave' with dwave_use_qpu=True requires both "
+            "dwave_endpoint and dwave_token."
+        )
 
     graph = from_qubo_dict(qubo)
     order = variable_order(graph)
     n = len(order)
     canonical_qubo = _graph_qubo(graph)
 
-    # Parameter optimisation always runs on the statevector simulator.
-    # The grid search evaluates O(grid_size²) circuits; submitting that many
-    # jobs to a QPU would be impractical and expensive.  We find the optimal
-    # (gamma, beta) offline, then execute the final circuit once on the
-    # chosen backend.
-    params, sim_dist = _grid_search(graph, qaoa_layers, grid_size)
-
-    # Final circuit execution — one shot on the chosen backend.
-    if backend == "statevector":
-        dist = sim_dist  # already computed above, no extra work
-    else:
-        final_circuit = compile_qaoa(
-            graph,
-            [params["gamma"]] * qaoa_layers,
-            [params["beta"]] * qaoa_layers,
+    dwave_result: Any = None
+    params: dict[str, float]
+    if backend == "dwave":
+        # D-Wave anneals the QUBO directly — there is no QAOA circuit to
+        # parametrise or execute, so the grid-search is skipped entirely.
+        params = {}
+        dwave_result = _dwave_solve(
+            graph, dwave_num_reads, dwave_use_qpu, dwave_endpoint, dwave_token, seed
         )
-        if backend == "aer":
-            dist = _aer_probabilities(final_circuit, qpu_backend_name, qpu_shots)
-        else:  # "qpu"
-            dist = _qpu_probabilities(
-                final_circuit, qpu_backend_name, qpu_shots,
-                qpu_token, qpu_instance,  # type: ignore[arg-type]
+        solution = {k: int(v) for k, v in dwave_result.best_assignment.items()}
+        energy = _energy(canonical_qubo, solution)
+    else:
+        # Parameter optimisation always runs on the statevector simulator.
+        # The grid search evaluates O(grid_size²) circuits; submitting that many
+        # jobs to a QPU would be impractical and expensive.  We find the optimal
+        # (gamma, beta) offline, then execute the final circuit once on the
+        # chosen backend.
+        params, sim_dist = _grid_search(graph, qaoa_layers, grid_size)
+
+        # Final circuit execution — one shot on the chosen backend.
+        if backend == "statevector":
+            dist = sim_dist  # already computed above, no extra work
+        else:
+            final_circuit = compile_qaoa(
+                graph,
+                [params["gamma"]] * qaoa_layers,
+                [params["beta"]] * qaoa_layers,
             )
-    solution_bits = max(dist, key=dist.get) if dist else "0" * n
-    solution = bitstring_to_assignment(solution_bits, order)
-    energy = _energy(canonical_qubo, solution)
+            if backend == "aer":
+                dist = _aer_probabilities(final_circuit, qpu_backend_name, qpu_shots)
+            else:  # "qpu"
+                dist = _qpu_probabilities(
+                    final_circuit, qpu_backend_name, qpu_shots,
+                    qpu_token, qpu_instance,  # type: ignore[arg-type]
+                )
+        solution_bits = max(dist, key=dist.get) if dist else "0" * n
+        solution = bitstring_to_assignment(solution_bits, order)
+        energy = _energy(canonical_qubo, solution)
 
     bf = brute_force_solve(canonical_qubo)
     classical_energy = bf[1] if bf is not None else None
@@ -398,11 +486,24 @@ def run_pipeline(
     )
 
     target = classical_energy if classical_energy is not None else energy
-    success_probability = sum(
-        p
-        for bits, p in dist.items()
-        if abs(_energy(canonical_qubo, bitstring_to_assignment(bits, order)) - target) < 1e-9
-    )
+    if backend == "dwave":
+        n_samples = len(dwave_result.samples)
+        success_probability = (
+            sum(
+                1
+                for sample, e in zip(dwave_result.samples, dwave_result.energies)
+                if abs(e - target) < 1e-9
+            )
+            / n_samples
+            if n_samples
+            else 0.0
+        )
+    else:
+        success_probability = sum(
+            p
+            for bits, p in dist.items()
+            if abs(_energy(canonical_qubo, bitstring_to_assignment(bits, order)) - target) < 1e-9
+        )
 
     logical_rate: float | None = None
     aggregate_rate: float | None = None
@@ -431,10 +532,16 @@ def run_pipeline(
     elif encode_logical:
         notes.append("ECC certificate skipped: no physical_error_rate supplied.")
 
-    if is_optimal:
-        notes.append("QAOA most-likely outcome matches the classical optimum.")
-    elif is_optimal is False:
-        notes.append("QAOA most-likely outcome is sub-optimal; raise qaoa_layers/grid_size.")
+    if backend == "dwave":
+        if is_optimal:
+            notes.append("D-Wave best sample matches the classical optimum.")
+        elif is_optimal is False:
+            notes.append("D-Wave best sample is sub-optimal; raise dwave_num_reads.")
+    else:
+        if is_optimal:
+            notes.append("QAOA most-likely outcome matches the classical optimum.")
+        elif is_optimal is False:
+            notes.append("QAOA most-likely outcome is sub-optimal; raise qaoa_layers/grid_size.")
 
     distributed_compilation: dict[str, Any] | None = None
     if server_addresses:
@@ -443,7 +550,22 @@ def run_pipeline(
         )
         notes.extend(dist_notes)
 
-    if backend != "statevector":
+    metadata: dict[str, Any] = {
+        "variable_order": order,
+        "seed": seed,
+        "roundtrip_corrects_all_weight1": roundtrip_corrects_all_weight1,
+        "execution_backend": backend,
+    }
+
+    if backend == "dwave":
+        notes.append(
+            f"Executed on backend 'dwave' "
+            f"(use_qpu={dwave_use_qpu}, num_reads={dwave_num_reads}, "
+            f"chain_break_fraction={dwave_result.chain_break_fraction:.4f})."
+        )
+        metadata["chain_break_fraction"] = dwave_result.chain_break_fraction
+        metadata["dwave_timing"] = dict(dwave_result.timing)
+    elif backend != "statevector":
         notes.append(
             f"Executed on backend '{backend}' "
             f"(backend_name={qpu_backend_name!r}, shots={qpu_shots})."
@@ -455,7 +577,7 @@ def run_pipeline(
         classical_energy=classical_energy,
         is_optimal=is_optimal,
         success_probability=success_probability,
-        qaoa_layers=qaoa_layers,
+        qaoa_layers=0 if backend == "dwave" else qaoa_layers,
         qaoa_params=params,
         logical_error_rate=logical_rate,
         aggregate_logical_error_rate=aggregate_rate,
@@ -463,11 +585,6 @@ def run_pipeline(
         distance=distance if logical_rate is not None else None,
         n_logical_qubits=n,
         notes=notes,
-        metadata={
-            "variable_order": order,
-            "seed": seed,
-            "roundtrip_corrects_all_weight1": roundtrip_corrects_all_weight1,
-            "execution_backend": backend,
-        },
+        metadata=metadata,
         distributed_compilation=distributed_compilation,
     )

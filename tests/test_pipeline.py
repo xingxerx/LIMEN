@@ -124,5 +124,77 @@ class TestAerBackend:
         assert d["metadata"]["execution_backend"] == "aer"
 
 
+# ---------------------------------------------------------------------------
+# D-Wave backend tests (skip when the Ocean SDK is not installed)
+# ---------------------------------------------------------------------------
+
+pytest.importorskip("dimod", reason="dwave Ocean SDK not installed")
+
+
+class TestDWaveBackend:
+    SIMPLE_QUBO = {("x0", "x0"): -1.0, ("x1", "x1"): -1.0, ("x0", "x1"): 2.0}
+
+    def test_dwave_backend_finds_optimum(self):
+        """The default simulated annealer should discover the classical optimum."""
+        cert = run_pipeline(
+            self.SIMPLE_QUBO,
+            backend="dwave",
+            dwave_num_reads=200,
+            encode_logical=False,
+        )
+        assert cert.is_optimal
+        assert cert.metadata["execution_backend"] == "dwave"
+        assert cert.qaoa_layers == 0
+        assert cert.qaoa_params == {}
+
+    def test_dwave_backend_note_added(self):
+        """A note describing the D-Wave backend should be in the certificate."""
+        cert = run_pipeline(
+            self.SIMPLE_QUBO,
+            backend="dwave",
+            dwave_num_reads=200,
+            encode_logical=False,
+        )
+        assert any("dwave" in note for note in cert.notes)
+
+    def test_dwave_backend_is_serializable(self):
+        cert = run_pipeline(
+            {("a", "a"): -1.0},
+            backend="dwave",
+            dwave_num_reads=200,
+            encode_logical=False,
+        )
+        d = cert.to_dict()
+        assert d["metadata"]["execution_backend"] == "dwave"
+
+    def test_dwave_backend_success_probability_in_range(self):
+        cert = run_pipeline(
+            self.SIMPLE_QUBO,
+            backend="dwave",
+            dwave_num_reads=200,
+            encode_logical=False,
+        )
+        assert 0.0 <= cert.success_probability <= 1.0
+
+    def test_dwave_backend_chain_break_fraction_in_metadata(self):
+        cert = run_pipeline(
+            self.SIMPLE_QUBO,
+            backend="dwave",
+            dwave_num_reads=200,
+            encode_logical=False,
+        )
+        assert "chain_break_fraction" in cert.metadata
+        assert cert.metadata["chain_break_fraction"] == 0.0  # simulator path
+
+    def test_dwave_qpu_backend_without_credentials_raises(self):
+        with pytest.raises(ValueError, match="dwave_endpoint"):
+            run_pipeline(
+                {("a", "a"): -1.0},
+                backend="dwave",
+                dwave_use_qpu=True,
+                encode_logical=False,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -21,6 +21,7 @@ from concurrent import futures
 
 import grpc
 
+from limen.communication.channel import correction_for_bits
 from limen.core.compiler import compile_lexicographic
 from limen.core.ir import LogicalGraph
 from limen.distributed import marshal
@@ -68,6 +69,18 @@ class CoordinationServicer(pb_grpc.CoordinationServicer):
         hardware_graph = namespaced_hardware_graph(len(graph.variables), request.hardware_prefix)
         encoding = compile_lexicographic(graph, hardware_graph)
         return pb.CompilePartitionResult(encoding_json=json.dumps(encoding.to_dict()))
+
+    def TransportFeedforward(
+        self, request: pb.FeedforwardRequest, context
+    ) -> pb.FeedforwardResponse:
+        """Apply Bob-side Pauli correction for Alice's transported (m0, m1).
+
+        Reuses limen.communication.channel.correction_for_bits so this
+        node computes the exact same correction simulate_feedforward_teleport
+        would for the same measurement outcomes.
+        """
+        correction = correction_for_bits(request.m0, request.m1)
+        return pb.FeedforwardResponse(correction=correction)
 
 
 def serve(

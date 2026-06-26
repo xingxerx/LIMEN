@@ -16,10 +16,12 @@
 from __future__ import annotations
 
 import json
+import time
 
 import grpc
 
 from limen.analog.delta_model import HardwareDeltaModel
+from limen.communication.channel import ChannelDeltaModel
 from limen.core.compiler import PhysicalEncoding
 from limen.core.ir import LogicalGraph
 from limen.distributed import marshal
@@ -62,6 +64,41 @@ class CoordinationClient:
         )
         response = self._stub.CompilePartition(request)
         return PhysicalEncoding.from_dict(json.loads(response.encoding_json))
+
+    def transport_feedforward(
+        self,
+        m0: int,
+        m1: int,
+        theta: float = 0.0,
+        phi: float = 0.0,
+        t2_us: float = 100.0,
+    ) -> tuple[str, ChannelDeltaModel]:
+        """Send Alice's Bell-measurement bits to this peer and get Bob's correction.
+
+        Measures actual round-trip wall-clock latency of the
+        ``TransportFeedforward`` RPC with ``time.perf_counter()`` and uses it
+        to build a :class:`ChannelDeltaModel` (paired with *t2_us*), so
+        callers can evaluate ``within_coherence()`` / ``fidelity_penalty()``
+        against the real network latency rather than a modelled constant.
+
+        Args:
+            m0: Alice's measurement outcome for qubit 0.
+            m1: Alice's measurement outcome for qubit 1.
+            theta: Input-state polar angle, echoed to the peer for context.
+            phi: Input-state azimuthal angle, echoed to the peer for context.
+            t2_us: T2 coherence time (microseconds) for the resulting
+                :class:`ChannelDeltaModel`.
+
+        Returns:
+            ``(correction, channel_delta)`` where *correction* is the Pauli
+            string ("I", "X", "Z", or "XZ") the peer applied.
+        """
+        request = pb.FeedforwardRequest(m0=m0, m1=m1, theta=theta, phi=phi)
+        start = time.perf_counter()
+        response = self._stub.TransportFeedforward(request)
+        latency_ms = (time.perf_counter() - start) * 1000.0
+        channel_delta = ChannelDeltaModel(latency_ms=latency_ms, t2_us=t2_us)
+        return response.correction, channel_delta
 
     def close(self) -> None:
         self._channel.close()

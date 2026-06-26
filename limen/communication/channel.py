@@ -647,6 +647,43 @@ class FeedforwardTransport:
         }
 
 
+def correction_for_bits(m0: int, m1: int) -> str:
+    """Return the Pauli correction string Bob applies for Alice's bits (m0, m1).
+
+    Shared by the single-process path (:func:`simulate_feedforward_teleport`)
+    and the cross-node RPC path (``CoordinationServicer.TransportFeedforward``
+    in ``limen.distributed.server``) so both compute the same correction for
+    the same measurement outcomes:
+
+    - m1 == 1  ->  "X"
+    - m0 == 1  ->  "Z"
+    - both     ->  "XZ"
+    - neither  ->  "I"
+    """
+    parts: list[str] = []
+    if m1 == 1:
+        parts.append("X")
+    if m0 == 1:
+        parts.append("Z")
+    return "".join(parts) or "I"
+
+
+def apply_bob_correction(
+    state: list[complex], n: int, qubit: int, m0: int, m1: int
+) -> str:
+    """Apply Bob's Pauli correction for (m0, m1) to *qubit* of *state*, in place.
+
+    Returns the correction string applied (see :func:`correction_for_bits`).
+    """
+    from limen.gates.simulator import apply_gate_to_state
+
+    if m1 == 1:
+        apply_gate_to_state(state, n, "x", [qubit], [])
+    if m0 == 1:
+        apply_gate_to_state(state, n, "z", [qubit], [])
+    return correction_for_bits(m0, m1)
+
+
 def simulate_feedforward_teleport(
     theta: float,
     phi: float,
@@ -712,14 +749,7 @@ def simulate_feedforward_teleport(
         transport_latency_ms = channel_delta.latency_ms
 
     # Step 6: Pauli corrections on Bob's qubit (q2) based on Alice's bits
-    correction_parts: list[str] = []
-    if m1 == 1:
-        apply_gate_to_state(state, n, "x", [2], [])
-        correction_parts.append("X")
-    if m0 == 1:
-        apply_gate_to_state(state, n, "z", [2], [])
-        correction_parts.append("Z")
-    correction = "".join(correction_parts) or "I"
+    correction = apply_bob_correction(state, n, qubit=2, m0=m0, m1=m1)
 
     # Step 7: verify — inverse prep on q2, then measure P(q2 = |0⟩)
     # U(θ, φ, 0)† = U(-θ, 0, -φ)  [standard ZYZ inverse]
@@ -751,6 +781,120 @@ def simulate_feedforward_teleport(
             "inverse_prep": True,
             "alice_bits": [m0, m1],
             "correction": correction,
+        },
+    )
+    return result, transport
+
+
+def run_distributed_feedforward_teleport(
+    theta: float,
+    phi: float,
+    peer_address: str,
+    seed: int = 42,
+    t2_us: float = 100.0,
+) -> "tuple[TeleportationResult, FeedforwardTransport]":
+    """Teleport a state with Alice's classical bits transported to a peer node.
+
+    This is the cross-process counterpart to :func:`simulate_feedforward_teleport`:
+    Alice's side (state prep, Bell pair, Bell-basis measurement) runs locally
+    on the pure-Python statevector simulator exactly as in steps 1–4 of
+    :func:`simulate_feedforward_teleport`. Alice's measurement bits (m0, m1)
+    are then sent to the peer LIMEN node at *peer_address* over the
+    ``Coordination.TransportFeedforward`` gRPC RPC (see
+    ``limen.distributed.client.CoordinationClient.transport_feedforward``).
+    Round-trip wall-clock latency is measured and used to build the
+    :class:`ChannelDeltaModel` returned in the :class:`FeedforwardTransport`,
+    in place of the modelled constant latency used by the local-only path.
+
+    The peer independently computes the correction for (m0, m1) (via
+    :func:`correction_for_bits`) and echoes it back; this process then
+    applies that same correction to its local copy of Bob's qubit to finish
+    the fidelity verification, so the result is numerically equivalent to
+    :func:`simulate_feedforward_teleport` while exercising real network I/O
+    for the classical feedforward step.
+
+    Args:
+        theta: Polar angle of the input state.
+        phi: Azimuthal angle of the input state.
+        peer_address: ``"host:port"`` of the peer LIMEN node's Coordination
+            service (Bob).
+        seed: RNG seed for Alice's projective measurements (deterministic).
+        t2_us: T2 coherence time (microseconds) used to build the
+            :class:`ChannelDeltaModel` from the measured latency.
+
+    Returns:
+        ``(TeleportationResult, FeedforwardTransport)`` where
+        ``FeedforwardTransport.transport_latency_ms`` is the *measured*
+        round-trip latency of the ``TransportFeedforward`` RPC call.
+    """
+    from limen.distributed.client import CoordinationClient
+    from limen.gates.ir import CircuitIR, GateInstruction
+    from limen.gates.simulator import measure_qubit, statevector
+
+    n = 3  # q0 = Alice's input state, q1 = Alice's EPR half, q2 = Bob's EPR half
+
+    # Steps 1-3: state preparation + Bell pair + Bell-basis rotation (Alice).
+    pre = CircuitIR(n_qubits=n)
+    pre.instructions = [
+        GateInstruction("u", [0], [theta, phi, 0.0]),
+        GateInstruction("h", [1], []),
+        GateInstruction("cx", [1, 2], []),
+        GateInstruction("cx", [0, 1], []),
+        GateInstruction("h", [0], []),
+    ]
+    state = statevector(pre)
+
+    # Step 4: Alice's projective measurement.
+    m0, state = measure_qubit(state, n, qubit=0, seed=seed)
+    m1, state = measure_qubit(state, n, qubit=1, seed=seed ^ 0xFF)
+
+    # Step 5: transport (m0, m1) to the peer node over the real network.
+    client = CoordinationClient(peer_address)
+    try:
+        correction, channel_delta = client.transport_feedforward(
+            m0, m1, theta=theta, phi=phi, t2_us=t2_us
+        )
+    finally:
+        client.close()
+
+    # Step 6: apply the peer-confirmed correction to Bob's qubit (q2) locally.
+    from limen.gates.simulator import apply_gate_to_state
+
+    if "X" in correction:
+        apply_gate_to_state(state, n, "x", [2], [])
+    if "Z" in correction:
+        apply_gate_to_state(state, n, "z", [2], [])
+
+    # Step 7: verify — inverse prep on q2, then measure P(q2 = |0>).
+    apply_gate_to_state(state, n, "u", [2], [-theta, 0.0, -phi])
+
+    prob_q2_zero = sum(
+        state[k].real ** 2 + state[k].imag ** 2
+        for k in range(1 << n)
+        if not ((k >> 2) & 1)
+    )
+    fidelity = float(max(0.0, min(1.0, prob_q2_zero)))
+
+    transport = FeedforwardTransport(
+        alice_bits=(m0, m1),
+        correction=correction,
+        within_coherence=channel_delta.within_coherence() if channel_delta else None,
+        fidelity_penalty=channel_delta.fidelity_penalty() if channel_delta else None,
+        transport_latency_ms=channel_delta.latency_ms if channel_delta else None,
+    )
+    result = TeleportationResult(
+        input_state={"theta": theta, "phi": phi},
+        circuit_depth=None,
+        fidelity=fidelity,
+        verification_success_rate=fidelity,
+        measured_counts=None,
+        metadata={
+            "backend": "statevector_simulator+grpc",
+            "seed": seed,
+            "inverse_prep": True,
+            "alice_bits": [m0, m1],
+            "correction": correction,
+            "peer_address": peer_address,
         },
     )
     return result, transport
