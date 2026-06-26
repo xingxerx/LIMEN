@@ -100,3 +100,46 @@ def test_parity_with_rust_extension():
     assert py_score.kappa == pytest.approx(rs_score.kappa)
     assert py_score.kappa_std == pytest.approx(rs_score.kappa_std)
     assert py_score.energy_gap == pytest.approx(rs_score.energy_gap)
+
+
+def test_qubo_energy_spectrum_parity_with_rust_extension():
+    """Pure-Python qubo_energy_spectrum fallback must match limen_core exactly."""
+    rust = pytest.importorskip("limen_core", reason="limen_core not built")
+
+    from limen._qubo_spectrum_pyfallback import qubo_energy_spectrum as py_spectrum
+
+    # A small QUBO with linear and quadratic terms, indexed 0..n_vars-1.
+    qubo_terms = [
+        ((0, 0), 1.0),
+        ((1, 1), -2.0),
+        ((2, 2), 0.5),
+        ((0, 1), -1.5),
+        ((1, 2), 2.0),
+        ((0, 2), 0.75),
+    ]
+    n_vars = 3
+
+    py_bits, py_energy, py_distinct = py_spectrum(qubo_terms, n_vars)
+    rs_bits, rs_energy, rs_distinct = rust.qubo_energy_spectrum(qubo_terms, n_vars)
+
+    assert list(py_bits) == list(rs_bits)
+    assert py_energy == pytest.approx(rs_energy)
+    assert list(py_distinct) == pytest.approx(list(rs_distinct))
+
+
+def test_qubo_energy_spectrum_pyfallback_size_guard():
+    """Pure-Python fallback raises ValueError for n_vars > 20, mirroring Rust's SizeViolation."""
+    from limen._qubo_spectrum_pyfallback import qubo_energy_spectrum as py_spectrum
+
+    with pytest.raises(ValueError):
+        py_spectrum([], 21)
+
+
+def test_qubo_energy_spectrum_pyfallback_empty():
+    """Pure-Python fallback handles the zero-variable edge case."""
+    from limen._qubo_spectrum_pyfallback import qubo_energy_spectrum as py_spectrum
+
+    bits, energy, distinct = py_spectrum([], 0)
+    assert bits == []
+    assert energy == 0.0
+    assert distinct == [0.0]

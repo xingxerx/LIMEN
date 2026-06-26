@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from limen.core.compiler import PhysicalEncoding
+from limen.qubo_spectrum import qubo_energy_spectrum
 
 _INSTALL_MSG = (
     "The Qiskit SDK is required to use the Qiskit backend. "
@@ -634,9 +635,11 @@ def ibm_noise_fn(
             # Statevector simulation skipped (circuit too large); use worst-case TVD
             tvd = 1.0
 
-        optimal_energy = min(
-            _qubo_energy(encoding.qubo, a)
-            for a in _enumerate_assignments(encoding.qubo)
+        spectrum = qubo_energy_spectrum(encoding.qubo)
+        optimal_energy = (
+            spectrum.best_energy
+            if spectrum is not None
+            else min(_qubo_energy(encoding.qubo, a) for a in _enumerate_assignments(encoding.qubo))
         )
         optimal_rate = (
             sum(1 for e in result.energies if abs(e - optimal_energy) < 1e-9)

@@ -60,6 +60,83 @@ pub fn exact_ising_norm(
     Ok(max_abs)
 }
 
+/// Exhaustively enumerate a QUBO's energy spectrum.
+///
+/// Enumerates all `2^n_vars` binary assignments and computes
+/// `E(x) = Σ (i,j,w) w·x_i·x_j` for each (with `i == j` encoding a linear
+/// term `w·x_i`, matching the `(var, var) -> weight` QUBO dict convention
+/// used throughout `limen.validator` / `limen.codesign` / `limen.backends`).
+///
+/// This consolidates the O(2^n) brute-force enumeration that previously
+/// existed independently in `limen/validator/validator.py::brute_force_solve`,
+/// `limen/codesign/solver.py::_second_best_energy`, and
+/// `limen/backends/qiskit_backend.py::_enumerate_assignments` into a single
+/// Rust pass over the state space.
+///
+/// # Arguments
+/// * `qubo`    - QUBO terms as `[((var_i, var_j), weight)]` using 0-based
+///   variable indices. `i == j` encodes a linear term.
+/// * `n_vars`  - Number of variables. Must be ≤ 20.
+///
+/// # Returns
+/// A tuple `(best_assignment, best_energy, sorted_distinct_energies)` where
+/// `best_assignment` is a `Vec<u8>` of 0/1 bits (index = variable index),
+/// `best_energy` is the minimum energy found, and `sorted_distinct_energies`
+/// is the ascending list of unique energies seen across all `2^n_vars`
+/// assignments.
+///
+/// # Errors
+/// Returns `SizeViolation` when `n_vars > 20`.
+#[pyfunction]
+pub fn qubo_energy_spectrum(
+    qubo: Vec<((usize, usize), f64)>,
+    n_vars: usize,
+) -> PyResult<(Vec<u8>, f64, Vec<f64>)> {
+    if n_vars > 20 {
+        return Err(crate::SizeViolation::new_err(
+            "SizeViolation: qubo_energy_spectrum requires n_vars <= 20",
+        ));
+    }
+    if n_vars == 0 {
+        return Ok((Vec::new(), 0.0, vec![0.0]));
+    }
+
+    let num_states: usize = 1 << n_vars;
+    let mut best_energy = f64::INFINITY;
+    let mut best_state = vec![0u8; n_vars];
+
+    // Quantize energies to a fixed tolerance (1e-9) and dedup via a hash set
+    // keyed on the quantized integer value. A linear Vec scan-per-state here
+    // would be O(2^n * distinct_count) — quadratic blowup for n ~ 18-20 with
+    // many distinct energies (minutes instead of milliseconds). The hash set
+    // keeps the whole enumeration O(2^n).
+    const TOL_INV: f64 = 1e9;
+    let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
+    for state_idx in 0..num_states {
+        let bits: Vec<u8> = (0..n_vars)
+            .map(|i| ((state_idx >> i) & 1) as u8)
+            .collect();
+
+        let mut energy: f64 = 0.0;
+        for ((i, j), w) in &qubo {
+            energy += w * (bits[*i] as f64) * (bits[*j] as f64);
+        }
+
+        if energy < best_energy {
+            best_energy = energy;
+            best_state = bits;
+        }
+
+        seen.insert((energy * TOL_INV).round() as i64);
+    }
+
+    let mut distinct_energies: Vec<f64> = seen.into_iter().map(|q| q as f64 / TOL_INV).collect();
+    distinct_energies.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    Ok((best_state, best_energy, distinct_energies))
+}
+
 #[pyclass]
 #[derive(Clone)]
 pub struct Variable {

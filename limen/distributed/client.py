@@ -33,9 +33,49 @@ from limen.distributed.proto import coordination_pb2_grpc as pb_grpc
 class CoordinationClient:
     """Wraps a gRPC channel to a single peer's Coordination service."""
 
-    def __init__(self, address: str) -> None:
+    def __init__(
+        self,
+        address: str,
+        ca_cert_path: str | None = None,
+        client_cert_path: str | None = None,
+        client_key_path: str | None = None,
+    ) -> None:
+        """Connect to a peer's Coordination service at *address*.
+
+        Args:
+            address: "host:port" of the peer.
+            ca_cert_path: Optional path to a PEM CA bundle used to verify
+                the server's certificate. When set, the channel is created
+                with ``grpc.secure_channel`` over TLS instead of the
+                default ``grpc.insecure_channel``.
+            client_cert_path: Optional path to a PEM client certificate,
+                for mutual TLS. Requires ca_cert_path and client_key_path
+                to also be set.
+            client_key_path: Optional path to a PEM client private key,
+                paired with client_cert_path for mutual TLS.
+
+        When ca_cert_path is unset (the default), behavior is unchanged
+        from before TLS support existed: an insecure channel is used.
+        """
         self.address = address
-        self._channel = grpc.insecure_channel(address)
+        if ca_cert_path:
+            with open(ca_cert_path, "rb") as f:
+                root_certs = f.read()
+            private_key = None
+            cert_chain = None
+            if client_cert_path and client_key_path:
+                with open(client_key_path, "rb") as f:
+                    private_key = f.read()
+                with open(client_cert_path, "rb") as f:
+                    cert_chain = f.read()
+            credentials = grpc.ssl_channel_credentials(
+                root_certificates=root_certs,
+                private_key=private_key,
+                certificate_chain=cert_chain,
+            )
+            self._channel = grpc.secure_channel(address, credentials)
+        else:
+            self._channel = grpc.insecure_channel(address)
         self._stub = pb_grpc.CoordinationStub(self._channel)
 
     def register(self, info: NodeInfo) -> bool:

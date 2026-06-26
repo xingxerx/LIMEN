@@ -35,7 +35,13 @@ dependencies = []
 pyqubo = ["pyqubo>=1.4"]
 dwave = ["dwave-ocean-sdk>=6.0"]
 ibm = ["qiskit>=1.0"]
-distributed = ["grpcio>=1.60", "grpcio-tools>=1.60", "protobuf>=4.25"]
+distributed = [
+  "grpcio>=1.60",
+  "grpcio-tools>=1.60",
+  "protobuf>=4.25",
+  "grpcio-health-checking>=1.60",
+  "cryptography>=42",
+]
 all = [
   "pyqubo>=1.4",
   "dwave-ocean-sdk>=6.0",
@@ -43,6 +49,8 @@ all = [
   "grpcio>=1.60",
   "grpcio-tools>=1.60",
   "protobuf>=4.25",
+  "grpcio-health-checking>=1.60",
+  "cryptography>=42",
 ]
 
 [project.urls]

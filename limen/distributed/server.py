@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from concurrent import futures
 
 import grpc
@@ -32,7 +33,19 @@ from limen.distributed.proto import coordination_pb2 as pb
 from limen.distributed.proto import coordination_pb2_grpc as pb_grpc
 from limen.distributed.registry import NodeRegistry
 
+try:
+    from grpc_health.v1 import health, health_pb2, health_pb2_grpc
+
+    _HEALTH_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised only without the optional dep
+    _HEALTH_AVAILABLE = False
+
 logger = logging.getLogger("limen.distributed")
+
+# Retry/backoff defaults for register_with_peers().
+_REGISTER_MAX_ATTEMPTS = 5
+_REGISTER_BASE_DELAY_S = 0.1
+_REGISTER_MAX_DELAY_S = 2.0
 
 
 class CoordinationServicer(pb_grpc.CoordinationServicer):
@@ -90,16 +103,107 @@ def serve(
 
     Pass port=0 to bind an OS-assigned ephemeral port (used by tests).
 
+    When config.tls_cert_path and config.tls_key_path are both set, the
+    server binds with TLS (grpc.ssl_server_credentials) instead of
+    cleartext. If config.tls_ca_path is additionally set, client
+    certificates are required and verified against that CA (mutual TLS).
+    When TLS paths are unset (the default), behavior is unchanged from
+    before TLS support existed: the server binds with add_insecure_port.
+
+    If the grpc_health.v1 health-checking package is installed, the
+    standard Health service is also registered and marked SERVING once
+    the server starts, so orchestrators/load balancers can probe node
+    liveness via the interoperable grpc.health.v1.Health API.
+
     Returns the started grpc.Server and the port it actually bound to;
     callers are responsible for calling server.stop() / wait_for_termination().
     """
     bind_port = config.port if port is None else port
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
     pb_grpc.add_CoordinationServicer_to_server(CoordinationServicer(registry), server)
-    bound_port = server.add_insecure_port(f"{config.host}:{bind_port}")
+
+    health_servicer = None
+    if _HEALTH_AVAILABLE:
+        health_servicer = health.HealthServicer()
+        health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
+
+    address = f"{config.host}:{bind_port}"
+    if config.tls_cert_path and config.tls_key_path:
+        with open(config.tls_cert_path, "rb") as f:
+            cert_chain = f.read()
+        with open(config.tls_key_path, "rb") as f:
+            private_key = f.read()
+        root_certs = None
+        require_client_auth = False
+        if config.tls_ca_path:
+            with open(config.tls_ca_path, "rb") as f:
+                root_certs = f.read()
+            require_client_auth = True
+        credentials = grpc.ssl_server_credentials(
+            [(private_key, cert_chain)],
+            root_certificates=root_certs,
+            require_client_auth=require_client_auth,
+        )
+        bound_port = server.add_secure_port(address, credentials)
+    else:
+        bound_port = server.add_insecure_port(address)
+
     server.start()
+
+    if health_servicer is not None:
+        health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
+
     logger.info("coordination server listening on %s:%d", config.host, bound_port)
     return server, bound_port
+
+
+def _register_with_retry(
+    address: str,
+    self_info: NodeInfo,
+    max_attempts: int = _REGISTER_MAX_ATTEMPTS,
+    base_delay_s: float = _REGISTER_BASE_DELAY_S,
+    max_delay_s: float = _REGISTER_MAX_DELAY_S,
+) -> bool:
+    """Register self_info with one peer, retrying with exponential backoff.
+
+    Common at multi-node bring-up: a peer listed in LIMEN_KNOWN_PEERS may
+    not be listening yet when this node starts. Each failed attempt is
+    logged as a warning; after max_attempts failures this peer is given up
+    on (logged as an error) without raising, so one unreachable peer never
+    blocks startup or registration with the remaining peers.
+
+    Returns True if registration succeeded, False if all attempts failed.
+    """
+    from limen.distributed.client import CoordinationClient
+
+    delay = base_delay_s
+    for attempt in range(1, max_attempts + 1):
+        client = CoordinationClient(address)
+        try:
+            client.register(self_info)
+            return True
+        except grpc.RpcError as exc:
+            if attempt == max_attempts:
+                logger.error(
+                    "giving up registering with peer %s after %d attempts: %s",
+                    address,
+                    max_attempts,
+                    exc,
+                )
+                return False
+            logger.warning(
+                "attempt %d/%d to register with peer %s failed: %s; retrying in %.2fs",
+                attempt,
+                max_attempts,
+                address,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+            delay = min(delay * 2, max_delay_s)
+        finally:
+            client.close()
+    return False  # pragma: no cover - loop always returns/continues above
 
 
 def register_with_peers(config: NodeConfig, registry: NodeRegistry) -> None:
@@ -109,18 +213,17 @@ def register_with_peers(config: NodeConfig, registry: NodeRegistry) -> None:
     their KNOWN_PEERS list, registration ends up symmetric: A's Register
     call populates B's registry with A, and B's own register_with_peers
     call populates A's registry with B.
-    """
-    from limen.distributed.client import CoordinationClient
 
+    Each peer is registered with exponential-backoff retry (see
+    _register_with_retry) so a peer that isn't listening yet at startup
+    doesn't permanently miss registration, and a single unreachable peer
+    doesn't prevent registering with the rest.
+    """
     self_info = NodeInfo(
         node_id=config.node_id, host=config.host, port=config.port, device_ids=config.device_ids
     )
     for address in config.known_peers:
-        client = CoordinationClient(address)
-        try:
-            client.register(self_info)
-        finally:
-            client.close()
+        _register_with_retry(address, self_info)
 
 
 def main() -> None:

@@ -33,6 +33,14 @@ class NodeConfig:
         port: Port this node's gRPC server listens on.
         device_ids: HardwareDeltaModel device IDs this node serves.
         known_peers: "host:port" addresses to register with on startup.
+        tls_cert_path: Path to this node's PEM-encoded TLS server certificate.
+            When unset (default), the server binds with ``add_insecure_port``
+            exactly as before TLS support was added.
+        tls_key_path: Path to this node's PEM-encoded TLS private key.
+            Required alongside tls_cert_path to enable TLS.
+        tls_ca_path: Optional path to a PEM-encoded CA bundle used to verify
+            client certificates (mutual TLS). When set, the server requires
+            and verifies client certificates signed by this CA.
     """
 
     node_id: str
@@ -40,6 +48,9 @@ class NodeConfig:
     port: int
     device_ids: list[str] = field(default_factory=list)
     known_peers: list[str] = field(default_factory=list)
+    tls_cert_path: str | None = None
+    tls_key_path: str | None = None
+    tls_ca_path: str | None = None
 
     @classmethod
     def from_env(cls) -> NodeConfig:
@@ -51,6 +62,12 @@ class NodeConfig:
             LIMEN_NODE_PORT: defaults to 50051.
             LIMEN_NODE_DEVICE_IDS: comma-separated device IDs (optional).
             LIMEN_KNOWN_PEERS: comma-separated "host:port" peer addresses.
+            LIMEN_TLS_CERT: optional path to a PEM server certificate. When
+                set together with LIMEN_TLS_KEY, the server binds with TLS
+                instead of cleartext.
+            LIMEN_TLS_KEY: optional path to a PEM private key for LIMEN_TLS_CERT.
+            LIMEN_TLS_CA: optional path to a PEM CA bundle for verifying
+                client certificates (mutual TLS).
 
         Raises:
             ValueError: if LIMEN_NODE_ID is unset.
@@ -63,6 +80,9 @@ class NodeConfig:
         port = int(os.environ.get("LIMEN_NODE_PORT", "50051"))
         device_ids = _split_csv(os.environ.get("LIMEN_NODE_DEVICE_IDS", ""))
         known_peers = _split_csv(os.environ.get("LIMEN_KNOWN_PEERS", ""))
+        tls_cert_path = os.environ.get("LIMEN_TLS_CERT") or None
+        tls_key_path = os.environ.get("LIMEN_TLS_KEY") or None
+        tls_ca_path = os.environ.get("LIMEN_TLS_CA") or None
 
         return cls(
             node_id=node_id,
@@ -70,6 +90,9 @@ class NodeConfig:
             port=port,
             device_ids=device_ids,
             known_peers=known_peers,
+            tls_cert_path=tls_cert_path,
+            tls_key_path=tls_key_path,
+            tls_ca_path=tls_ca_path,
         )
 
 

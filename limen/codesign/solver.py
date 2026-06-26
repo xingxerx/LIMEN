@@ -22,7 +22,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from limen.core.compiler import PhysicalEncoding, compile_lexicographic
-from limen.validator.validator import brute_force_solve, validate
+from limen.qubo_spectrum import qubo_energy_spectrum
+from limen.validator.validator import validate
 
 try:
     from limen_core import EquilibriumScore, StackelbergSolver
@@ -64,19 +65,11 @@ class CoDesignResult:
 
 def _second_best_energy(qubo: dict, best_energy: float) -> float:
     """Return the second-distinct energy from brute force, or an approximation."""
-    result = brute_force_solve(qubo)
-    if result is None:
+    spectrum = qubo_energy_spectrum(qubo)
+    if spectrum is None:
         return best_energy * 0.95
 
-    variables = sorted({v for pair in qubo for v in pair})
-    from itertools import product as iproduct
-
-    energies = sorted(
-        {
-            sum(w * asgn[i] * asgn[j] for (i, j), w in qubo.items())
-            for asgn in (dict(zip(variables, bits)) for bits in iproduct((0, 1), repeat=len(variables)))
-        }
-    )
+    energies = spectrum.distinct_energies
     return energies[1] if len(energies) >= 2 else energies[0]
 
 

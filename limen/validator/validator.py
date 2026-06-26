@@ -7,10 +7,10 @@ PhysicalEncoding. No external libraries are required.
 
 import random
 from dataclasses import dataclass, field
-from itertools import product
 from typing import Any
 
 from limen.core.compiler import PhysicalEncoding
+from limen.qubo_spectrum import qubo_energy_spectrum
 
 
 @dataclass
@@ -69,21 +69,11 @@ def brute_force_solve(
         each variable name to 0 or 1, or None if the problem has more than
         20 variables (too large to solve classically).
     """
-    variables: list[str] = sorted({name for pair in qubo for name in pair})
-    if len(variables) > 20:
+    spectrum = qubo_energy_spectrum(qubo)
+    if spectrum is None:
         return None
 
-    best_assignment: dict[str, int] = {}
-    best_energy = float("inf")
-
-    for bits in product((0, 1), repeat=len(variables)):
-        assignment = dict(zip(variables, bits))
-        energy = _compute_energy(qubo, assignment)
-        if energy < best_energy:
-            best_energy = energy
-            best_assignment = assignment
-
-    return best_assignment, best_energy
+    return spectrum.best_assignment, spectrum.best_energy
 
 
 def simulate_runs(
