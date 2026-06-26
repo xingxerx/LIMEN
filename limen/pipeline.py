@@ -37,6 +37,8 @@ from limen.gates.qaoa import bitstring_to_assignment, compile_qaoa, variable_ord
 from limen.gates.simulator import probabilities
 from limen.validator.validator import brute_force_solve
 
+_BACKEND_CHOICES = frozenset({"statevector", "aer", "qpu"})
+
 
 @dataclass
 class EndToEndCertificate:
@@ -91,7 +93,10 @@ def _energy(qubo: dict[tuple[str, str], float], assignment: dict[str, int]) -> f
 
 
 def _grid_search(
-    graph: LogicalGraph, layers: int, grid_size: int
+    graph: LogicalGraph,
+    layers: int,
+    grid_size: int,
+    prob_fn: Any = None,
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Search a 2D (gamma, beta) grid, shared across layers, for minimum <C>.
 
@@ -99,7 +104,18 @@ def _grid_search(
     distribution. A single shared angle pair per layer is a deliberately
     restricted QAOA schedule, sufficient for the small instances this
     offline pipeline targets.
+
+    Args:
+        graph: LogicalGraph to compile.
+        layers: Number of QAOA cost+mixer layers.
+        grid_size: Points per axis in the (gamma, beta) grid.
+        prob_fn: Callable ``(CircuitIR) -> dict[str, float]`` that returns a
+            qubit-0-first probability distribution.  Defaults to the
+            pure-Python :func:`~limen.gates.simulator.probabilities`.
     """
+    if prob_fn is None:
+        prob_fn = probabilities
+
     order = variable_order(graph)
     qubo = _graph_qubo(graph)
     energies: dict[str, float] = {}
@@ -119,13 +135,95 @@ def _grid_search(
         for bi in range(grid_size):
             beta = math.pi * bi / grid_size
             circuit = compile_qaoa(graph, [gamma] * layers, [beta] * layers)
-            dist = probabilities(circuit)
+            dist = prob_fn(circuit)
             expected = sum(p * outcome_energy(bits) for bits, p in dist.items())
             if expected < best_expected - 1e-12:
                 best_expected = expected
                 best_params = {"gamma": gamma, "beta": beta}
                 best_dist = dist
     return best_params, best_dist
+
+
+def _aer_probabilities(
+    circuit: Any,
+    backend_name: str,
+    shots: int,
+) -> dict[str, float]:
+    """Execute *circuit* on a local Aer simulator; return qubit-0-first probs.
+
+    Qiskit's ``get_counts`` returns bitstrings with qubit 0 *rightmost*;
+    we reverse them to match the simulator's qubit-0-first convention so
+    that :func:`bitstring_to_assignment` works identically on both paths.
+
+    Raises:
+        ImportError: If qiskit or qiskit-aer are not installed.
+    """
+    try:
+        from limen.gates.qiskit_exec import run_circuit
+    except ImportError as exc:
+        raise ImportError(
+            "The 'aer' backend requires qiskit and qiskit-aer. "
+            "Install with: pip install limen[ibm]"
+        ) from exc
+
+    result = run_circuit(circuit, backend_name=backend_name, shots=shots)
+    total = sum(result.counts.values())
+    if total == 0:
+        return {}
+    # Reverse: Qiskit is qubit-0 rightmost; we need qubit-0 leftmost.
+    return {bits[::-1]: count / total for bits, count in result.counts.items()}
+
+
+def _qpu_probabilities(
+    circuit: Any,
+    backend_name: str,
+    shots: int,
+    token: str,
+    instance: str,
+) -> dict[str, float]:
+    """Execute *circuit* on a real IBM QPU; return qubit-0-first probs.
+
+    Requires the ``qiskit`` and ``qiskit-ibm-runtime`` extras.
+
+    Raises:
+        ImportError: If qiskit or qiskit-ibm-runtime are not installed.
+    """
+    try:
+        from limen.gates.qiskit_exec import to_qiskit_circuit
+        from qiskit.transpiler.preset_passmanagers import (  # type: ignore[import]
+            generate_preset_pass_manager,
+        )
+        from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2  # type: ignore[import]
+    except ImportError as exc:
+        raise ImportError(
+            "The 'qpu' backend requires qiskit and qiskit-ibm-runtime. "
+            "Install with: pip install limen[ibm]"
+        ) from exc
+
+    qc = to_qiskit_circuit(circuit)
+    service = QiskitRuntimeService(
+        channel="ibm_quantum_platform",
+        token=token,
+        instance=instance,
+    )
+    backend = service.backend(backend_name)
+    pm = generate_preset_pass_manager(optimization_level=1, backend=backend)
+    transpiled = pm.run(qc)
+
+    sampler = SamplerV2(mode=backend)
+    job = sampler.run([transpiled], shots=shots)
+    print(
+        f"[limen] QPU job submitted — ID: {job.job_id()}  "
+        f"backend: {backend_name}  shots: {shots}\n"
+        f"[limen] Track at https://quantum.ibm.com/workloads/{job.job_id()}"
+    )
+    pub_result = job.result()[0]
+    counts: dict[str, int] = pub_result.data.c.get_counts()
+
+    total = sum(counts.values())
+    if total == 0:
+        return {}
+    return {bits[::-1]: count / total for bits, count in counts.items()}
 
 
 def _distributed_compile(
@@ -198,6 +296,11 @@ def run_pipeline(
     server_addresses: list[str] | None = None,
     num_partitions: int | None = None,
     seed: int = 42,
+    backend: str = "statevector",
+    qpu_backend_name: str = "aer_simulator",
+    qpu_shots: int = 1000,
+    qpu_token: str | None = None,
+    qpu_instance: str | None = None,
 ) -> EndToEndCertificate:
     """Run a QUBO end-to-end through the gate-model track and certify it.
 
@@ -217,17 +320,73 @@ def run_pipeline(
         num_partitions: Number of partitions to split the graph into when
             dispatching to peers; defaults to len(server_addresses).
         seed: Reserved for reproducibility; the pipeline is deterministic.
+        backend: Execution backend for the QAOA circuit.  One of:
+
+            - ``"statevector"`` *(default)* — pure-Python statevector
+              simulator; no external dependencies; deterministic.
+            - ``"aer"`` — Qiskit Aer simulator (shot-based); requires
+              ``pip install limen[ibm]``.  Use *qpu_backend_name* to
+              select the Aer method (e.g. ``"aer_simulator"``).
+            - ``"qpu"`` — real IBM Quantum hardware via Qiskit Runtime;
+              requires *qpu_token*, *qpu_instance*, and
+              ``pip install limen[ibm]``.
+
+        qpu_backend_name: Backend name forwarded to Aer or IBM Runtime
+            (e.g. ``"aer_simulator"``, ``"ibm_kingston"``).
+        qpu_shots: Number of measurement shots when using the ``"aer"``
+            or ``"qpu"`` backend.
+        qpu_token: IBM Quantum Platform API token (``"qpu"`` only).
+        qpu_instance: IBM Quantum CRN instance string (``"qpu"`` only).
 
     Returns:
         An EndToEndCertificate composing the QAOA solution with the
         surface-code logical-error budget.
+
+    Raises:
+        ValueError: If *backend* is not one of the supported choices.
+        ValueError: If ``backend="qpu"`` but *qpu_token* or *qpu_instance*
+            is not provided.
+        ImportError: If ``backend="aer"`` or ``"qpu"`` and qiskit is not
+            installed.
     """
+    if backend not in _BACKEND_CHOICES:
+        raise ValueError(
+            f"Unknown backend {backend!r}. Choose from: "
+            + ", ".join(sorted(_BACKEND_CHOICES))
+        )
+    if backend == "qpu" and not (qpu_token and qpu_instance):
+        raise ValueError(
+            "backend='qpu' requires both qpu_token and qpu_instance."
+        )
+
     graph = from_qubo_dict(qubo)
     order = variable_order(graph)
     n = len(order)
     canonical_qubo = _graph_qubo(graph)
 
-    params, dist = _grid_search(graph, qaoa_layers, grid_size)
+    # Parameter optimisation always runs on the statevector simulator.
+    # The grid search evaluates O(grid_size²) circuits; submitting that many
+    # jobs to a QPU would be impractical and expensive.  We find the optimal
+    # (gamma, beta) offline, then execute the final circuit once on the
+    # chosen backend.
+    params, sim_dist = _grid_search(graph, qaoa_layers, grid_size)
+
+    # Final circuit execution — one shot on the chosen backend.
+    if backend == "statevector":
+        dist = sim_dist  # already computed above, no extra work
+    else:
+        final_circuit = compile_qaoa(
+            graph,
+            [params["gamma"]] * qaoa_layers,
+            [params["beta"]] * qaoa_layers,
+        )
+        if backend == "aer":
+            dist = _aer_probabilities(final_circuit, qpu_backend_name, qpu_shots)
+        else:  # "qpu"
+            dist = _qpu_probabilities(
+                final_circuit, qpu_backend_name, qpu_shots,
+                qpu_token, qpu_instance,  # type: ignore[arg-type]
+            )
     solution_bits = max(dist, key=dist.get) if dist else "0" * n
     solution = bitstring_to_assignment(solution_bits, order)
     energy = _energy(canonical_qubo, solution)
@@ -284,6 +443,12 @@ def run_pipeline(
         )
         notes.extend(dist_notes)
 
+    if backend != "statevector":
+        notes.append(
+            f"Executed on backend '{backend}' "
+            f"(backend_name={qpu_backend_name!r}, shots={qpu_shots})."
+        )
+
     return EndToEndCertificate(
         solution=solution,
         energy=energy,
@@ -302,6 +467,7 @@ def run_pipeline(
             "variable_order": order,
             "seed": seed,
             "roundtrip_corrects_all_weight1": roundtrip_corrects_all_weight1,
+            "execution_backend": backend,
         },
         distributed_compilation=distributed_compilation,
     )

@@ -15,6 +15,7 @@
 
 from limen.communication.channel import (
     ChannelDeltaModel,
+    FeedforwardTransport,
     QKDResult,
     QuantumChannel,
     SiftedKeyResult,
@@ -24,6 +25,7 @@ from limen.communication.channel import (
     estimate_fidelity,
     run_teleport_qpu,
     sift_and_evaluate,
+    simulate_feedforward_teleport,
     teleport_circuit,
 )
 
@@ -34,6 +36,9 @@ __all__ = [
     "QKDResult",
     # Hardware-level channel model
     "ChannelDeltaModel",
+    # Pure-Python feedforward teleportation (no Qiskit)
+    "FeedforwardTransport",
+    "simulate_feedforward_teleport",
     # Low-level QPU-execution API
     "TeleportResult",
     "SiftedKeyResult",

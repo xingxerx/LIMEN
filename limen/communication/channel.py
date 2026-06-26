@@ -606,6 +606,157 @@ def sift_and_evaluate(
 
 
 # ---------------------------------------------------------------------------
+# Pure-Python feedforward teleportation (no Qiskit required)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class FeedforwardTransport:
+    """Classical transport of Bell-measurement bits from Alice to Bob.
+
+    Models the classical communication step of the teleportation protocol:
+    Alice measures her two qubits (obtaining bits m0 and m1), sends them to
+    Bob over the classical channel, and Bob applies the conditional Pauli
+    corrections.  The :class:`ChannelDeltaModel` governs whether this
+    transport completes within the qubit's T2 coherence time.
+
+    Attributes:
+        alice_bits: ``(m0, m1)`` — Alice's measurement outcomes for q0 and q1.
+        correction: Pauli correction applied to Bob's qubit:
+            ``"I"``, ``"X"``, ``"Z"``, or ``"XZ"``.
+        within_coherence: ``True`` if the transport latency is below T2;
+            ``None`` if no :class:`ChannelDeltaModel` was provided.
+        fidelity_penalty: ``exp(-latency / T2)`` decay factor;
+            ``None`` if no :class:`ChannelDeltaModel` was provided.
+        transport_latency_ms: Modelled classical channel latency in ms;
+            ``None`` if no :class:`ChannelDeltaModel` was provided.
+    """
+
+    alice_bits: tuple[int, int]
+    correction: str
+    within_coherence: bool | None
+    fidelity_penalty: float | None
+    transport_latency_ms: float | None
+
+    def to_dict(self) -> dict:
+        return {
+            "alice_bits": list(self.alice_bits),
+            "correction": self.correction,
+            "within_coherence": self.within_coherence,
+            "fidelity_penalty": self.fidelity_penalty,
+            "transport_latency_ms": self.transport_latency_ms,
+        }
+
+
+def simulate_feedforward_teleport(
+    theta: float,
+    phi: float,
+    channel_delta: "ChannelDeltaModel | None" = None,
+    seed: int = 42,
+) -> "tuple[TeleportationResult, FeedforwardTransport]":
+    """Teleport a qubit state using the pure-Python :class:`StatevectorSimulator`.
+
+    Executes the full teleportation protocol with *explicit* classical
+    feedforward transport — no Qiskit required:
+
+    1. Prepare |ψ⟩ = cos(θ/2)|0⟩ + e^(iφ) sin(θ/2)|1⟩ on qubit 0.
+    2. Create a Bell pair on qubits 1 and 2.
+    3. Apply the Bell-basis transformation on Alice's side (qubits 0–1).
+    4. Measure q0 → m0, q1 → m1  (projective collapse of the statevector).
+    5. Model classical transport of (m0, m1) via *channel_delta* if given.
+    6. Apply Pauli corrections on Bob's qubit (q2):
+       - m1 == 1  →  X on q2
+       - m0 == 1  →  Z on q2
+    7. Verify: apply the inverse state preparation on q2 and compute
+       P(q2 = |0⟩), which equals the teleportation fidelity.
+
+    The inverse of U(θ, φ, 0) is U(-θ, 0, -φ) under the ZYZ decomposition.
+
+    Args:
+        theta: Polar angle of the input state on the Bloch sphere.
+        phi: Azimuthal angle of the input state.
+        channel_delta: Optional coherence model.  If supplied, the returned
+            :class:`FeedforwardTransport` includes ``within_coherence`` and
+            ``fidelity_penalty`` values derived from the T2 and latency.
+        seed: RNG seed for the projective measurement step (deterministic).
+
+    Returns:
+        ``(TeleportationResult, FeedforwardTransport)``
+    """
+    from limen.gates.ir import CircuitIR, GateInstruction
+    from limen.gates.simulator import apply_gate_to_state, measure_qubit, statevector
+
+    n = 3  # q0 = Alice's input state, q1 = Alice's EPR half, q2 = Bob's EPR half
+
+    # Steps 1–3: state preparation + Bell pair + Bell-basis rotation
+    pre = CircuitIR(n_qubits=n)
+    pre.instructions = [
+        GateInstruction("u", [0], [theta, phi, 0.0]),   # state prep on q0
+        GateInstruction("h", [1], []),                   # Bell pair: H on q1
+        GateInstruction("cx", [1, 2], []),               # Bell pair: CX q1→q2
+        GateInstruction("cx", [0, 1], []),               # Bell-basis CNOT
+        GateInstruction("h", [0], []),                   # Bell-basis Hadamard
+    ]
+    state = statevector(pre)
+
+    # Step 4: projective measurement of Alice's qubits
+    m0, state = measure_qubit(state, n, qubit=0, seed=seed)
+    m1, state = measure_qubit(state, n, qubit=1, seed=seed ^ 0xFF)
+
+    # Step 5: model classical feedforward transport
+    within_coherence: bool | None = None
+    fidelity_penalty: float | None = None
+    transport_latency_ms: float | None = None
+    if channel_delta is not None:
+        within_coherence = channel_delta.within_coherence()
+        fidelity_penalty = channel_delta.fidelity_penalty()
+        transport_latency_ms = channel_delta.latency_ms
+
+    # Step 6: Pauli corrections on Bob's qubit (q2) based on Alice's bits
+    correction_parts: list[str] = []
+    if m1 == 1:
+        apply_gate_to_state(state, n, "x", [2], [])
+        correction_parts.append("X")
+    if m0 == 1:
+        apply_gate_to_state(state, n, "z", [2], [])
+        correction_parts.append("Z")
+    correction = "".join(correction_parts) or "I"
+
+    # Step 7: verify — inverse prep on q2, then measure P(q2 = |0⟩)
+    # U(θ, φ, 0)† = U(-θ, 0, -φ)  [standard ZYZ inverse]
+    apply_gate_to_state(state, n, "u", [2], [-theta, 0.0, -phi])
+
+    prob_q2_zero = sum(
+        state[k].real ** 2 + state[k].imag ** 2
+        for k in range(1 << n)
+        if not ((k >> 2) & 1)  # qubit 2 in |0⟩
+    )
+    fidelity = float(max(0.0, min(1.0, prob_q2_zero)))
+
+    transport = FeedforwardTransport(
+        alice_bits=(m0, m1),
+        correction=correction,
+        within_coherence=within_coherence,
+        fidelity_penalty=fidelity_penalty,
+        transport_latency_ms=transport_latency_ms,
+    )
+    result = TeleportationResult(
+        input_state={"theta": theta, "phi": phi},
+        circuit_depth=None,
+        fidelity=fidelity,
+        verification_success_rate=fidelity,
+        measured_counts=None,
+        metadata={
+            "backend": "statevector_simulator",
+            "seed": seed,
+            "inverse_prep": True,
+            "alice_bits": [m0, m1],
+            "correction": correction,
+        },
+    )
+    return result, transport
+
+
+# ---------------------------------------------------------------------------
 # Full QPU execution path
 # ---------------------------------------------------------------------------
 

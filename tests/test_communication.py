@@ -16,11 +16,112 @@
 import math
 import pytest
 
-# Skip tests if qiskit or qiskit_aer are not installed
+from limen.communication.channel import (
+    ChannelDeltaModel,
+    FeedforwardTransport,
+    QKDResult,
+    TeleportationResult,
+    simulate_feedforward_teleport,
+)
+
+# ---------------------------------------------------------------------------
+# Pure-Python feedforward tests (no Qiskit required)
+# ---------------------------------------------------------------------------
+
+def test_feedforward_teleport_state_zero():
+    """|0⟩ teleports with fidelity 1 regardless of correction outcome."""
+    result, transport = simulate_feedforward_teleport(0.0, 0.0, seed=42)
+    assert isinstance(result, TeleportationResult)
+    assert isinstance(transport, FeedforwardTransport)
+    assert result.fidelity is not None
+    assert abs(result.fidelity - 1.0) < 1e-9
+
+
+def test_feedforward_teleport_state_one():
+    """|1⟩ (theta=pi) teleports with fidelity 1."""
+    result, transport = simulate_feedforward_teleport(math.pi, 0.0, seed=42)
+    assert abs(result.fidelity - 1.0) < 1e-9
+
+
+def test_feedforward_teleport_plus_state():
+    """|+⟩ (theta=pi/2) teleports with fidelity 1."""
+    result, transport = simulate_feedforward_teleport(math.pi / 2, 0.0, seed=7)
+    assert abs(result.fidelity - 1.0) < 1e-9
+
+
+def test_feedforward_teleport_arbitrary_state():
+    """Arbitrary state teleports with fidelity 1 (no noise in simulator)."""
+    result, transport = simulate_feedforward_teleport(1.1, 0.7, seed=99)
+    assert abs(result.fidelity - 1.0) < 1e-9
+
+
+def test_feedforward_transport_correction_is_valid():
+    """The correction field is one of the four expected Paulis."""
+    _, transport = simulate_feedforward_teleport(0.5, 0.3, seed=5)
+    assert transport.correction in {"I", "X", "Z", "XZ"}
+
+
+def test_feedforward_transport_alice_bits_binary():
+    """Alice's measurement bits are always 0 or 1."""
+    _, transport = simulate_feedforward_teleport(1.0, 0.5, seed=17)
+    m0, m1 = transport.alice_bits
+    assert m0 in (0, 1)
+    assert m1 in (0, 1)
+
+
+def test_feedforward_transport_no_channel_delta():
+    """Without a ChannelDeltaModel, coherence fields are None."""
+    _, transport = simulate_feedforward_teleport(0.0, 0.0, seed=0)
+    assert transport.within_coherence is None
+    assert transport.fidelity_penalty is None
+    assert transport.transport_latency_ms is None
+
+
+def test_feedforward_transport_with_channel_delta_within_coherence():
+    """Fast channel (1 µs latency, T2=100 µs) is within coherence."""
+    delta = ChannelDeltaModel(latency_ms=0.001, t2_us=100.0)
+    _, transport = simulate_feedforward_teleport(0.0, 0.0, channel_delta=delta, seed=0)
+    assert transport.within_coherence is True
+    assert transport.fidelity_penalty is not None
+    assert transport.fidelity_penalty > 0.99  # negligible decay
+    assert transport.transport_latency_ms == pytest.approx(0.001)
+
+
+def test_feedforward_transport_with_channel_delta_outside_coherence():
+    """Slow channel (2 ms latency, T2=1 µs) exceeds coherence time."""
+    delta = ChannelDeltaModel(latency_ms=2.0, t2_us=1.0)
+    _, transport = simulate_feedforward_teleport(0.0, 0.0, channel_delta=delta, seed=0)
+    assert transport.within_coherence is False
+    assert transport.fidelity_penalty < 0.01  # severe decay
+
+
+def test_feedforward_transport_to_dict():
+    """FeedforwardTransport serialises to dict correctly."""
+    delta = ChannelDeltaModel(latency_ms=0.5, t2_us=50.0)
+    _, transport = simulate_feedforward_teleport(0.0, 0.0, channel_delta=delta, seed=0)
+    d = transport.to_dict()
+    assert "alice_bits" in d
+    assert "correction" in d
+    assert "within_coherence" in d
+    assert "fidelity_penalty" in d
+    assert "transport_latency_ms" in d
+
+
+def test_feedforward_result_metadata_contains_correction():
+    """TeleportationResult.metadata captures alice_bits and correction."""
+    result, transport = simulate_feedforward_teleport(0.3, 1.2, seed=13)
+    assert result.metadata["backend"] == "statevector_simulator"
+    assert "alice_bits" in result.metadata
+    assert result.metadata["correction"] == transport.correction
+
+
+# ---------------------------------------------------------------------------
+# Qiskit-gated tests (skip if Qiskit / Aer not installed)
+# ---------------------------------------------------------------------------
 pytest.importorskip("qiskit", reason="qiskit not installed")
 pytest.importorskip("qiskit_aer", reason="qiskit-aer not installed")
 
-from limen.communication.channel import QuantumChannel, TeleportationResult, QKDResult
+from limen.communication.channel import QuantumChannel  # noqa: E402
 
 
 def test_quantum_channel_init():

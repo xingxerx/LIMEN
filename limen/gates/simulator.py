@@ -137,3 +137,78 @@ def sample_counts(circuit: CircuitIR, shots: int = 1000, seed: int = 42) -> dict
     for outcome in rng.choices(outcomes, weights=weights, k=shots):
         counts[outcome] = counts.get(outcome, 0) + 1
     return counts
+
+
+# ---------------------------------------------------------------------------
+# Mid-circuit operations (used by feedforward teleportation)
+# ---------------------------------------------------------------------------
+
+def measure_qubit(
+    state: list[complex], n: int, qubit: int, seed: int | None = None
+) -> tuple[int, list[complex]]:
+    """Measure a single qubit, collapsing the statevector.
+
+    Uses the convention that qubit *q* corresponds to bit ``(index >> q) & 1``
+    of the basis-state index — the same convention as :func:`statevector`.
+
+    Args:
+        state: Current statevector (length 2^n).  Not mutated.
+        n: Number of qubits.
+        qubit: Index of the qubit to measure (0 = least significant bit).
+        seed: RNG seed for deterministic outcome sampling.  A fresh
+            :class:`random.Random` instance is created per call.
+
+    Returns:
+        ``(outcome, collapsed_state)`` where *outcome* is 0 or 1 and
+        *collapsed_state* is a new renormalised list.
+    """
+    rng = random.Random(seed)
+    bit = 1 << qubit
+
+    # Probability that the measured qubit is |0⟩
+    prob0 = sum(
+        state[k].real ** 2 + state[k].imag ** 2
+        for k in range(1 << n)
+        if not (k & bit)
+    )
+    prob0 = max(0.0, min(1.0, prob0))
+    outcome = 0 if rng.random() < prob0 else 1
+
+    # Collapse: keep only the amplitudes consistent with the outcome
+    new_state: list[complex] = [
+        (state[k] if ((k >> qubit) & 1) == outcome else 0j)
+        for k in range(1 << n)
+    ]
+
+    # Renormalise
+    norm = math.sqrt(sum(v.real ** 2 + v.imag ** 2 for v in new_state))
+    if norm > 1e-12:
+        new_state = [v / norm for v in new_state]
+
+    return outcome, new_state
+
+
+def apply_gate_to_state(
+    state: list[complex], n: int, name: str, qubits: list[int], params: list[float]
+) -> list[complex]:
+    """Apply a named gate in-place to an existing statevector and return it.
+
+    This is the mid-circuit counterpart to the gate-application logic inside
+    :func:`statevector`.  The gate name must be a key in
+    :data:`~limen.gates.ir.KNOWN_GATES`.
+
+    Args:
+        state: Statevector to mutate in-place (length 2^n).
+        n: Number of qubits.
+        name: Gate name (e.g. ``"x"``, ``"z"``, ``"cx"``).
+        qubits: Qubit indices the gate acts on.
+        params: Gate parameters (e.g. ``[theta, phi, lam]`` for ``"u"``).
+
+    Returns:
+        The same *state* list after in-place mutation.
+    """
+    if len(qubits) == 1:
+        _apply_1q(state, n, qubits[0], _single_qubit_matrix(name, params))
+    else:
+        _apply_2q(state, n, name, qubits)
+    return state
