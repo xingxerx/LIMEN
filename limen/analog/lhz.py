@@ -277,6 +277,11 @@ def certify_lhz(
         "theorem": "universality_theorem.md#theorem-3",
         "n_logical": lhz_result.n_logical,
         "n_physical": lhz_result.n_physical,
+        "plaquette_realizability": (
+            "unverified — this certificate covers only coefficient-exactness "
+            "of the encoded local fields (h/J); it does not certify physical "
+            "realizability of the 3-body plaquette penalty terms themselves"
+        ),
     }
 
     return LHZCertificate(

@@ -5,7 +5,11 @@ from itertools import combinations
 
 import pytest
 
-from limen.analog.backends.neutral_atom import _C6_MHZ_UM6, run_neutral_atom
+from limen.analog.backends.neutral_atom import (
+    _C6_MHZ_UM6,
+    check_plaquette_geometry,
+    run_neutral_atom,
+)
 from limen.analog.hamiltonian import HamiltonianIR, HamiltonianTerm, SubstrateType
 
 pytest.importorskip("numpy", reason="numpy required for geometry tests")
@@ -67,3 +71,42 @@ def test_natively_realizable_input_skips_lhz():
     assert res.certificate.natively_realizable is True
     assert res.lhz_result is None
     assert res.lhz_certificate is None
+    assert res.plaquette_geometry is None
+
+
+def test_lhz_fallback_includes_plaquette_geometry():
+    J = _tetrahedron_J(5.0)
+    ir = _make_ir(*[_zzt(i, j, v) for (i, j), v in J.items()], n=4)
+    res = run_neutral_atom(ir)
+    assert res.lhz_result is not None
+
+    geo = res.plaquette_geometry
+    assert geo is not None
+    assert geo.n_plaquettes == len(res.lhz_result.plaquettes)
+    assert geo.max_spread is not None
+    assert len(geo.per_plaquette_spread) == geo.n_plaquettes
+    # Scope limitation must always be surfaced, regardless of outcome.
+    assert any("does not certify" in note for note in geo.notes)
+
+
+def test_check_plaquette_geometry_no_plaquettes():
+    geo = check_plaquette_geometry([], [])
+    assert geo.plausible is True
+    assert geo.n_plaquettes == 0
+    assert geo.max_spread is None
+
+
+def test_check_plaquette_geometry_equilateral_is_plausible():
+    # An equilateral triangle of parity qubits is the ideal symmetric case.
+    positions = [(0.0, 0.0), (1.0, 0.0), (0.5, 0.8660254)]
+    geo = check_plaquette_geometry([(0, 1, 2)], positions)
+    assert geo.plausible is True
+    assert geo.per_plaquette_spread[0] < 0.01
+
+
+def test_check_plaquette_geometry_degenerate_triangle_is_implausible():
+    # Three collinear, unevenly-spaced points: highly asymmetric triangle.
+    positions = [(0.0, 0.0), (1.0, 0.0), (10.0, 0.0)]
+    geo = check_plaquette_geometry([(0, 1, 2)], positions, max_relative_spread=0.5)
+    assert geo.plausible is False
+    assert any("not roughly" in note for note in geo.notes)

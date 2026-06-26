@@ -214,6 +214,104 @@ def check_geometric_embeddability(
 
 
 @dataclass
+class PlaquetteGeometryResult:
+    """Geometric proximity check for LHZ plaquette ancilla siting.
+
+    This does NOT certify physical realizability of the 3-body plaquette
+    constraint — the ancilla-gadget construction itself (constraint-qubit
+    coupling strengths, its own penalty bound) is not modeled anywhere in
+    this codebase; see LHZCertificate.metadata['plaquette_realizability'].
+    It only checks a necessary (not sufficient) geometric precondition for
+    the LHZ gadget construction (Lechner, Hauke & Zoller 2015): that the
+    three parity qubits of each plaquette sit at roughly equal pairwise
+    distances, as required to host a single ancilla coupled symmetrically
+    to all three.
+
+    Attributes:
+        plausible: True when every plaquette triple's relative side-length
+            spread is within max_relative_spread.
+        n_plaquettes: Number of plaquettes checked.
+        max_spread: Largest relative spread (over all plaquettes) between the
+            longest and shortest side of the constraint triangle. None when
+            there are no plaquettes.
+        per_plaquette_spread: Relative spread for each plaquette, in the same
+            order as LHZResult.plaquettes.
+        notes: Human-readable observations, including the scope limitation.
+    """
+
+    plausible: bool
+    n_plaquettes: int
+    max_spread: float | None
+    per_plaquette_spread: list[float]
+    notes: list[str] = field(default_factory=list)
+
+
+_PLAQUETTE_SCOPE_NOTE = (
+    "Geometric proximity only — does not certify the LHZ ancilla-gadget "
+    "construction (constraint-qubit coupling strengths, its own penalty "
+    "bound). See LHZCertificate.metadata['plaquette_realizability']."
+)
+
+
+def check_plaquette_geometry(
+    plaquettes: list[tuple[int, int, int]],
+    atom_positions: list[tuple[float, float]],
+    max_relative_spread: float = 0.5,
+) -> PlaquetteGeometryResult:
+    """Check whether plaquette parity qubits sit close enough for a shared ancilla.
+
+    Args:
+        plaquettes: List of (pa, pb, pc) parity-qubit index triples, as
+            produced by lhz_parity_pass.
+        atom_positions: 2-D positions of the parity qubits (e.g. from
+            run_neutral_atom applied to the encoded IR).
+        max_relative_spread: Maximum allowed (max_side - min_side) / mean_side
+            for a plaquette's constraint triangle to be considered plausible.
+
+    Returns:
+        PlaquetteGeometryResult.
+    """
+    if not plaquettes:
+        return PlaquetteGeometryResult(
+            plausible=True, n_plaquettes=0, max_spread=None,
+            per_plaquette_spread=[],
+            notes=["No plaquettes to check.", _PLAQUETTE_SCOPE_NOTE],
+        )
+
+    spreads: list[float] = []
+    for (pa, pb, pc) in plaquettes:
+        a, b, c = atom_positions[pa], atom_positions[pb], atom_positions[pc]
+        sides = [_dist(a, b), _dist(a, c), _dist(b, c)]
+        mean_side = sum(sides) / 3.0
+        spread = (max(sides) - min(sides)) / mean_side if mean_side > 1e-9 else 0.0
+        spreads.append(spread)
+
+    max_spread = max(spreads)
+    plausible = max_spread <= max_relative_spread
+
+    notes = [
+        f"Max relative side-length spread across {len(plaquettes)} "
+        f"plaquette(s): {max_spread:.3f} (threshold {max_relative_spread}).",
+        _PLAQUETTE_SCOPE_NOTE,
+    ]
+    if not plausible:
+        notes.append(
+            "At least one plaquette's three parity qubits are not roughly "
+            "equidistant — a shared ancilla site would need asymmetric "
+            "coupling strengths, which the LHZ fixed-lattice construction "
+            "does not provide for."
+        )
+
+    return PlaquetteGeometryResult(
+        plausible=plausible,
+        n_plaquettes=len(plaquettes),
+        max_spread=max_spread,
+        per_plaquette_spread=spreads,
+        notes=notes,
+    )
+
+
+@dataclass
 class NeutralAtomResult:
     """Result of a neutral-atom Rydberg array compilation.
 
@@ -242,6 +340,10 @@ class NeutralAtomResult:
         lhz_certificate: Penalty-gap certificate for the LHZ route, wrapping
             the certified compilation of the encoded (local-field) problem.
             None unless lhz_result is set.
+        plaquette_geometry: Geometric proximity check (necessary, not
+            sufficient) for siting an LHZ ancilla gadget per plaquette.
+            None unless lhz_result is set; see PlaquetteGeometryResult's
+            scope limitation.
     """
 
     hamiltonian: HamiltonianIR
@@ -260,6 +362,7 @@ class NeutralAtomResult:
     metadata: dict[str, Any] = field(default_factory=dict)
     lhz_result: LHZResult | None = None
     lhz_certificate: LHZCertificate | None = None
+    plaquette_geometry: PlaquetteGeometryResult | None = None
 
 
 # -- Layout helpers ----------------------------------------------------
@@ -485,12 +588,16 @@ def run_neutral_atom(
     # leaving the caller with only a known-bad heuristic certificate.
     lhz_result: LHZResult | None = None
     lhz_certificate: LHZCertificate | None = None
+    plaquette_geometry: PlaquetteGeometryResult | None = None
     if not natively_realizable:
         lhz_result = lhz_parity_pass(hamiltonian)
         encoded_compiled = run_neutral_atom(lhz_result.encoded_ir, delta_model=delta_model)
         lhz_certificate = certify_lhz(
             lhz_result,
             compilation_certificate=encoded_compiled.certificate,
+        )
+        plaquette_geometry = check_plaquette_geometry(
+            lhz_result.plaquettes, encoded_compiled.atom_positions
         )
 
     return NeutralAtomResult(
@@ -534,4 +641,5 @@ def run_neutral_atom(
         },
         lhz_result=lhz_result,
         lhz_certificate=lhz_certificate,
+        plaquette_geometry=plaquette_geometry,
     )
