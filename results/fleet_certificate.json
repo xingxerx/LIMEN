@@ -1,0 +1,47 @@
+{
+  "generated_at": "2026-06-27T04:38:32.462561+00:00",
+  "source": "live_query",
+  "nodes": [
+    {
+      "backend": "ibm_fez",
+      "provider": "IBM Quantum Platform",
+      "modality": "superconducting",
+      "num_qubits": 156,
+      "validated": false,
+      "job_ids": []
+    },
+    {
+      "backend": "ibm_marrakesh",
+      "provider": "IBM Quantum Platform",
+      "modality": "superconducting",
+      "num_qubits": 156,
+      "validated": false,
+      "job_ids": []
+    },
+    {
+      "backend": "ibm_kingston",
+      "provider": "IBM Quantum Platform",
+      "modality": "superconducting",
+      "num_qubits": 156,
+      "validated": true,
+      "job_ids": [
+        "d8ka7b32d42s73c9vc8g",
+        "d8ka7eb2d42s73c9vccg",
+        "d8ka7hrnn5bs738qjncg",
+        "d8ka7ko32u0s73f8gqsg",
+        "d8ka7o32d42s73c9vcn0",
+        "d8ka7r032u0s73f8gr20",
+        "d8ka7uj2d42s73c9vct0",
+        "d8kaajbqv2lc73851nq0",
+        "d8u5qqkbp3hs7385g0mg",
+        "d8u6b6kbp3hs7385gil0",
+        "d8viq20pknjs73a14nh0"
+      ]
+    }
+  ],
+  "summary": {
+    "total_nodes": 3,
+    "validated_nodes": 1,
+    "total_physical_qubits": 468
+  }
+}

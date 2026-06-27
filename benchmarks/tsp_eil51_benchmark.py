@@ -257,6 +257,10 @@ def main() -> None:
         help="Skip QPU, run simulator only even if IBM credentials are present",
     )
     parser.add_argument(
+        "--backend", default=_BACKEND_NAME,
+        help=f"IBM backend name to target (default {_BACKEND_NAME})",
+    )
+    parser.add_argument(
         "--algorithm", default="auto",
         choices=["auto", "qaoa", "exact"],
         help="Simulator algorithm: auto tries qaoa then falls back to exact (default auto)",
@@ -285,7 +289,7 @@ def main() -> None:
     print(f"=== TSP eil51 LIMEN Benchmark ===")
     print(f"Sub-problem : first {n_cities} cities of eil51 ({n_vars} QUBO variables)")
     print(f"Full problem: {EIL51_N_CITIES} cities, classical optimal = {EIL51_OPTIMAL_TOUR_LENGTH}")
-    print(f"Backend     : {_BACKEND_NAME if qpu_enabled else 'AerSimulator (no IBM credentials)'}")
+    print(f"Backend     : {args.backend if qpu_enabled else 'AerSimulator (no IBM credentials)'}")
     print()
 
     # ── 1. Build sub-problem ─────────────────────────────────────────────
@@ -371,7 +375,7 @@ def main() -> None:
 
     # ── 5. QPU / simulator run ───────────────────────────────────────────
     sim_label = "AerSimulator (qaoa)" if args.algorithm != "exact" else "exact enumeration"
-    run_label = _BACKEND_NAME if qpu_enabled else sim_label
+    run_label = args.backend if qpu_enabled else sim_label
     print(f"[5/6] Running QAOA on {run_label} ...")
     t0 = time.time()
     if qpu_enabled:
@@ -380,7 +384,7 @@ def main() -> None:
             encoding=encoding,
             token=token,
             crn=crn,
-            backend_name=_BACKEND_NAME,
+            backend_name=args.backend,
             shots=shots,
             reps=_REPS,
             cost_scale=cd.kappa,
@@ -470,7 +474,7 @@ def main() -> None:
         },
         "certificate": cert.to_dict(),
         "qpu_run": {
-            "backend": _BACKEND_NAME if qpu_enabled else "aer_simulator",
+            "backend": args.backend if qpu_enabled else "aer_simulator",
             "shots": shots,
             "reps": _REPS,
             "job_id": job_id,
@@ -492,7 +496,7 @@ def main() -> None:
     out_json.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
     # ── Markdown summary ──────────────────────────────────────────────────
-    qpu_or_sim = _BACKEND_NAME if qpu_enabled else "AerSimulator"
+    qpu_or_sim = args.backend if qpu_enabled else "AerSimulator"
     cert_norm = (
         f"{cert.operator_norm:.2e}" if cert.operator_norm is not None else f"≤ {cert.l1_bound:.2e} (L1)"
     )
