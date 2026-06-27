@@ -6,6 +6,7 @@ import unittest.mock
 import pytest
 
 from limen import compile_lexicographic, default_hardware_graph, from_qubo_dict
+from limen.backends.braket import _atom_positions, run_braket
 from limen.backends.dwave import run_dwave
 from limen.backends.qiskit_backend import _qubo_to_ising, run_qiskit
 
@@ -67,3 +68,35 @@ def test_qubo_to_ising_energy_equivalence():
 
     assert all(abs(o - offsets[0]) < 1e-10 for o in offsets), \
         f"Offset not constant across assignments: {offsets}"
+
+
+# ── Braket ImportError guard ──────────────────────────────────────────────
+
+def test_braket_import_error_with_helpful_message():
+    """run_braket raises ImportError with pip install hint when SDK is absent."""
+    encoding = _make_encoding(_TRIVIAL_QUBO)
+    saved = {k: sys.modules.pop(k) for k in list(sys.modules) if k.startswith("braket")}
+    try:
+        with unittest.mock.patch.dict("sys.modules", {"braket": None}):
+            with pytest.raises(ImportError, match="pip install"):
+                run_braket(encoding, shots=10)
+    finally:
+        sys.modules.update(saved)
+
+
+# ── _atom_positions correctness (no Braket SDK required) ─────────────────
+
+def test_atom_positions_places_coupled_pairs_within_blockade_radius():
+    """Adjacent, coupled variables must be placed within the blockade radius."""
+    order = ["x0", "x1", "x2"]
+    coupling = {("x0", "x1"): 1.0, ("x1", "x2"): 0.0}
+    positions = _atom_positions(order, coupling)
+
+    d01 = abs(positions["x1"][0] - positions["x0"][0])
+    d12 = abs(positions["x2"][0] - positions["x1"][0])
+    assert d01 < d12, "coupled pair x0-x1 should be placed closer than uncoupled x1-x2"
+
+
+def test_atom_positions_first_variable_at_origin():
+    positions = _atom_positions(["x0", "x1"], {("x0", "x1"): 1.0})
+    assert positions["x0"] == (0.0, 0.0)

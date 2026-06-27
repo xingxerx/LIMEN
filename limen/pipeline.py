@@ -37,7 +37,7 @@ from limen.gates.qaoa import bitstring_to_assignment, compile_qaoa, variable_ord
 from limen.gates.simulator import probabilities
 from limen.validator.validator import brute_force_solve
 
-_BACKEND_CHOICES = frozenset({"statevector", "aer", "qpu", "dwave"})
+_BACKEND_CHOICES = frozenset({"statevector", "aer", "qpu", "dwave", "braket"})
 
 
 @dataclass
@@ -278,6 +278,42 @@ def _dwave_solve(
     return result
 
 
+def _braket_solve(
+    graph: LogicalGraph,
+    shots: int,
+    use_qpu: bool,
+    device_arn: str,
+) -> Any:
+    """Compile *graph* to a PhysicalEncoding and submit it to QuEra Aquila.
+
+    Mirrors the single-node D-Wave path in :func:`_dwave_solve`: a 1-to-1
+    lexicographic embedding means the returned BraketResult's sample and
+    best_assignment keys (physical qubit labels) are translated back to
+    the original logical variable names before being handed to the caller.
+
+    Raises:
+        ImportError: If the Amazon Braket SDK is not installed.
+    """
+    from limen.backends.braket import run_braket
+    from limen.core.compiler import compile_lexicographic, default_hardware_graph
+
+    n_vars = len(graph.variables)
+    encoding = compile_lexicographic(graph, default_hardware_graph(n_vars))
+    result = run_braket(encoding, device_arn=device_arn, shots=shots, use_qpu=use_qpu)
+
+    physical_to_logical = {
+        phys[0]: logical for logical, phys in encoding.embedding.items()
+    }
+    result.samples = [
+        {physical_to_logical[p]: v for p, v in sample.items()}
+        for sample in result.samples
+    ]
+    result.best_assignment = {
+        physical_to_logical[p]: v for p, v in result.best_assignment.items()
+    }
+    return result
+
+
 def _distributed_compile(
     graph: LogicalGraph, server_addresses: list[str], num_partitions: int | None
 ) -> tuple[dict[str, Any], list[str]]:
@@ -357,6 +393,9 @@ def run_pipeline(
     dwave_use_qpu: bool = False,
     dwave_endpoint: str | None = None,
     dwave_token: str | None = None,
+    braket_device_arn: str = "arn:aws:braket:us-east-1::device/qpu/quera/Aquila",
+    braket_shots: int = 100,
+    braket_use_qpu: bool = False,
 ) -> EndToEndCertificate:
     """Run a QUBO end-to-end through the gate-model track and certify it.
 
@@ -391,6 +430,13 @@ def run_pipeline(
               *dwave_use_qpu*); requires ``pip install limen[dwave]``.
               This path skips the QAOA grid-search and circuit execution
               entirely, since D-Wave samples the QUBO directly.
+            - ``"braket"`` — analog Hamiltonian simulation on QuEra's
+              Aquila neutral-atom device via Amazon Braket (its local
+              simulator by default, or the real QPU via *braket_use_qpu*);
+              requires ``pip install limen[braket]``. Like ``"dwave"``,
+              this path skips the QAOA grid-search entirely. See
+              limen/backends/braket.py for the QUBO-to-Rydberg-array
+              approximation and its limitations.
 
         qpu_backend_name: Backend name forwarded to Aer or IBM Runtime
             (e.g. ``"aer_simulator"``, ``"ibm_kingston"``).
@@ -405,6 +451,14 @@ def run_pipeline(
             *dwave_use_qpu* is True.
         dwave_token: D-Wave Leap API token; required when *dwave_use_qpu*
             is True.
+        braket_device_arn: Braket device ARN to target (``"braket"``
+            only); defaults to Aquila. Only used when *braket_use_qpu*
+            is True — otherwise the local AHS simulator is used.
+        braket_shots: Number of shots to run (``"braket"`` only).
+        braket_use_qpu: If True, submit to the real AwsDevice at
+            *braket_device_arn* instead of Braket's local AHS simulator
+            (``"braket"`` only); requires AWS credentials with Braket
+            access.
 
     Returns:
         An EndToEndCertificate composing the QAOA solution with the
@@ -441,7 +495,9 @@ def run_pipeline(
     canonical_qubo = _graph_qubo(graph)
 
     dwave_result: Any = None
+    braket_result: Any = None
     params: dict[str, float]
+    dist: dict[str, float] = {}
     if backend == "dwave":
         # D-Wave anneals the QUBO directly — there is no QAOA circuit to
         # parametrise or execute, so the grid-search is skipped entirely.
@@ -450,6 +506,13 @@ def run_pipeline(
             graph, dwave_num_reads, dwave_use_qpu, dwave_endpoint, dwave_token, seed
         )
         solution = {k: int(v) for k, v in dwave_result.best_assignment.items()}
+        energy = _energy(canonical_qubo, solution)
+    elif backend == "braket":
+        # Aquila is an analog device sampled directly — there is no QAOA
+        # circuit to parametrise or execute, so the grid-search is skipped.
+        params = {}
+        braket_result = _braket_solve(graph, braket_shots, braket_use_qpu, braket_device_arn)
+        solution = {k: int(v) for k, v in braket_result.best_assignment.items()}
         energy = _energy(canonical_qubo, solution)
     else:
         # Parameter optimisation always runs on the statevector simulator.
@@ -475,7 +538,7 @@ def run_pipeline(
                     final_circuit, qpu_backend_name, qpu_shots,
                     qpu_token, qpu_instance,  # type: ignore[arg-type]
                 )
-        solution_bits = max(dist, key=dist.get) if dist else "0" * n
+        solution_bits = max(dist, key=lambda bits: dist[bits]) if dist else "0" * n
         solution = bitstring_to_assignment(solution_bits, order)
         energy = _energy(canonical_qubo, solution)
 
@@ -492,6 +555,18 @@ def run_pipeline(
             sum(
                 1
                 for sample, e in zip(dwave_result.samples, dwave_result.energies)
+                if abs(e - target) < 1e-9
+            )
+            / n_samples
+            if n_samples
+            else 0.0
+        )
+    elif backend == "braket":
+        n_samples = len(braket_result.samples)
+        success_probability = (
+            sum(
+                1
+                for sample, e in zip(braket_result.samples, braket_result.energies)
                 if abs(e - target) < 1e-9
             )
             / n_samples
@@ -537,6 +612,11 @@ def run_pipeline(
             notes.append("D-Wave best sample matches the classical optimum.")
         elif is_optimal is False:
             notes.append("D-Wave best sample is sub-optimal; raise dwave_num_reads.")
+    elif backend == "braket":
+        if is_optimal:
+            notes.append("Aquila best sample matches the classical optimum.")
+        elif is_optimal is False:
+            notes.append("Aquila best sample is sub-optimal; raise braket_shots.")
     else:
         if is_optimal:
             notes.append("QAOA most-likely outcome matches the classical optimum.")
@@ -565,6 +645,13 @@ def run_pipeline(
         )
         metadata["chain_break_fraction"] = dwave_result.chain_break_fraction
         metadata["dwave_timing"] = dict(dwave_result.timing)
+    elif backend == "braket":
+        notes.append(
+            f"Executed on backend 'braket' "
+            f"(device_arn={braket_device_arn!r}, use_qpu={braket_use_qpu}, "
+            f"shots={braket_shots}, valid_shots={len(braket_result.samples)})."
+        )
+        metadata["braket_metadata"] = dict(braket_result.metadata)
     elif backend != "statevector":
         notes.append(
             f"Executed on backend '{backend}' "
@@ -577,7 +664,7 @@ def run_pipeline(
         classical_energy=classical_energy,
         is_optimal=is_optimal,
         success_probability=success_probability,
-        qaoa_layers=0 if backend == "dwave" else qaoa_layers,
+        qaoa_layers=0 if backend in ("dwave", "braket") else qaoa_layers,
         qaoa_params=params,
         logical_error_rate=logical_rate,
         aggregate_logical_error_rate=aggregate_rate,

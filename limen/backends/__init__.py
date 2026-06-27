@@ -14,7 +14,13 @@ def __getattr__(name: str):
     if name == "run_photonic":
         from limen.backends.photonic import run_photonic
         return run_photonic
+    if name in ("BraketResult", "run_braket"):
+        from limen.backends.braket import BraketResult, run_braket
+        return {"BraketResult": BraketResult, "run_braket": run_braket}[name]
     raise AttributeError(f"module 'limen.backends' has no attribute {name!r}")
 
 
-__all__ = ["DWaveResult", "run_dwave", "QiskitResult", "run_qiskit", "run_neutral_atom", "run_photonic"]
+__all__ = [
+    "DWaveResult", "run_dwave", "QiskitResult", "run_qiskit",
+    "run_neutral_atom", "run_photonic", "BraketResult", "run_braket",
+]

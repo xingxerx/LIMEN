@@ -35,6 +35,7 @@ dependencies = []
 pyqubo = ["pyqubo>=1.4"]
 dwave = ["dwave-ocean-sdk>=6.0"]
 ibm = ["qiskit>=1.0"]
+braket = ["amazon-braket-sdk>=1.70"]
 distributed = [
   "grpcio>=1.60",
   "grpcio-tools>=1.60",
@@ -46,6 +47,7 @@ all = [
   "pyqubo>=1.4",
   "dwave-ocean-sdk>=6.0",
   "qiskit>=1.0",
+  "amazon-braket-sdk>=1.70",
   "grpcio>=1.60",
   "grpcio-tools>=1.60",
   "protobuf>=4.25",
