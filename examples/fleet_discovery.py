@@ -153,6 +153,54 @@ def discover_braket_devices() -> list[dict[str, Any]]:
     return results
 
 
+_MODALITY_BY_PROVIDER_PREFIX = {
+    "ionq": "trapped-ion",
+    "aqt": "trapped-ion",
+    "rigetti": "superconducting",
+    "iqm": "superconducting",
+}
+
+
+def discover_openquantum_backends(client_id: str, client_secret: str) -> list[dict[str, Any]]:
+    """Query live backend classes reachable through Open Quantum's unified credential.
+
+    Open Quantum routes one credential to IonQ, Rigetti, IQM, and AQT
+    hardware. A backend class being listed does not mean it can be
+    submitted to right now — ``accepting_jobs`` is reported separately
+    since IBM/Braket-style "operational" status does not capture that.
+
+    Returns:
+        List of dicts with keys ``name`` (short_code), ``num_qubits``,
+        ``modality``, ``status``, ``accepting_jobs``.
+    """
+    try:
+        from limen.backends.openquantum import list_backend_classes
+    except ImportError as exc:
+        print(
+            "ERROR: openquantum-sdk not installed.\n"
+            "Install with: pip install limen[openquantum]\n"
+            f"Details: {exc}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    classes = list_backend_classes(client_id, client_secret)
+    results = []
+    for c in classes:
+        prefix = c.short_code.split(":", 1)[0]
+        num_qubits_match = re.search(r"(\d+)\s*-?qubit", c.description, re.IGNORECASE)
+        results.append(
+            {
+                "name": c.short_code,
+                "num_qubits": int(num_qubits_match.group(1)) if num_qubits_match else None,
+                "modality": _MODALITY_BY_PROVIDER_PREFIX.get(prefix, "unknown"),
+                "status": c.status,
+                "accepting_jobs": c.accepting_jobs,
+            }
+        )
+    return results
+
+
 def scan_validated_backends(results_dir: pathlib.Path) -> dict[str, list[str]]:
     """Scan results/*.json for real job_id evidence, grouped by backend name.
 
@@ -190,6 +238,7 @@ def scan_validated_backends(results_dir: pathlib.Path) -> dict[str, list[str]]:
 def build_certificate(
     ibm_backends: list[dict[str, Any]],
     braket_devices: list[dict[str, Any]],
+    openquantum_backends: list[dict[str, Any]],
     evidence: dict[str, list[str]],
 ) -> dict[str, Any]:
     """Assemble the fleet certificate from discovery + on-disk job evidence."""
@@ -217,6 +266,21 @@ def build_certificate(
                 "modality": d["modality"],
                 "num_qubits": d["num_qubits"],
                 "status": d["status"],
+                "validated": len(job_ids) > 0,
+                "job_ids": job_ids,
+            }
+        )
+
+    for o in openquantum_backends:
+        job_ids = evidence.get(o["name"], [])
+        nodes.append(
+            {
+                "backend": o["name"],
+                "provider": "Open Quantum",
+                "modality": o["modality"],
+                "num_qubits": o["num_qubits"],
+                "status": o["status"],
+                "accepting_jobs": o["accepting_jobs"],
                 "validated": len(job_ids) > 0,
                 "job_ids": job_ids,
             }
@@ -263,6 +327,16 @@ def main() -> None:
     parser.add_argument(
         "--braket", action="store_true", help="Also query AWS Braket device status."
     )
+    parser.add_argument(
+        "--openquantum", action="store_true",
+        help="Also query Open Quantum (IonQ/Rigetti/IQM/AQT) backend status.",
+    )
+    parser.add_argument(
+        "--openquantum-client-id", default=os.environ.get("OPENQUANTUM_CLIENT_ID")
+    )
+    parser.add_argument(
+        "--openquantum-client-secret", default=os.environ.get("OPENQUANTUM_CLIENT_SECRET")
+    )
     args = parser.parse_args()
 
     if not args.ibm_token or not args.ibm_crn:
@@ -281,10 +355,24 @@ def main() -> None:
         print("Querying AWS Braket for QPU device status ...")
         braket_devices = discover_braket_devices()
 
+    openquantum_backends: list[dict[str, Any]] = []
+    if args.openquantum:
+        if not args.openquantum_client_id or not args.openquantum_client_secret:
+            print(
+                "ERROR: --openquantum requires OPENQUANTUM_CLIENT_ID and "
+                "OPENQUANTUM_CLIENT_SECRET (env vars or --openquantum-client-id/secret).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print("Querying Open Quantum for backend class status ...")
+        openquantum_backends = discover_openquantum_backends(
+            args.openquantum_client_id, args.openquantum_client_secret
+        )
+
     print("Scanning results/ for real job-ID evidence ...")
     evidence = scan_validated_backends(_RESULTS_DIR)
 
-    cert = build_certificate(ibm_backends, braket_devices, evidence)
+    cert = build_certificate(ibm_backends, braket_devices, openquantum_backends, evidence)
 
     _RESULTS_DIR.mkdir(exist_ok=True)
     _CERT_PATH.write_text(json.dumps(cert, indent=2) + "\n", encoding="utf-8")

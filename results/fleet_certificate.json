@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-27T04:38:32.462561+00:00",
+  "generated_at": "2026-06-27T09:51:07.520090+00:00",
   "source": "live_query",
   "nodes": [
     {
@@ -7,8 +7,10 @@
       "provider": "IBM Quantum Platform",
       "modality": "superconducting",
       "num_qubits": 156,
-      "validated": false,
-      "job_ids": []
+      "validated": true,
+      "job_ids": [
+        "d8vl8j1ropqc738cjvug"
+      ]
     },
     {
       "backend": "ibm_marrakesh",
@@ -37,11 +39,73 @@
         "d8u6b6kbp3hs7385gil0",
         "d8viq20pknjs73a14nh0"
       ]
+    },
+    {
+      "backend": "iqm:garnet",
+      "provider": "Open Quantum",
+      "modality": "superconducting",
+      "num_qubits": 20,
+      "status": "Online",
+      "accepting_jobs": false,
+      "validated": false,
+      "job_ids": []
+    },
+    {
+      "backend": "iqm:emerald",
+      "provider": "Open Quantum",
+      "modality": "superconducting",
+      "num_qubits": 54,
+      "status": "Online",
+      "accepting_jobs": false,
+      "validated": false,
+      "job_ids": []
+    },
+    {
+      "backend": "ionq:forte-1",
+      "provider": "Open Quantum",
+      "modality": "trapped-ion",
+      "num_qubits": 36,
+      "status": "Offline",
+      "accepting_jobs": false,
+      "validated": false,
+      "job_ids": []
+    },
+    {
+      "backend": "aqt:ibex-q1",
+      "provider": "Open Quantum",
+      "modality": "trapped-ion",
+      "num_qubits": 12,
+      "status": "Online",
+      "accepting_jobs": false,
+      "validated": false,
+      "job_ids": []
+    },
+    {
+      "backend": "ionq:forte-ent",
+      "provider": "Open Quantum",
+      "modality": "trapped-ion",
+      "num_qubits": 36,
+      "status": "Offline",
+      "accepting_jobs": false,
+      "validated": false,
+      "job_ids": []
+    },
+    {
+      "backend": "rigetti:cepheus-1-108q",
+      "provider": "Open Quantum",
+      "modality": "superconducting",
+      "num_qubits": 108,
+      "status": "Online",
+      "accepting_jobs": true,
+      "validated": true,
+      "job_ids": [
+        "c281a62f-52c1-43b5-9c25-93fc2e6258a2"
+      ]
     }
   ],
   "summary": {
-    "total_nodes": 3,
-    "validated_nodes": 1,
-    "total_physical_qubits": 468
+    "total_nodes": 9,
+    "validated_nodes": 3,
+    "total_physical_qubits": 734
   }
 }

@@ -126,8 +126,11 @@ def _build_qasm_circuit(
     bound.assign_parameters({p: 0.1 for p in bound.parameters}, inplace=True)
     bound.measure_all()
 
-    # qelib1.inc (OpenQASM 2.0's standard gate library) covers this basis.
-    transpiled = transpile(bound, basis_gates=["cx", "u", "h", "rx", "ry", "rz"])
+    # qelib1.inc (OpenQASM 2.0's standard gate library) defines u1/u2/u3,
+    # not a bare "u" — qiskit.qasm2.dumps emits an undefined "u" gate call
+    # if "u" is requested as a basis gate, which OpenQASM 2.0 parsers
+    # (including Open Quantum's) then reject. Use "u3" instead.
+    transpiled = transpile(bound, basis_gates=["cx", "u3", "h", "rx", "ry", "rz"])
     return qasm2_dumps(transpiled), transpiled.depth()
 
 
