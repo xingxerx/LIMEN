@@ -36,6 +36,7 @@ pyqubo = ["pyqubo>=1.4"]
 dwave = ["dwave-ocean-sdk>=6.0"]
 ibm = ["qiskit>=1.0"]
 braket = ["amazon-braket-sdk>=1.70"]
+openquantum = ["openquantum-sdk"]
 distributed = [
   "grpcio>=1.60",
   "grpcio-tools>=1.60",
@@ -48,6 +49,7 @@ all = [
   "dwave-ocean-sdk>=6.0",
   "qiskit>=1.0",
   "amazon-braket-sdk>=1.70",
+  "openquantum-sdk",
   "grpcio>=1.60",
   "grpcio-tools>=1.60",
   "protobuf>=4.25",
