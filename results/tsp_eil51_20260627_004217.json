@@ -1,0 +1,59 @@
+{
+  "benchmark": "tsp_eil51",
+  "date": "2026-06-27",
+  "full_problem": {
+    "name": "eil51",
+    "n_cities": 51,
+    "classical_optimal_tour_length": 426
+  },
+  "sub_problem": {
+    "n_cities": 4,
+    "n_qubo_variables": 16,
+    "classical_optimal_tour_length": 102,
+    "classical_optimal_tour": [
+      0,
+      2,
+      1,
+      3
+    ]
+  },
+  "compilation": {
+    "compiler": "lexicographic",
+    "chain_strength": 3725.5367251111843,
+    "validator_confidence": 0.471,
+    "target_kappa": 0.62,
+    "kappa": 0.622,
+    "kappa_converged": true,
+    "kappa_iterations": 7
+  },
+  "certificate": {
+    "l1_bound": 0,
+    "operator_norm": 0.0,
+    "n_sites": 16,
+    "max_linear_error": 0.0,
+    "max_quadratic_error": 0.0,
+    "natively_realizable": true,
+    "notes": [
+      "eil51 sub-problem: 4 cities, 16 QUBO variables",
+      "Gate model (IBM ibm_kingston): all Ising terms natively realizable",
+      "Lexicographic 1-to-1 embedding: compiled == target up to index relabelling"
+    ],
+    "metadata": {
+      "theorem": "universality_theorem.md#theorem-1"
+    }
+  },
+  "qpu_run": {
+    "backend": "ibm_fez",
+    "shots": 1000,
+    "reps": 1,
+    "job_id": "d8vl8j1ropqc738cjvug",
+    "circuit_depth": 780,
+    "best_qubo_energy": -5938.0,
+    "best_tour": null,
+    "best_tour_length": null,
+    "feasible": false,
+    "approximation_ratio": null,
+    "feasible_sample_rate": 0.0,
+    "elapsed_seconds": 101.99238610267639
+  }
+}

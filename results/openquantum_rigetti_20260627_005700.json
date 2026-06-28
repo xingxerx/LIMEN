@@ -1,0 +1,23 @@
+{
+  "benchmark": "tsp_eil51",
+  "date": "2026-06-27",
+  "full_problem": {
+    "name": "eil51",
+    "n_cities": 51,
+    "classical_optimal_tour_length": 426
+  },
+  "sub_problem": {
+    "n_cities": 4,
+    "n_qubo_variables": 16
+  },
+  "qpu_run": {
+    "backend": "rigetti:cepheus-1-108q",
+    "provider": "Open Quantum",
+    "shots": 1000,
+    "reps": 1,
+    "job_id": "c281a62f-52c1-43b5-9c25-93fc2e6258a2",
+    "circuit_depth": 90,
+    "elapsed_seconds": 88.7,
+    "plan_note": "Open Quantum Public Plan — requires attribution per openquantum.com/citation"
+  }
+}

@@ -6,7 +6,9 @@ import unittest.mock
 import pytest
 
 from limen import compile_lexicographic, default_hardware_graph, from_qubo_dict
+from limen.backends.braket import _atom_positions, run_braket
 from limen.backends.dwave import run_dwave
+from limen.backends.openquantum import _build_qasm_circuit, _extract_counts, run_openquantum
 from limen.backends.qiskit_backend import _qubo_to_ising, run_qiskit
 
 _TRIVIAL_QUBO = {("q0", "q0"): -1.0, ("q1", "q1"): -1.0, ("q0", "q1"): 2.0}
@@ -67,3 +69,72 @@ def test_qubo_to_ising_energy_equivalence():
 
     assert all(abs(o - offsets[0]) < 1e-10 for o in offsets), \
         f"Offset not constant across assignments: {offsets}"
+
+
+# ── Braket ImportError guard ──────────────────────────────────────────────
+
+def test_braket_import_error_with_helpful_message():
+    """run_braket raises ImportError with pip install hint when SDK is absent."""
+    encoding = _make_encoding(_TRIVIAL_QUBO)
+    saved = {k: sys.modules.pop(k) for k in list(sys.modules) if k.startswith("braket")}
+    try:
+        with unittest.mock.patch.dict("sys.modules", {"braket": None}):
+            with pytest.raises(ImportError, match="pip install"):
+                run_braket(encoding, shots=10)
+    finally:
+        sys.modules.update(saved)
+
+
+# ── _atom_positions correctness (no Braket SDK required) ─────────────────
+
+def test_atom_positions_places_coupled_pairs_within_blockade_radius():
+    """Adjacent, coupled variables must be placed within the blockade radius."""
+    order = ["x0", "x1", "x2"]
+    coupling = {("x0", "x1"): 1.0, ("x1", "x2"): 0.0}
+    positions = _atom_positions(order, coupling)
+
+    d01 = abs(positions["x1"][0] - positions["x0"][0])
+    d12 = abs(positions["x2"][0] - positions["x1"][0])
+    assert d01 < d12, "coupled pair x0-x1 should be placed closer than uncoupled x1-x2"
+
+
+def test_atom_positions_first_variable_at_origin():
+    positions = _atom_positions(["x0", "x1"], {("x0", "x1"): 1.0})
+    assert positions["x0"] == (0.0, 0.0)
+
+
+# ── Open Quantum ImportError guard ────────────────────────────────────────
+
+def test_openquantum_import_error_with_helpful_message():
+    """run_openquantum raises ImportError with pip install hint when SDK is absent."""
+    encoding = _make_encoding(_TRIVIAL_QUBO)
+    saved = {k: sys.modules.pop(k) for k in list(sys.modules) if k.startswith("openquantum")}
+    try:
+        with unittest.mock.patch.dict("sys.modules", {"openquantum_sdk": None}):
+            with pytest.raises(ImportError, match="pip install"):
+                run_openquantum(encoding, client_id="a", client_secret="b")
+    finally:
+        sys.modules.update(saved)
+
+
+# ── Open Quantum circuit/parsing helpers (no SDK required) ───────────────
+
+def test_build_qasm_circuit_produces_valid_openqasm2():
+    qasm_text, depth = _build_qasm_circuit(_TRIVIAL_QUBO, ["q0", "q1"], reps=1)
+    assert qasm_text.startswith("OPENQASM 2.0;")
+    assert 'include "qelib1.inc";' in qasm_text
+    assert "measure" in qasm_text
+    assert isinstance(depth, int) and depth > 0
+
+
+def test_extract_counts_from_counts_key():
+    assert _extract_counts({"counts": {"00": 10, "11": 5}}) == {"00": 10, "11": 5}
+
+
+def test_extract_counts_from_bare_histogram():
+    assert _extract_counts({"01": 3, "10": 7}) == {"01": 3, "10": 7}
+
+
+def test_extract_counts_raises_on_unrecognized_shape():
+    with pytest.raises(RuntimeError, match="Could not find a bitstring counts histogram"):
+        _extract_counts({"foo": "bar"})

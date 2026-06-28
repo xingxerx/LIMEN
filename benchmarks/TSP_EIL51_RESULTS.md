@@ -1,7 +1,7 @@
 # TSP eil51 LIMEN Benchmark
 
-- **Date**: 2026-06-11
-- **Backend**: AerSimulator
+- **Date**: 2026-06-27
+- **Backend**: ibm_fez
 - **Sub-problem**: first 4 cities of eil51 (16 QUBO variables)
 - **Full eil51 reference**: 51 cities, classical optimal = 426
 - **QAOA**: p=1, β=γ=0.1, 1000 shots
@@ -32,13 +32,13 @@
 
 | Metric | Value |
 |--------|-------|
-| Circuit depth | N/A (exact enumeration — install qiskit-aer for QAOA circuit depth) |
-| Best QUBO energy | -7898.0000 |
-| Best tour | [3, 1, 2, 0] |
-| Best tour length | 102 |
+| Circuit depth | 780 |
+| Best QUBO energy | -5938.0000 |
+| Best tour | None |
+| Best tour length | N/A (infeasible) |
 | Classical sub-problem optimal | 102 |
-| Approximation ratio | 1.000 |
-| Feasible sample rate | 2.4% |
+| Approximation ratio | N/A (infeasible) |
+| Feasible sample rate | 0.0% |
 
 ## Notes
 
@@ -46,4 +46,4 @@
 - Gate model (IBM ibm_kingston): all Ising terms natively realizable
 - Lexicographic 1-to-1 embedding: compiled == target up to index relabelling
 
-*Raw JSON: `tsp_eil51_20260611_190912.json`*
+*Raw JSON: `tsp_eil51_20260627_004217.json`*
