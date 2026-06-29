@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-27T09:51:07.520090+00:00",
+  "generated_at": "2026-06-29T03:29:10.984388+00:00",
   "source": "live_query",
   "nodes": [
     {
@@ -46,7 +46,7 @@
       "modality": "superconducting",
       "num_qubits": 20,
       "status": "Online",
-      "accepting_jobs": false,
+      "accepting_jobs": true,
       "validated": false,
       "job_ids": []
     },
@@ -56,7 +56,7 @@
       "modality": "superconducting",
       "num_qubits": 54,
       "status": "Online",
-      "accepting_jobs": false,
+      "accepting_jobs": true,
       "validated": false,
       "job_ids": []
     },
@@ -65,8 +65,8 @@
       "provider": "Open Quantum",
       "modality": "trapped-ion",
       "num_qubits": 36,
-      "status": "Offline",
-      "accepting_jobs": false,
+      "status": "Online",
+      "accepting_jobs": true,
       "validated": false,
       "job_ids": []
     },

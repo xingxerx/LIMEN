@@ -1,0 +1,65 @@
+{
+  "demo": "vrp_nyc_landmarks",
+  "date": "2026-06-28",
+  "depot": "Empire State Building",
+  "num_customers": 23,
+  "num_vehicles": 3,
+  "backend": "dwave (local SimulatedAnnealingSampler)",
+  "reads": 1000,
+  "elapsed_seconds": 12.808320760726929,
+  "energy": -192454.8220611961,
+  "classical_optimal_energy": null,
+  "is_optimal": null,
+  "success_probability": 0.0,
+  "feasible": true,
+  "routes": [
+    {
+      "vehicle": 0,
+      "stops": [
+        "Empire State Building",
+        "Prospect Park / Grand Army Plaza",
+        "LaGuardia Airport",
+        "One World Trade Center",
+        "American Museum of Natural History",
+        "Flatiron Building",
+        "Rockefeller Center",
+        "Battery Park",
+        "Lincoln Center",
+        "Brooklyn Bridge",
+        "Chrysler Building",
+        "Empire State Building"
+      ],
+      "distance_km": 82.9698222557562
+    },
+    {
+      "vehicle": 1,
+      "stops": [
+        "Empire State Building",
+        "Coney Island / Luna Park",
+        "Madison Square Garden",
+        "Yankee Stadium",
+        "Empire State Building"
+      ],
+      "distance_km": 59.60081699320522
+    },
+    {
+      "vehicle": 2,
+      "stops": [
+        "Empire State Building",
+        "Brooklyn Museum",
+        "Union Square",
+        "Statue of Liberty",
+        "Metropolitan Museum of Art",
+        "Washington Square Park",
+        "Central Park / Bethesda Fountain",
+        "Grand Central Terminal",
+        "Times Square",
+        "Citi Field",
+        "High Line (South End)",
+        "Empire State Building"
+      ],
+      "distance_km": 78.22343626346247
+    }
+  ],
+  "total_distance_km": 220.7940755124239
+}
