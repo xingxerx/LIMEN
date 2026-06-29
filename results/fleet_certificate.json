@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-29T03:29:10.984388+00:00",
+  "generated_at": "2026-06-29T20:55:13.842022+00:00",
   "source": "live_query",
   "nodes": [
     {
@@ -96,7 +96,7 @@
       "modality": "superconducting",
       "num_qubits": 108,
       "status": "Online",
-      "accepting_jobs": true,
+      "accepting_jobs": false,
       "validated": true,
       "job_ids": [
         "c281a62f-52c1-43b5-9c25-93fc2e6258a2"

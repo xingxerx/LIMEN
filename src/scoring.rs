@@ -1,6 +1,50 @@
 use pyo3::prelude::*;
 use std::collections::HashMap;
 
+/// Rank QUBO variables by criticality for ECC patch-budget allocation.
+///
+/// Criticality of qubit `i` is the sum of `|weight|` over every QUBO
+/// term touching `i` (a linear term `i == j` contributes once, a
+/// quadratic term `i != j` contributes to both `i` and `j`). A qubit
+/// whose terms carry large penalty/coupling weight has more influence
+/// on the total energy, so a bit-flip there is more likely to land the
+/// solver in the wrong basin — making it a better candidate for
+/// surface-code protection when only a limited physical-qubit budget
+/// is available.
+///
+/// # Arguments
+/// * `qubo`   - QUBO terms as `[((var_i, var_j), weight)]`, the same
+///   `(var, var) -> weight` convention used throughout
+///   `limen.validator` / `limen.codesign` / `limen.backends`.
+/// * `n_vars` - Number of logical variables. Terms referencing an
+///   index `>= n_vars` are ignored.
+///
+/// # Returns
+/// `(qubit_idx, weight)` pairs covering every index in `0..n_vars`,
+/// sorted descending by weight. Qubits touched by no term get weight
+/// `0.0` and sort last.
+#[pyfunction]
+pub fn qubo_criticality(qubo: Vec<((usize, usize), f64)>, n_vars: usize) -> Vec<(usize, f64)> {
+    let mut weights = vec![0.0f64; n_vars];
+
+    for ((i, j), w) in &qubo {
+        if *i >= n_vars || *j >= n_vars {
+            continue;
+        }
+        let abs_w = w.abs();
+        if i == j {
+            weights[*i] += abs_w;
+        } else {
+            weights[*i] += abs_w;
+            weights[*j] += abs_w;
+        }
+    }
+
+    let mut ranked: Vec<(usize, f64)> = weights.into_iter().enumerate().collect();
+    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    ranked
+}
+
 /// Equilibrium score for a single Stackelberg iteration.
 #[pyclass]
 #[derive(Clone)]
