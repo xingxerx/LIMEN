@@ -7,14 +7,6 @@ use pyo3::prelude::*;
 /// the existing Python test suite, not re-derived here.
 #[pyclass]
 #[derive(Clone)]
-/// One logical qubit encoded in a rotated surface-code patch.
-///
-/// Mirrors `limen.ecc.surface_code.SurfaceCodePatch`. Porting the
-/// stabilizer construction here lets syndrome enumeration run in
-/// parallel across many patches with rayon, instead of the pure-Python
-/// per-patch loop.
-#[pyclass]
-#[derive(Clone, Debug)]
 pub struct SurfaceCodePatch {
     #[pyo3(get)]
     pub distance: usize,
@@ -30,7 +22,6 @@ pub struct SurfaceCodePatch {
     pub logical_z: Vec<usize>,
 }
 
-<<<<<<< HEAD
 #[pymethods]
 impl SurfaceCodePatch {
     fn __repr__(&self) -> String {
@@ -98,11 +89,4 @@ pub fn build_surface_code(distance: usize) -> SurfaceCodePatch {
         logical_x,
         logical_z,
     }
-=======
-/// TODO(ecc-patch-math): port `limen.ecc.surface_code.build_surface_code`
-/// (bulk/boundary stabilizer construction on a `distance x distance`
-/// grid). See the LIMEN build plan, step 3.
-pub fn build_surface_code(_distance: usize) -> SurfaceCodePatch {
-    todo!("port limen/ecc/surface_code.py::build_surface_code — see build plan step 3")
->>>>>>> c30c2045f9b8643e21ab04c0b1b711c73e81c672
 }
