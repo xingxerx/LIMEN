@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+use std::collections::HashMap;
 
 /// Equilibrium score for a single Stackelberg iteration.
 #[pyclass]
@@ -70,4 +71,38 @@ pub fn compute(
         iterations,
         kappa_std,
     }
+}
+
+/// Rank QUBO variables by criticality for QEC patch allocation.
+///
+/// Criticality is the sum of absolute penalty weights of every term
+/// touching a variable (its own linear bias plus all quadratic couplings
+/// it participates in). Higher criticality means the variable's value is
+/// more consequential to the objective, and is therefore a better
+/// candidate for error-corrected protection under a limited physical
+/// qubit budget.
+///
+/// # Arguments
+/// * `linear` - `(var_index, bias)` pairs.
+/// * `quadratic` - `(var_i, var_j, coupling)` pairs.
+///
+/// Returns `(var_index, criticality)` pairs sorted by descending
+/// criticality.
+#[pyfunction]
+pub fn qubo_criticality(
+    linear: Vec<(usize, f64)>,
+    quadratic: Vec<(usize, usize, f64)>,
+) -> Vec<(usize, f64)> {
+    let mut weights: HashMap<usize, f64> = HashMap::new();
+    for (i, bias) in linear {
+        *weights.entry(i).or_insert(0.0) += bias.abs();
+    }
+    for (i, j, coupling) in quadratic {
+        let w = coupling.abs();
+        *weights.entry(i).or_insert(0.0) += w;
+        *weights.entry(j).or_insert(0.0) += w;
+    }
+    let mut ranked: Vec<(usize, f64)> = weights.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    ranked
 }
