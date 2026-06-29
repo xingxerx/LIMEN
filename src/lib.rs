@@ -6,7 +6,6 @@ mod scoring;
 mod stackelberg;
 pub mod sim;
 pub mod analog;
-pub mod ecc;
 
 pub use scoring::EquilibriumScore;
 pub use stackelberg::StackelbergSolver;
@@ -23,7 +22,7 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_function(wrap_pyfunction!(sim::ising_backend::exact_ising_norm, m)?)?;
     m.add_function(wrap_pyfunction!(sim::ising_backend::qubo_energy_spectrum, m)?)?;
-    m.add_function(wrap_pyfunction!(scoring::qubo_criticality, m)?)?;
+    m.add_function(wrap_pyfunction!(sim::statevector_backend::run_statevector, m)?)?;
 
     let sim = PyModule::new_bound(m.py(), "sim")?;
     sim.add_class::<sim::ising_backend::IsingSimulator>()?;

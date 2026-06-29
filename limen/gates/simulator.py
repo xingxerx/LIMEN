@@ -84,6 +84,11 @@ def _apply_2q(state: list[complex], n: int, name: str, qubits: list[int]) -> Non
 def statevector(circuit: CircuitIR) -> list[complex]:
     """Return the final statevector of `circuit` starting from |0...0>.
 
+    Uses the `limen_core` Rust extension when available - the pure-Python
+    path below re-walks all `2^n` amplitudes per gate in interpreted
+    bytecode, which dominates runtime once n_qubits gets into the teens
+    (e.g. QAOA on a moderately sized QUBO).
+
     Raises:
         ValueError: If circuit.validate() reports any errors.
     """
@@ -92,6 +97,18 @@ def statevector(circuit: CircuitIR) -> list[complex]:
         raise ValueError(f"invalid CircuitIR: {errors}")
 
     n = circuit.n_qubits
+
+    try:
+        from limen_core import run_statevector as _rust_statevector
+
+        pairs = _rust_statevector(
+            [(ins.name, ins.qubits, ins.params) for ins in circuit.instructions],
+            n,
+        )
+        return [complex(re, im) for re, im in pairs]
+    except ImportError:
+        pass
+
     state: list[complex] = [0j] * (1 << n)
     state[0] = 1.0 + 0j
 
