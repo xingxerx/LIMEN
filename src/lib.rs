@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 
+mod cutting;
 mod delta;
 mod ecc;
 mod scoring;
@@ -49,6 +50,15 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecc.add_function(wrap_pyfunction!(ecc::selector::select_patches, &ecc)?)?;
     ecc.add_function(wrap_pyfunction!(ecc::remapper::remap_circuit, &ecc)?)?;
     m.add_submodule(&ecc)?;
+
+    let cutting = PyModule::new_bound(m.py(), "cutting")?;
+    cutting.add_class::<cutting::reconstruct::SubcircuitSampleCounts>()?;
+    cutting.add_class::<cutting::reconstruct::SampleCoefficient>()?;
+    cutting.add_function(wrap_pyfunction!(
+        cutting::reconstruct::reconstruct_expectation,
+        &cutting
+    )?)?;
+    m.add_submodule(&cutting)?;
 
     Ok(())
 }

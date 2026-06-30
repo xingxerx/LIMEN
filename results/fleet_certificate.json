@@ -9,7 +9,8 @@
       "num_qubits": 156,
       "validated": true,
       "job_ids": [
-        "d8vl8j1ropqc738cjvug"
+        "d8vl8j1ropqc738cjvug",
+        "d91euieu9n7c73amjlcg"
       ]
     },
     {
@@ -17,8 +18,10 @@
       "provider": "IBM Quantum Platform",
       "modality": "superconducting",
       "num_qubits": 156,
-      "validated": false,
-      "job_ids": []
+      "validated": true,
+      "job_ids": [
+        "d91epe6u9n7c73amjcmg"
+      ]
     },
     {
       "backend": "ibm_kingston",
@@ -105,7 +108,8 @@
   ],
   "summary": {
     "total_nodes": 9,
-    "validated_nodes": 3,
-    "total_physical_qubits": 734
+    "validated_nodes": 4,
+    "total_physical_qubits": 734,
+    "validated_physical_qubits": 576
   }
 }
