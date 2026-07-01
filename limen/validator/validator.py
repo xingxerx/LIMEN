@@ -96,6 +96,13 @@ def simulate_runs(
 
     Returns:
         A list of (assignment, energy) tuples, one per run.
+
+    Note:
+        Uses the limen_core Rust extension when built (bit flips and energy
+        evaluation both move out of interpreted Python — this is the hot
+        loop of the co-design iteration); otherwise falls back to the pure
+        Python loop below. Both paths are deterministic per seed, but their
+        RNG streams differ, so exact energies vary between backends.
     """
     rng = random.Random(seed)
     variables: list[str] = sorted({name for pair in qubo for name in pair})
@@ -105,6 +112,25 @@ def simulate_runs(
         base_assignment, _ = bf_result
     else:
         base_assignment = {v: rng.randint(0, 1) for v in variables}
+
+    try:
+        from limen_core import simulate_qubo_runs as _rust_simulate
+    except ImportError:
+        _rust_simulate = None
+
+    if _rust_simulate is not None:
+        index_of = {name: idx for idx, name in enumerate(variables)}
+        indexed_terms = [
+            ((index_of[i], index_of[j]), w) for (i, j), w in qubo.items()
+        ]
+        base_bits = [base_assignment[v] for v in variables]
+        assignments, energies = _rust_simulate(
+            indexed_terms, base_bits, n_runs, noise_level, seed
+        )
+        return [
+            (dict(zip(variables, bits)), energy)
+            for bits, energy in zip(assignments, energies)
+        ]
 
     results: list[tuple[dict[str, int], float]] = []
     for _ in range(n_runs):

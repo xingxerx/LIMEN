@@ -161,6 +161,16 @@ The inner scoring loop (`StackelbergSolver.solve`, `compute`, `compute_stability
 
 The PyO3 boundary is thin. What crosses from Python to Rust: `Vec<f64>` for confidence, energy, and chain-break histories; `f64` for chain strength and learning rate; `usize` for iteration counts. What stays on the Python side: the `PhysicalEncoding` dataclass, the `LogicalGraph` IR, and all recompilation logic. Rust owns the scoring function and convergence decision; Python owns the compilation and the loop structure. This division means the Rust extension is optional — if `limen_core` is not built, `run_codesign` raises `ImportError` cleanly and the rest of the library continues to function.
 
+The same Rust-first / Python-fallback split now covers every enumeration- or sampling-shaped hot loop in the library, not just the scoring function. Each of these is a `try: from limen_core import ... / except ImportError:` fast path in front of a pure-Python reference implementation that produces equivalent output:
+
+- `qubo_energy_spectrum` — the shared O(2^n) brute-force QUBO enumeration behind `validator.brute_force_solve`, `codesign._second_best_energy`, and the Qiskit backend's exact solver.
+- `simulate_qubo_runs` — the validator's noisy-run simulation (`validator.simulate_runs`): bit flips from a seeded SplitMix64 stream plus per-run QUBO energy evaluation, parallelised with rayon. Deterministic per seed, but its RNG stream differs from the Python fallback's Mersenne Twister, so exact energies differ between backends (both are valid samples of the same noise model).
+- `build_ecc_lookup_table` / `logical_failure_probability` — the 2^n X-error enumerations behind `ecc.decoder.LookupDecoder` and `ecc.certificate.certify_logical_qubit`, bitmask-based and identical to the Python reference down to equal-weight tie-breaking. This moves distance-5 lookup decoding (2^25 patterns) from intractable-in-Python to seconds.
+- `vrp_qubo_terms` — the O(n^3) one-hot QUBO term construction behind `frontends.vrp.vrp_qubo`, returning the finished Python dict directly (one cached `PyString` per variable) because at ~300k terms the Python-object boundary, not the arithmetic, is the cost to beat.
+- `run_statevector` and the `exact_ising_norm` / delta-correction functions, which predate this list and follow the same pattern.
+
+What deliberately stays Python: hardware SDK adapters (`limen.backends.*`, `limen.gates.qiskit_exec` — thin glue over Qiskit/D-Wave/Braket APIs, no compute of their own), the gRPC distributed layer (`limen.distributed`), pipeline orchestration, and the IR dataclasses. Those are I/O-bound or API-bound; porting them would add build complexity without measurable speedup.
+
 ---
 
 ## Invariants
@@ -171,6 +181,6 @@ These are the architectural invariants that must never be violated:
 1. **IR isolation.** The `LogicalGraph` IR knows nothing about hardware topology. The compiler knows everything. The boundary between them is hard.
 2. **Honest bounds.** Confidence bounds are always reported, never suppressed or rounded up. If a confidence value cannot be computed, it is `None`, not `1.0`.
 3. **Optional SDKs.** All hardware SDK dependencies (`dwave-ocean-sdk`, `qiskit`, `pyqubo`) are optional at import time. A bare `import limen` with none of these installed must succeed.
-4. **Optional Rust.** The `limen_core` Rust extension is optional at import time. All functionality except the Stackelberg co-design loop is available without it.
+4. **Optional Rust.** The `limen_core` Rust extension is optional at import time. All functionality is available without it via pure-Python fallbacks; the extension only changes speed (and, for seeded simulation, the RNG stream), never behavior.
 5. **License hygiene.** Apache 2.0 throughout. No copyleft dependencies. The patent grant clause is intentional.
 6. **Optional distributed deps.** `grpcio`/`grpcio-tools`/`protobuf` are only required by `limen.distributed` (the `distributed` extra). A bare `import limen` with none of these installed must succeed.

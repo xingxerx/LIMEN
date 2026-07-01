@@ -3,8 +3,10 @@ use pyo3::prelude::*;
 mod cutting;
 mod delta;
 mod ecc;
+mod frontends;
 mod scoring;
 mod stackelberg;
+mod validator;
 pub mod sim;
 pub mod analog;
 
@@ -25,6 +27,10 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sim::ising_backend::exact_ising_norm, m)?)?;
     m.add_function(wrap_pyfunction!(sim::ising_backend::qubo_energy_spectrum, m)?)?;
     m.add_function(wrap_pyfunction!(sim::statevector_backend::run_statevector, m)?)?;
+    m.add_function(wrap_pyfunction!(validator::simulate_qubo_runs, m)?)?;
+    m.add_function(wrap_pyfunction!(frontends::vrp_qubo_terms, m)?)?;
+    m.add_function(wrap_pyfunction!(ecc::decoder::build_ecc_lookup_table, m)?)?;
+    m.add_function(wrap_pyfunction!(ecc::decoder::logical_failure_probability, m)?)?;
 
     let sim = PyModule::new_bound(m.py(), "sim")?;
     sim.add_class::<sim::ising_backend::IsingSimulator>()?;

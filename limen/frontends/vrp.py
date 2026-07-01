@@ -94,6 +94,12 @@ def vrp_qubo(
         A tuple of (qubo dict, customer_ids) where customer_ids maps
         augmented customer node index back to the original coordinate
         index, for use with ``decode_routes``.
+
+    Note:
+        Uses the limen_core Rust extension when built — the O(n^3) term
+        accumulation below dominates frontend time in interpreted Python
+        once instances reach benchmark scale. The two paths produce
+        identical QUBO dicts.
     """
     if num_vehicles < 1:
         raise ValueError("num_vehicles must be at least 1")
@@ -106,6 +112,14 @@ def vrp_qubo(
     )
     if penalty_a is None:
         penalty_a = penalty_b * max_dist * n * 5
+
+    try:
+        from limen_core import vrp_qubo_terms as _rust_terms
+    except ImportError:
+        _rust_terms = None
+
+    if _rust_terms is not None:
+        return _rust_terms(dist, penalty_a, penalty_b), customer_ids
 
     qubo: dict[tuple[str, str], float] = {}
 

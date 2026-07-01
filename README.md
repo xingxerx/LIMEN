@@ -67,7 +67,7 @@ To help navigate the files and components of LIMEN, see the [Directory Map](DIRE
              ▼                                        ▼
 ┌────────────────────────────┐        ┌─────────────────────────────┐
 │ PROBABILISTIC VALIDATOR    │        │ STATEVECTOR SIMULATOR       │
-│ Brute-force ≤ 20 vars      │        │ Exact · pure-Python         │
+│ Brute-force ≤ 20 vars      │        │ Exact · Rust-backed         │
 │ Confidence bounds          │        │ No sampling noise           │
 └────┬───────────────────────┘        └──────────────┬──────────────┘
      │                                               │  probs + solution
@@ -307,6 +307,20 @@ measure real round-trip latency against the qubit's T2 coherence time
 
 **First real hardware validation: IBM ibm_kingston (Heron R2, 156 qubits),
 June 9 2026. Benchmark results in benchmarks/RESULTS.md.**
+
+**Rust acceleration layer (v0.8.x):** every enumeration- or sampling-shaped
+hot loop in the library is now Rust-backed via the `limen_core` PyO3
+extension, each behind a `try: from limen_core import ...` fast path with an
+equivalent pure-Python fallback: QUBO spectrum enumeration, the validator's
+noisy-run simulation (`simulate_qubo_runs`, rayon-parallel), surface-code
+lookup-table construction and logical-error certification
+(`build_ecc_lookup_table` / `logical_failure_probability` — distance-5
+decoding drops from intractable-in-Python to seconds), the VRP one-hot QUBO
+builder (`vrp_qubo_terms`), statevector simulation, κ scoring, and the
+analog delta corrections. The full test suite runs ~8x faster with the
+extension built; hardware SDK adapters, the gRPC distributed layer, and
+pipeline orchestration deliberately stay Python (I/O-bound glue, no compute
+of their own). Build with `maturin develop --release`.
 
 **Circuit cutting (gate-model, not yet reflected elsewhere in this README):**
 `limen/cutting` + the Rust `limen_core::cutting` module split a wide circuit

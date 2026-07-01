@@ -38,17 +38,33 @@ class LookupDecoder:
     def __init__(self, patch: SurfaceCodePatch) -> None:
         """Build the lookup table by exhaustive enumeration over all X-error patterns.
 
+        Uses the limen_core Rust extension when built (the 2^n enumeration
+        with per-pattern syndrome computation is the entire cost of
+        constructing a decoder); otherwise falls back to the pure-Python
+        loop. Both paths produce an identical table, including
+        equal-weight tie-breaking.
+
         Args:
             patch: The SurfaceCodePatch to decode for.
         """
         self.patch = patch
         n = len(patch.data_qubits)
         table: dict[tuple[int, ...], tuple[int, ...]] = {}
-        for bits in product((0, 1), repeat=n):
-            syndrome = compute_syndrome(bits, patch.z_stabilizers)
-            current = table.get(syndrome)
-            if current is None or _weight(bits) < _weight(current):
-                table[syndrome] = bits
+
+        try:
+            from limen_core import build_ecc_lookup_table as _rust_table
+        except ImportError:
+            _rust_table = None
+
+        if _rust_table is not None:
+            for syndrome_bits, error_bits in _rust_table(n, patch.z_stabilizers):
+                table[tuple(syndrome_bits)] = tuple(error_bits)
+        else:
+            for bits in product((0, 1), repeat=n):
+                syndrome = compute_syndrome(bits, patch.z_stabilizers)
+                current = table.get(syndrome)
+                if current is None or _weight(bits) < _weight(current):
+                    table[syndrome] = bits
         self._table = table
         self._n = n
 
