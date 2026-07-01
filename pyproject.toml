@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "limen"
-version = "0.8.1"
+version = "0.8.2"
 description = "A physics-aware compiler stack for translating classical optimization problems into native quantum and analog substrates."
 readme = "README.md"
 license = {file = "LICENSE"}
