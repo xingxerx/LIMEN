@@ -49,11 +49,16 @@ except ModuleNotFoundError:
 from limen import compile_lexicographic, default_hardware_graph, from_qubo_dict
 from limen.analog.certificate import certify_ising
 from limen.backends.qiskit_backend import (
+    _bits_to_assignment,
+    _build_qaoa_ansatz,
+    _ideal_distribution,
+    _qubo_energy,
     _qubo_to_ising,
     run_qiskit,
     run_qiskit_qpu,
 )
 from limen.codesign.solver import run_codesign
+from limen.qubo_spectrum import qubo_energy_spectrum
 from limen.validator.validator import validate
 
 _BACKEND_NAME = "ibm_kingston"
@@ -227,6 +232,108 @@ def _qubo_to_int_ising(
 
 
 # ---------------------------------------------------------------------------
+# QAOA parameter tuning (COBYLA against the noiseless Aer statevector)
+# ---------------------------------------------------------------------------
+
+def _ideal_optimal_rate(
+    qubo: dict[tuple[str, str], float],
+    variables: list[str],
+    reps: int,
+    cost_scale: float,
+    params: list[float],
+    optimal_energy: float,
+) -> float:
+    """Noiseless probability mass on QUBO-optimal bitstrings for a QAOA param vector."""
+    ansatz = _build_qaoa_ansatz(qubo, variables, reps, cost_scale)
+    dist = _ideal_distribution(ansatz, params)
+    if not dist:
+        return 0.0
+    rate = 0.0
+    for bs, p in dist.items():
+        energy = _qubo_energy(qubo, _bits_to_assignment(bs, variables))
+        if abs(energy - optimal_energy) < 1e-9:
+            rate += p
+    return rate
+
+
+def tune_qaoa_params(
+    qubo: dict[tuple[str, str], float],
+    variables: list[str],
+    reps: int,
+    cost_scale: float,
+) -> tuple[list[float], float, float]:
+    """Optimize QAOA beta/gamma with COBYLA against the noiseless Aer statevector.
+
+    Replaces the fixed, unoptimized beta=gamma=0.1 initial guess with
+    parameters chosen to maximize the ideal (noiseless) probability of
+    sampling a QUBO-optimal bitstring. This is zero-QPU-cost tuning: it
+    only touches the Aer statevector simulator, then the tuned parameters
+    are reused for the real hardware submission.
+
+    Returns:
+        A (tuned_params, baseline_rate, tuned_rate) tuple. If the problem
+        is too large for exact enumeration (>20 variables) or noiseless
+        statevector simulation (>24 qubits), tuning is skipped and the
+        flat 0.1 baseline is returned unchanged.
+    """
+    n_params = 2 * reps
+    flat_params = [0.1] * n_params
+
+    spectrum = qubo_energy_spectrum(qubo)
+    if spectrum is None or len(variables) > 24:
+        return flat_params, 0.0, 0.0
+
+    optimal_energy = spectrum.best_energy
+    baseline_rate = _ideal_optimal_rate(
+        qubo, variables, reps, cost_scale, flat_params, optimal_energy
+    )
+
+    # These TSP QUBOs carry large constraint-penalty coefficients (chain
+    # strength in the thousands), so gamma=0.1 rotates the cost phase by
+    # O(1000) radians -- effectively randomizing it rather than encoding
+    # the cost landscape. Seed COBYLA from a gamma scaled to the
+    # Hamiltonian's coefficient magnitude instead of the flat default, so
+    # the initial rotation is O(1) radians.
+    h, j_coeffs = _qubo_to_ising(qubo)
+    coeff_magnitudes = [abs(w) for w in h.values()] + [abs(w) for w in j_coeffs.values()]
+    scale = max(coeff_magnitudes) if coeff_magnitudes else 1.0
+    scale *= cost_scale
+    gamma0 = 1.0 / scale if scale > 0 else 0.1
+    beta0 = 0.3927  # pi/8, a standard QAOA mixer starting angle
+
+    ansatz_param_names = [p.name for p in _build_qaoa_ansatz(qubo, variables, reps, cost_scale).parameters]
+    x0 = [gamma0 if name.startswith("γ") else beta0 for name in ansatz_param_names]
+    scaled_baseline_rate = _ideal_optimal_rate(
+        qubo, variables, reps, cost_scale, x0, optimal_energy
+    )
+
+    from scipy.optimize import minimize
+
+    def objective(x: list[float]) -> float:
+        rate = _ideal_optimal_rate(
+            qubo, variables, reps, cost_scale, list(x), optimal_energy
+        )
+        return -rate  # COBYLA minimizes; we want to maximize the optimal rate
+
+    result = minimize(
+        objective, x0, method="COBYLA",
+        options={"maxiter": 200, "rhobeg": max(gamma0, beta0) * 0.5},
+    )
+    tuned_params = list(result.x)
+    tuned_rate = _ideal_optimal_rate(
+        qubo, variables, reps, cost_scale, tuned_params, optimal_energy
+    )
+
+    # Keep whichever candidate (flat, scaled seed, or COBYLA-tuned) is best.
+    best_params, best_rate = flat_params, baseline_rate
+    if scaled_baseline_rate > best_rate:
+        best_params, best_rate = x0, scaled_baseline_rate
+    if tuned_rate > best_rate:
+        best_params, best_rate = tuned_params, tuned_rate
+    return best_params, baseline_rate, best_rate
+
+
+# ---------------------------------------------------------------------------
 # Main benchmark
 # ---------------------------------------------------------------------------
 
@@ -288,18 +395,18 @@ def main() -> None:
     coords = EIL51_COORDS[:n_cities]
     dist = _distance_matrix(coords)
 
-    print(f"[1/6] Building TSP QUBO for {n_cities} cities ...")
+    print(f"[1/7] Building TSP QUBO for {n_cities} cities ...")
     qubo = tsp_qubo(dist)
     print(f"      QUBO size: {len(qubo)} terms, {n_vars} variables")
 
     # ── 2. Classical brute-force optimum ─────────────────────────────────
-    print(f"[2/6] Computing classical optimal tour by brute force ...")
+    print(f"[2/7] Computing classical optimal tour by brute force ...")
     classical_opt_len, classical_opt_tour = _classical_optimal_tour(dist)
     print(f"      Classical optimal tour length: {classical_opt_len}")
     print(f"      Classical optimal tour       : {classical_opt_tour}")
 
     # ── 3. LIMEN compilation ─────────────────────────────────────────────
-    print(f"[3/6] Compiling through LIMEN (lexicographic + Stackelberg) ...")
+    print(f"[3/7] Compiling through LIMEN (lexicographic + Stackelberg) ...")
     graph = from_qubo_dict(qubo)
     encoding = compile_lexicographic(graph, default_hardware_graph(n_vars))
     print(f"      Logical vars  : {len(graph.variables)}")
@@ -320,7 +427,7 @@ def main() -> None:
     encoding = cd.encoding  # use the co-design-optimised encoding
 
     # ── 4. CompilationCertificate ────────────────────────────────────────
-    print(f"[4/6] Generating CompilationCertificate ...")
+    print(f"[4/7] Generating CompilationCertificate ...")
     target_h, target_J, var_idx = _qubo_to_int_ising(qubo)
 
     # The lexicographic compiler does a 1-to-1 embedding: logical var x_{i}_{t}
@@ -365,10 +472,23 @@ def main() -> None:
     else:
         print(f"      Exact operator norm     : N/A (n_sites={n_vars} > 20)")
 
-    # ── 5. QPU / simulator run ───────────────────────────────────────────
+    # ── 5. QAOA parameter tuning (COBYLA vs. noiseless Aer statevector) ────
+    print(f"[5/7] Tuning QAOA beta/gamma against the noiseless Aer statevector ...")
+    tune_variables: list[str] = sorted({name for pair in encoding.qubo for name in pair})
+    tuned_params, baseline_rate, tuned_rate = tune_qaoa_params(
+        encoding.qubo, tune_variables, _REPS, cd.kappa
+    )
+    if tuned_rate > 0.0 or baseline_rate > 0.0:
+        print(f"      Baseline (beta=gamma=0.1) ideal optimal rate: {baseline_rate * 100:.2f}%")
+        print(f"      Tuned ideal optimal rate                    : {tuned_rate * 100:.2f}%")
+        print(f"      Tuned params: {[round(p, 4) for p in tuned_params]}")
+    else:
+        print(f"      Problem too large for exact tuning ({n_vars} vars) — using fixed beta=gamma=0.1")
+
+    # ── 6. QPU / simulator run ───────────────────────────────────────────
     sim_label = "AerSimulator (qaoa)" if args.algorithm != "exact" else "exact enumeration"
     run_label = args.backend if qpu_enabled else sim_label
-    print(f"[5/6] Running QAOA on {run_label} ...")
+    print(f"[6/7] Running QAOA on {run_label} ...")
     t0 = time.time()
     if qpu_enabled:
         assert token is not None and crn is not None  # narrowed above by qpu_enabled check
@@ -381,6 +501,7 @@ def main() -> None:
             reps=_REPS,
             cost_scale=cd.kappa,
             timeout=args.timeout,
+            params=tuned_params,
         )
         job_id = qr.metadata.get("job_id")
         print(f"      Job id: {job_id}")
@@ -400,6 +521,7 @@ def main() -> None:
             algorithm=sim_algorithm,
             reps=_REPS,
             seed=42,
+            params=tuned_params if sim_algorithm == "qaoa" else None,
         )
         job_id = None
     elapsed = time.time() - t0
@@ -412,8 +534,8 @@ def main() -> None:
     print(f"      Circuit depth: {depth_str}")
     print(f"      Best QUBO energy: {qr.best_energy:.4f}")
 
-    # ── 6. Tour interpretation and comparison ────────────────────────────
-    print(f"[6/6] Interpreting results ...")
+    # ── 7. Tour interpretation and comparison ────────────────────────────
+    print(f"[7/7] Interpreting results ...")
     # Remap physical qubit labels back to logical variable names (x_{i}_{t})
     # before decoding, since the lexicographic compiler renamed them.
     best_logical = _remap_to_logical(qr.best_assignment, encoding.embedding)
@@ -465,6 +587,12 @@ def main() -> None:
             "kappa_iterations": cd.iterations,
         },
         "certificate": cert.to_dict(),
+        "qaoa_tuning": {
+            "method": "COBYLA vs. noiseless Aer statevector",
+            "baseline_ideal_optimal_rate": baseline_rate,
+            "tuned_ideal_optimal_rate": tuned_rate,
+            "tuned_params": tuned_params,
+        },
         "qpu_run": {
             "backend": args.backend if qpu_enabled else "aer_simulator",
             "shots": shots,
@@ -501,7 +629,12 @@ def main() -> None:
         f"- **Backend**: {qpu_or_sim}",
         f"- **Sub-problem**: first {n_cities} cities of eil51 ({n_vars} QUBO variables)",
         f"- **Full eil51 reference**: {EIL51_N_CITIES} cities, classical optimal = {EIL51_OPTIMAL_TOUR_LENGTH}",
-        f"- **QAOA**: p={_REPS}, β=γ=0.1, {shots} shots",
+        f"- **QAOA**: p={_REPS}, {shots} shots, "
+        + (
+            f"tuned params={[round(p, 4) for p in tuned_params]}"
+            if tuned_rate > 0.0 or baseline_rate > 0.0
+            else "β=γ=0.1 (tuning skipped — problem too large)"
+        ),
         "",
         "## Compilation",
         "",
@@ -513,6 +646,15 @@ def main() -> None:
         f"| Validator confidence | {vr.confidence * 100:.1f}% |",
         f"| Target κ | {args.target_kappa:.2f} |",
         f"| Stackelberg κ | {cd.kappa:.4f} (converged={cd.converged}, iters={cd.iterations}) |",
+        "",
+        "## QAOA Parameter Tuning",
+        "",
+        f"| Metric | Value |",
+        f"|--------|-------|",
+        f"| Method | COBYLA vs. noiseless Aer statevector |",
+        f"| Baseline (β=γ=0.1) ideal optimal rate | {baseline_rate * 100:.2f}% |",
+        f"| Tuned ideal optimal rate | {tuned_rate * 100:.2f}% |",
+        f"| Tuned params | {[round(p, 4) for p in tuned_params]} |",
         "",
         "## Compilation Certificate",
         "",
