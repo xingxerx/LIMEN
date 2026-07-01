@@ -261,7 +261,7 @@ under ELv2.
 
 ## Status
 
-**v0.5.0 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Phase 4 complete · Phase 5 complete · Hardware validated.**
+**v0.8.1 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Phase 4 complete · Phase 5 complete · Hardware validated.**
 Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend
 adapters shipped and tested. Stackelberg co-design loop operational with
 Rust-backed κ scoring, stability-penalised learning rate, and portfolio
@@ -276,11 +276,17 @@ not an inactive feature.
 Analog interface layer implemented: classical Ising simulator (exact
 diagonalisation, ≤20 sites), neutral-atom heuristic backend (van der Waals
 layout, Rydberg parameters), photonic GBS backend (Arrazola-Bromley adjacency
-encoding), HardwareDeltaModel calibration layer.
-Pure-Python fallback for all Rust-backed paths. Restricted-class universality
-results (Theorems 1-5) documented in `limen/docs/universality_theorem.md`;
-a fully general universality theorem for arbitrary analog Hamiltonians
-remains open research and is not claimed.
+encoding), HardwareDeltaModel calibration layer (per-site detuning, per-pair
+coupling, and global Rabi-drive correction, each with a pure-Python fallback
+alongside the Rust-backed implementation). The neutral-atom geometric
+embeddability check (Theorem 2 geometry condition) likewise always runs —
+numpy when available, a pure-Python Jacobi eigenvalue fallback otherwise —
+consistent with LIMEN's zero-mandatory-dependency core (`dependencies = []`
+in `pyproject.toml`). Restricted-class universality results (Theorems 1-5)
+documented in `limen/docs/universality_theorem.md`; a fully general
+universality theorem for arbitrary (non-diagonal, time-dependent) analog
+Hamiltonians remains open research and is not claimed — nor is off-diagonal
+(X/Y) or time-dependent Hamiltonian support yet implemented in any backend.
 
 **Gate-model track fully operational**: QUBO → QAOA compilation → exact
 statevector simulation → surface-code (d=3) ECC syndrome extraction and
@@ -302,8 +308,16 @@ measure real round-trip latency against the qubit's T2 coherence time
 **First real hardware validation: IBM ibm_kingston (Heron R2, 156 qubits),
 June 9 2026. Benchmark results in benchmarks/RESULTS.md.**
 
-233 tests passing, 8 skipped (skips are environment-gated: D-Wave Ocean SDK
-not installed in this dev environment). Zero regressions.
+**Circuit cutting (gate-model, not yet reflected elsewhere in this README):**
+`limen/cutting` + the Rust `limen_core::cutting` module split a wide circuit
+into sub-circuits via quasi-probability decomposition and reconstruct the
+original expectation value from real per-subcircuit sampler counts
+(`limen/cutting/dispatch.py`, `limen/cutting/reconstruct.py`,
+`src/cutting/reconstruct.rs`). Validated end-to-end against a plain
+AerSimulator run in `examples/cutting_smoke_test.py`.
+
+323 tests passing, 3 skipped (skips are environment-gated: optional SDKs not
+installed in this dev environment). Zero regressions.
 
 If you are building in this space and want to collaborate, open an issue.
 

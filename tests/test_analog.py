@@ -10,10 +10,19 @@ All tests run offline — no external hardware or SDK dependencies required.
 
 import pytest
 
+import math
+
 from limen import compile_lexicographic, default_hardware_graph, from_qubo_dict
 from limen.analog.backends.classical_sim import IsingSimulationResult, run_ising_simulation
-from limen.analog.backends.neutral_atom import NeutralAtomResult, run_neutral_atom
+from limen.analog.backends.neutral_atom import (
+    NeutralAtomResult,
+    _C6_MHZ_UM6,
+    _jacobi_eigenvalues,
+    check_geometric_embeddability,
+    run_neutral_atom,
+)
 from limen.analog.backends.photonic import PhotonicResult, run_photonic
+from limen.analog.delta_model import DeviceDrift, HardwareDeltaModel
 from limen.analog.hamiltonian import (
     HamiltonianIR,
     HamiltonianTerm,
@@ -144,6 +153,133 @@ def test_run_neutral_atom_includes_simulation():
     result = run_neutral_atom(ir)
     assert result.simulation is not None
     assert isinstance(result.simulation, IsingSimulationResult)
+
+
+def test_run_neutral_atom_applies_rabi_correction():
+    encoding = _make_encoding()
+    ir = from_physical_encoding(encoding, substrate=SubstrateType.NEUTRAL_ATOM)
+    drift = DeviceDrift(global_rabi_error=0.25)
+    model = HardwareDeltaModel(
+        device_id="dev-rabi-neutral-atom",
+        substrate=SubstrateType.NEUTRAL_ATOM,
+        drift=drift,
+        n_sites=ir.n_sites,
+    )
+    baseline = run_neutral_atom(ir)
+    corrected = run_neutral_atom(ir, delta_model=model)
+    assert baseline.rabi_frequency == pytest.approx(1.0)
+    assert corrected.rabi_frequency == pytest.approx(1.0 / 1.25)
+    assert corrected.metadata["rabi_frequency_mhz"] == pytest.approx(corrected.rabi_frequency)
+
+
+def test_run_neutral_atom_no_delta_model_uses_default_rabi():
+    encoding = _make_encoding()
+    ir = from_physical_encoding(encoding, substrate=SubstrateType.NEUTRAL_ATOM)
+    result = run_neutral_atom(ir)
+    assert result.rabi_frequency == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Geometric embeddability check (Theorem 2 geometry condition) and its
+# pure-Python Jacobi eigenvalue fallback for environments without numpy.
+# ---------------------------------------------------------------------------
+
+def test_jacobi_eigenvalues_matches_known_2x2():
+    # [[2, 1], [1, 2]] has eigenvalues 1 and 3.
+    eigvals = sorted(_jacobi_eigenvalues([[2.0, 1.0], [1.0, 2.0]]))
+    assert eigvals == pytest.approx([1.0, 3.0])
+
+
+def test_jacobi_eigenvalues_matches_diagonal_matrix():
+    eigvals = sorted(_jacobi_eigenvalues([[5.0, 0.0, 0.0], [0.0, -2.0, 0.0], [0.0, 0.0, 3.0]]))
+    assert eigvals == pytest.approx([-2.0, 3.0, 5.0])
+
+
+def test_check_geometric_embeddability_no_positive_couplings():
+    result = check_geometric_embeddability({})
+    assert result.checked is False
+    assert result.embeddable is True
+
+
+def test_check_geometric_embeddability_trivial_triangle():
+    # 3 constrained sites always lie in a plane.
+    target_J = {(0, 1): 1.0, (1, 2): 1.0, (0, 2): 1.0}
+    result = check_geometric_embeddability(target_J)
+    assert result.checked is False
+    assert result.embeddable is True
+    assert result.n_constrained_sites == 3
+
+
+def _square_positions() -> list[tuple[float, float]]:
+    return [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+
+
+def _target_j_from_positions(
+    positions: list[tuple[float, float]], pairs: list[tuple[int, int]], c6: float = _C6_MHZ_UM6
+) -> dict[tuple[int, int], float]:
+    """Build target_J so the required distance for each pair matches the actual
+    Euclidean distance between the given 2-D positions exactly."""
+    target_j: dict[tuple[int, int], float] = {}
+    for i, j in pairs:
+        dx = positions[i][0] - positions[j][0]
+        dy = positions[i][1] - positions[j][1]
+        d = math.hypot(dx, dy)
+        target_j[(i, j)] = c6 / (4.0 * d**6)
+    return target_j
+
+
+def test_check_geometric_embeddability_flat_square_is_embeddable():
+    positions = _square_positions()
+    all_pairs = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
+    target_j = _target_j_from_positions(positions, all_pairs)
+    result = check_geometric_embeddability(target_j)
+    assert result.checked is True
+    assert result.psd_satisfied is True
+    assert result.embeddable is True
+    assert result.gram_rank is not None and result.gram_rank <= 2
+
+
+def test_check_geometric_embeddability_regular_tetrahedron_is_not_embeddable():
+    # 4 sites with all six pairwise distances equal require a 3-D embedding
+    # (regular tetrahedron) -- not achievable in a 2-D atom array.
+    target_j = {
+        (0, 1): 1.0, (0, 2): 1.0, (0, 3): 1.0,
+        (1, 2): 1.0, (1, 3): 1.0, (2, 3): 1.0,
+    }
+    result = check_geometric_embeddability(target_j)
+    assert result.checked is True
+    assert result.embeddable is False
+    assert result.gram_rank == 3
+
+
+def test_check_geometric_embeddability_pure_python_matches_numpy():
+    positions = _square_positions()
+    all_pairs = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
+    target_j = _target_j_from_positions(positions, all_pairs)
+
+    numpy_result = check_geometric_embeddability(target_j)
+
+    import builtins
+    real_import = builtins.__import__
+
+    def _blocked_numpy_import(name, *args, **kwargs):
+        if name == "numpy":
+            raise ImportError("numpy blocked for this test")
+        return real_import(name, *args, **kwargs)
+
+    builtins.__import__ = _blocked_numpy_import
+    try:
+        pure_python_result = check_geometric_embeddability(target_j)
+    finally:
+        builtins.__import__ = real_import
+
+    assert pure_python_result.checked is True
+    assert pure_python_result.embeddable == numpy_result.embeddable
+    assert pure_python_result.psd_satisfied == numpy_result.psd_satisfied
+    assert pure_python_result.gram_rank == numpy_result.gram_rank
+    assert pure_python_result.gram_min_eigenvalue == pytest.approx(
+        numpy_result.gram_min_eigenvalue, abs=1e-6
+    )
 
 
 def test_run_photonic_returns_result():

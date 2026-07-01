@@ -215,3 +215,60 @@ def test_apply_coupling_correction_matches_fallback():
     }
     for key in couplings:
         assert rust_result[key] == pytest.approx(fallback[key])
+
+
+# ---------------------------------------------------------------------------
+# Test 13: apply_rabi_correction divides by (1 + global_rabi_error)
+# ---------------------------------------------------------------------------
+
+def test_apply_rabi_correction():
+    drift = DeviceDrift(global_rabi_error=0.1)
+    model = HardwareDeltaModel(
+        device_id="dev-rabi",
+        substrate=SubstrateType.NEUTRAL_ATOM,
+        drift=drift,
+        n_sites=2,
+    )
+    assert model.apply_rabi_correction(1.1) == pytest.approx(1.0)  # 1.1 / 1.1
+
+
+# ---------------------------------------------------------------------------
+# Test 14: apply_rabi_correction is a no-op for a zero-drift (identity) model
+# ---------------------------------------------------------------------------
+
+def test_apply_rabi_correction_identity_is_noop():
+    model = HardwareDeltaModel.identity("dev-rabi-id", SubstrateType.NEUTRAL_ATOM, 2)
+    assert model.apply_rabi_correction(1.0) == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Test 15: apply_rabi_correction matches pure Python fallback
+# ---------------------------------------------------------------------------
+
+def test_apply_rabi_correction_matches_fallback():
+    drift = DeviceDrift(global_rabi_error=0.25)
+    model = HardwareDeltaModel(
+        device_id="dev-rust-rabi",
+        substrate=SubstrateType.NEUTRAL_ATOM,
+        drift=drift,
+        n_sites=2,
+    )
+    rust_result = model.apply_rabi_correction(2.0)
+    fallback = 2.0 / max(1.0 + drift.global_rabi_error, 0.01)
+    assert rust_result == pytest.approx(fallback)
+
+
+# ---------------------------------------------------------------------------
+# Test 16: apply_rabi_correction denominator clamps for extreme negative error
+# ---------------------------------------------------------------------------
+
+def test_apply_rabi_correction_clamps_denominator():
+    drift = DeviceDrift(global_rabi_error=-2.0)  # would give (1 - 2.0) = -1.0
+    model = HardwareDeltaModel(
+        device_id="dev-rabi-clamp",
+        substrate=SubstrateType.NEUTRAL_ATOM,
+        drift=drift,
+        n_sites=2,
+    )
+    corrected = model.apply_rabi_correction(1.0)
+    assert corrected == pytest.approx(1.0 / 0.01)

@@ -19,6 +19,7 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<scoring::EquilibriumScore>()?;
     m.add_function(wrap_pyfunction!(delta::apply_detuning_correction, m)?)?;
     m.add_function(wrap_pyfunction!(delta::apply_coupling_correction, m)?)?;
+    m.add_function(wrap_pyfunction!(delta::apply_rabi_correction, m)?)?;
     m.add_function(wrap_pyfunction!(scoring::qubo_criticality, m)?)?;
 
     m.add_function(wrap_pyfunction!(sim::ising_backend::exact_ising_norm, m)?)?;

@@ -23,11 +23,14 @@ before the spring layout: the required inter-atom distances are derived from
 the target couplings, and the Schoenberg/MDS test checks whether those
 distances can be realized in the 2-D plane. A failed geometry check flags
 natively_realizable=False even when all couplings are positive. The check
-uses numpy when available; without it the check is skipped.
+uses numpy when available, and a pure-Python Jacobi eigenvalue fallback
+otherwise, so the result is always actually checked (never silently assumed
+embeddable) regardless of environment.
 
-An optional HardwareDeltaModel pre-distorts the submitted detunings and
-couplings so the as-executed Hamiltonian matches the intended one; the
-certificate is then computed against the predicted as-executed couplings.
+An optional HardwareDeltaModel pre-distorts the submitted detunings,
+couplings, and global Rabi frequency so the as-executed Hamiltonian matches
+the intended one; the certificate is then computed against the predicted
+as-executed couplings.
 
 For small instances (<= 20 sites) a classical exact-diagonalisation result
 is included for verification against real hardware measurements.
@@ -55,6 +58,52 @@ _C6_MHZ_UM6: float = 862_690.0
 _OMEGA_MHZ: float = 1.0
 
 
+def _jacobi_eigenvalues(
+    matrix: list[list[float]], tol: float = 1e-10, max_sweeps: int = 100
+) -> list[float]:
+    """Eigenvalues of a real symmetric matrix via the classic cyclic Jacobi method.
+
+    Pure-Python, no external dependencies. Standard textbook algorithm
+    (e.g. Golub & Van Loan, Matrix Computations, section 8.4): repeatedly
+    zeroes the largest off-diagonal pair via a Givens rotation until the
+    total off-diagonal energy falls below tol. Converges reliably for the
+    small (tens of sites) symmetric matrices this module produces.
+
+    Args:
+        matrix: A symmetric n x n matrix as a list of row lists.
+        tol: Convergence threshold on total squared off-diagonal mass.
+        max_sweeps: Safety cap on the number of full sweeps.
+
+    Returns:
+        The n eigenvalues, in no particular order.
+    """
+    n = len(matrix)
+    a = [row[:] for row in matrix]
+    for _ in range(max_sweeps):
+        off = sum(a[i][j] ** 2 for i in range(n) for j in range(n) if i != j)
+        if off < tol:
+            break
+        for p in range(n - 1):
+            for q in range(p + 1, n):
+                apq = a[p][q]
+                if abs(apq) < 1e-300:
+                    continue
+                theta = (a[q][q] - a[p][p]) / (2.0 * apq)
+                t = (1.0 if theta >= 0 else -1.0) / (abs(theta) + math.sqrt(theta * theta + 1.0))
+                c = 1.0 / math.sqrt(t * t + 1.0)
+                s = t * c
+                app, aqq = a[p][p], a[q][q]
+                a[p][p] = c * c * app - 2.0 * s * c * apq + s * s * aqq
+                a[q][q] = s * s * app + 2.0 * s * c * apq + c * c * aqq
+                a[p][q] = a[q][p] = 0.0
+                for i in range(n):
+                    if i != p and i != q:
+                        aip, aiq = a[i][p], a[i][q]
+                        a[i][p] = a[p][i] = c * aip - s * aiq
+                        a[i][q] = a[q][i] = s * aip + c * aiq
+    return [a[i][i] for i in range(n)]
+
+
 @dataclass
 class GeometricEmbeddabilityResult:
     """Result of the Schoenberg/MDS 2-D embeddability check (Theorem 2 geometry condition).
@@ -66,11 +115,14 @@ class GeometricEmbeddabilityResult:
             Euclidean embedding, not just 2-D).
         gram_min_eigenvalue: Smallest eigenvalue of the doubly-centered
             squared-distance Gram matrix. Negative values indicate geometric
-            frustration. None when numpy is not available.
+            frustration. None when fewer than 4 sites made the check trivial.
         gram_rank: Number of eigenvalues above the PSD tolerance (estimate of
-            the embedding dimension required). None when numpy is not available.
-        checked: True when the test was actually run (numpy available and at
-            least 4 constrained sites were present).
+            the embedding dimension required). None when fewer than 4 sites
+            made the check trivial.
+        checked: True when the test was actually run (at least 4 constrained
+            sites were present — the eigenvalue computation itself always
+            runs, via numpy when available and a pure-Python Jacobi fallback
+            otherwise, so this is never False merely for lack of numpy).
         n_constrained_sites: Number of sites involved in constrained pairs.
         notes: Human-readable observations.
     """
@@ -101,9 +153,11 @@ def check_geometric_embeddability(
     Only positive couplings are checked; negative couplings are an independent
     sign obstruction already handled by the native-realizability sign check.
 
-    Requires numpy for the eigenvalue computation. When numpy is unavailable
-    or fewer than 4 constrained sites are present (trivially 2-D embeddable),
-    the result is returned with checked=False.
+    Uses numpy for the eigenvalue computation when available, and a
+    pure-Python Jacobi eigenvalue fallback otherwise, so the check always
+    actually runs (LIMEN's core has zero mandatory dependencies — see
+    pyproject.toml). Fewer than 4 constrained sites are trivially 2-D
+    embeddable and short-circuit with checked=False.
 
     Args:
         target_J: Dict mapping (i, j) pairs (i < j) to ZZ coupling strengths.
@@ -145,33 +199,33 @@ def check_geometric_embeddability(
             ],
         )
 
-    try:
-        import numpy as np
-    except ImportError:
-        return GeometricEmbeddabilityResult(
-            embeddable=True, psd_satisfied=True,
-            gram_min_eigenvalue=None, gram_rank=None,
-            checked=False, n_constrained_sites=n,
-            notes=["numpy not available; geometry check skipped."],
-        )
-
     # Build n×n squared-distance matrix D²; unconstrained pairs get 0 (free).
-    D2 = np.zeros((n, n), dtype=float)
-    for (a, b), J_val in positive_J.items():
-        ia, ib = site_idx[a], site_idx[b]
+    D2: list[list[float]] = [[0.0] * n for _ in range(n)]
+    for (site_a, site_b), J_val in positive_J.items():
+        ia, ib = site_idx[site_a], site_idx[site_b]
         d_req = (c6 / (4.0 * J_val)) ** (1.0 / 6.0)
-        D2[ia, ib] = D2[ib, ia] = d_req * d_req
+        D2[ia][ib] = D2[ib][ia] = d_req * d_req
 
     # Doubly-center: G = -½ J D² J   where J = I - (1/n)·11^T.
     # Equivalent row/column mean subtraction:
-    row_mean = D2.mean(axis=1, keepdims=True)
-    col_mean = D2.mean(axis=0, keepdims=True)
-    grand_mean = D2.mean()
-    G = -0.5 * (D2 - row_mean - col_mean + grand_mean)
+    row_means = [sum(row) / n for row in D2]
+    col_means = [sum(D2[i][j] for i in range(n)) / n for j in range(n)]
+    grand_mean = sum(row_means) / n
+    G = [
+        [-0.5 * (D2[i][j] - row_means[i] - col_means[j] + grand_mean) for j in range(n)]
+        for i in range(n)
+    ]
 
-    eigvals = np.linalg.eigvalsh(G)
-    min_eigval = float(eigvals.min())
-    gram_rank = int(np.sum(eigvals > tol))
+    try:
+        import numpy as np
+        eigvals = [float(v) for v in np.linalg.eigvalsh(np.array(G))]
+    except ImportError:
+        # Pure-Python fallback (Jacobi eigenvalue algorithm) — the check is
+        # always actually run, never silently skipped for lack of numpy.
+        eigvals = _jacobi_eigenvalues(G)
+
+    min_eigval = min(eigvals)
+    gram_rank = sum(1 for v in eigvals if v > tol)
     psd_ok = min_eigval >= -tol
     embeddable_2d = psd_ok and gram_rank <= 2
 
@@ -542,6 +596,13 @@ def run_neutral_atom(
     if delta_model is not None:
         detunings = delta_model.apply_detuning_correction(detunings)
 
+    # Pre-distort the global Rabi drive against the device's measured error.
+    rabi_frequency = (
+        delta_model.apply_rabi_correction(_OMEGA_MHZ)
+        if delta_model is not None
+        else _OMEGA_MHZ
+    )
+
     # Native realizability (Theorem 2): vdW realises only positive ZZ (sign
     # condition), AND the required distances must be 2-D embeddable (geometry
     # condition checked above).
@@ -595,7 +656,7 @@ def run_neutral_atom(
     return NeutralAtomResult(
         hamiltonian=hamiltonian,
         atom_positions=positions,
-        rabi_frequency=_OMEGA_MHZ,
+        rabi_frequency=rabi_frequency,
         detunings=detunings,
         realized_couplings=realized,
         target_couplings=target_J,
@@ -604,14 +665,14 @@ def run_neutral_atom(
         available=True,
         simulated=True,
         message=(
-            f"Rydberg layout: {n} atoms, Omega={_OMEGA_MHZ} MHz, "
+            f"Rydberg layout: {n} atoms, Omega={rabi_frequency} MHz, "
             f"coupling RMS error={rms_err:.4f}"
         ),
         certificate=certificate,
         geometry=geo,
         metadata={
             "c6_mhz_um6": _C6_MHZ_UM6,
-            "rabi_frequency_mhz": _OMEGA_MHZ,
+            "rabi_frequency_mhz": rabi_frequency,
             "n_zz_pairs": len(target_J),
             "coupling_rms_error": rms_err,
             "natively_realizable": natively_realizable,

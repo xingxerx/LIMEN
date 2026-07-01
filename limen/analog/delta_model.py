@@ -159,6 +159,30 @@ class HardwareDeltaModel:
                 for key, J in couplings.items()
             }
 
+    def apply_rabi_correction(self, rabi_frequency: float) -> float:
+        """Return a corrected global Rabi frequency with drive error divided out.
+
+        Delegates to the limen_core Rust extension when available; falls back
+        to a pure Python implementation otherwise.
+
+        The corrected value is rabi_frequency / (1 + drift.global_rabi_error).
+        The denominator is clamped to a minimum of 0.01 to prevent division
+        by zero, matching apply_coupling_correction.
+
+        Args:
+            rabi_frequency: Target global Rabi drive strength.
+
+        Returns:
+            The pre-distorted Rabi frequency to submit to hardware.
+        """
+        try:
+            from limen_core import apply_rabi_correction as _rust_fn
+            return _rust_fn(rabi_frequency, self.drift.global_rabi_error)
+        except ImportError:
+            # Pure Python fallback for environments without the Rust extension.
+            denom = max(1.0 + self.drift.global_rabi_error, 0.01)
+            return rabi_frequency / denom
+
     @classmethod
     def identity(
         cls, device_id: str, substrate: SubstrateType, n_sites: int

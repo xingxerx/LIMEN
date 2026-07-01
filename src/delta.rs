@@ -55,3 +55,20 @@ pub fn apply_coupling_correction(
         })
         .collect()
 }
+
+/// Apply a global Rabi-drive scale correction to a target Rabi frequency.
+///
+/// Pre-distorts the requested Rabi frequency so that the as-executed drive
+/// (which hardware multiplies by `(1.0 + global_rabi_error)`) lands on the
+/// target value: `corrected = target / (1.0 + global_rabi_error)`. The
+/// denominator is clamped to a minimum of 0.01 to prevent division by zero,
+/// mirroring `apply_coupling_correction`.
+///
+/// # Arguments
+/// * `rabi_frequency`   - Target global Rabi frequency (e.g. MHz).
+/// * `global_rabi_error` - Measured fractional error on the drive (0.0 = perfect).
+#[pyfunction]
+pub fn apply_rabi_correction(rabi_frequency: f64, global_rabi_error: f64) -> f64 {
+    let denom = (1.0 + global_rabi_error).max(0.01);
+    rabi_frequency / denom
+}

@@ -21,6 +21,11 @@ it on a circuit too wide to verify any other way. Run it with:
 
 from __future__ import annotations
 
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
 from qiskit.primitives import BackendSamplerV2
 from qiskit.primitives.containers.bit_array import BitArray
 from qiskit.quantum_info import PauliList
