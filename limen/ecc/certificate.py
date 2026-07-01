@@ -76,16 +76,29 @@ def certify_logical_qubit(
     p = physical_error_rate
     logical_z_set = set(patch.logical_z)
 
-    failure_probability = 0.0
-    for bits in product((0, 1), repeat=n):
-        weight = sum(bits)
-        prob = (p**weight) * ((1 - p) ** (n - weight))
-        syndrome = compute_syndrome(bits, patch.z_stabilizers)
-        correction = decoder.decode(syndrome)
-        residual = set(i for i, b in enumerate(bits) if b)
-        residual.symmetric_difference_update(correction)
-        if len(residual & logical_z_set) % 2 == 1:
-            failure_probability += prob
+    try:
+        from limen_core import logical_failure_probability as _rust_failure
+    except ImportError:
+        _rust_failure = None
+
+    if _rust_failure is not None:
+        # The Rust path rebuilds the same minimum-weight lookup table
+        # internally (identical tie-breaking), so the whole 2^n
+        # enumerate-decode-score loop runs natively.
+        failure_probability = _rust_failure(
+            n, patch.z_stabilizers, patch.logical_z, p
+        )
+    else:
+        failure_probability = 0.0
+        for bits in product((0, 1), repeat=n):
+            weight = sum(bits)
+            prob = (p**weight) * ((1 - p) ** (n - weight))
+            syndrome = compute_syndrome(bits, patch.z_stabilizers)
+            correction = decoder.decode(syndrome)
+            residual = set(i for i, b in enumerate(bits) if b)
+            residual.symmetric_difference_update(correction)
+            if len(residual & logical_z_set) % 2 == 1:
+                failure_probability += prob
 
     return LogicalErrorCertificate(
         logical_error_rate=failure_probability,
