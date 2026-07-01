@@ -222,12 +222,17 @@ def _run_qaoa(
     num_shots: int,
     reps: int,
     seed: int,
+    params: list[float] | None = None,
 ) -> tuple[list[dict[str, int]], list[float], int | None]:
-    """Run QAOA using AerSimulator with fixed initial parameters (β=γ=0.1).
+    """Run QAOA using AerSimulator.
 
     Uses statevector simulation for small circuits and MPS for larger ones
     to keep memory bounded. Parameters are bound before simulation so this
     works with any qiskit-aer version that exposes AerSimulator.run().
+
+    Args:
+        params: QAOA parameter vector (gamma/beta per layer). Defaults to
+            the flat, unoptimized 0.1 for every parameter when None.
     """
     try:
         from qiskit_aer import AerSimulator  # type: ignore[import]
@@ -246,7 +251,8 @@ def _run_qaoa(
     ansatz = QAOAAnsatz(cost_op, reps=reps)
 
     n_params = ansatz.num_parameters
-    params = [0.1] * n_params
+    if params is None:
+        params = [0.1] * n_params
 
     n = len(variables)
     method = "matrix_product_state" if n > _QAOA_MPS_THRESHOLD else "statevector"
@@ -332,6 +338,7 @@ def run_qiskit(
     ibm_token: str | None = None,
     ibm_backend: str = "ibm_brisbane",
     seed: int = 42,
+    params: list[float] | None = None,
 ) -> QiskitResult:
     """Submit a PhysicalEncoding to a Qiskit sampler and return results.
 
@@ -344,6 +351,9 @@ def run_qiskit(
         ibm_token: IBM Quantum API token (runtime path only).
         ibm_backend: IBM backend name (runtime path only).
         seed: RNG seed for deterministic simulation.
+        params: QAOA parameter vector (gamma/beta per layer), used only when
+            ``algorithm == "qaoa"``. Defaults to the flat, unoptimized 0.1
+            for every parameter when None.
 
     Returns:
         A QiskitResult with samples sorted by energy ascending.
@@ -372,7 +382,9 @@ def run_qiskit(
         samples, energies, circuit_depth = _run_exact(qubo, variables, num_shots, seed)
         backend_name = "statevector"
     elif algorithm == "qaoa":
-        samples, energies, circuit_depth = _run_qaoa(qubo, variables, num_shots, reps, seed)
+        samples, energies, circuit_depth = _run_qaoa(
+            qubo, variables, num_shots, reps, seed, params=params
+        )
         backend_name = "aer_simulator"
     elif algorithm == "vqe":
         samples, energies, circuit_depth = _run_vqe(qubo, variables, num_shots, reps, seed)
