@@ -1,16 +1,8 @@
-// Copyright 2026 LIMEN Contributors
+// Copyright (C) 2026 xingxerx / CGX
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Licensed under the Elastic License 2.0 (ELv2); you may not use this file
+// except in compliance with the License. See the LICENSE file in the
+// repository root for the full terms.
 
 use pyo3::prelude::*;
 use std::collections::HashMap;
@@ -62,4 +54,21 @@ pub fn apply_coupling_correction(
             (key, j / denom)
         })
         .collect()
+}
+
+/// Apply a global Rabi-drive scale correction to a target Rabi frequency.
+///
+/// Pre-distorts the requested Rabi frequency so that the as-executed drive
+/// (which hardware multiplies by `(1.0 + global_rabi_error)`) lands on the
+/// target value: `corrected = target / (1.0 + global_rabi_error)`. The
+/// denominator is clamped to a minimum of 0.01 to prevent division by zero,
+/// mirroring `apply_coupling_correction`.
+///
+/// # Arguments
+/// * `rabi_frequency`   - Target global Rabi frequency (e.g. MHz).
+/// * `global_rabi_error` - Measured fractional error on the drive (0.0 = perfect).
+#[pyfunction]
+pub fn apply_rabi_correction(rabi_frequency: f64, global_rabi_error: f64) -> f64 {
+    let denom = (1.0 + global_rabi_error).max(0.01);
+    rabi_frequency / denom
 }

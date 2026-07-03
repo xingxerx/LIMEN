@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "limen"
-version = "0.6.0"
+version = "0.8.2"
 description = "A physics-aware compiler stack for translating classical optimization problems into native quantum and analog substrates."
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -21,7 +21,7 @@ classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Intended Audience :: Science/Research",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: Apache Software License",
+  "License :: Other/Proprietary License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -37,6 +37,7 @@ dwave = ["dwave-ocean-sdk>=6.0"]
 ibm = ["qiskit>=1.0"]
 braket = ["amazon-braket-sdk>=1.70"]
 openquantum = ["openquantum-sdk"]
+cutting = ["qiskit-addon-cutting>=0.9", "qiskit-ibm-runtime>=0.25"]
 distributed = [
   "grpcio>=1.60",
   "grpcio-tools>=1.60",
@@ -50,6 +51,8 @@ all = [
   "qiskit>=1.0",
   "amazon-braket-sdk>=1.70",
   "openquantum-sdk",
+  "qiskit-addon-cutting>=0.9",
+  "qiskit-ibm-runtime>=0.25",
   "grpcio>=1.60",
   "grpcio-tools>=1.60",
   "protobuf>=4.25",

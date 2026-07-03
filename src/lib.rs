@@ -1,8 +1,12 @@
 use pyo3::prelude::*;
 
+mod cutting;
 mod delta;
+mod ecc;
+mod frontends;
 mod scoring;
 mod stackelberg;
+mod validator;
 pub mod sim;
 pub mod analog;
 
@@ -17,9 +21,16 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<scoring::EquilibriumScore>()?;
     m.add_function(wrap_pyfunction!(delta::apply_detuning_correction, m)?)?;
     m.add_function(wrap_pyfunction!(delta::apply_coupling_correction, m)?)?;
+    m.add_function(wrap_pyfunction!(delta::apply_rabi_correction, m)?)?;
+    m.add_function(wrap_pyfunction!(scoring::qubo_criticality, m)?)?;
 
     m.add_function(wrap_pyfunction!(sim::ising_backend::exact_ising_norm, m)?)?;
     m.add_function(wrap_pyfunction!(sim::ising_backend::qubo_energy_spectrum, m)?)?;
+    m.add_function(wrap_pyfunction!(sim::statevector_backend::run_statevector, m)?)?;
+    m.add_function(wrap_pyfunction!(validator::simulate_qubo_runs, m)?)?;
+    m.add_function(wrap_pyfunction!(frontends::vrp_qubo_terms, m)?)?;
+    m.add_function(wrap_pyfunction!(ecc::decoder::build_ecc_lookup_table, m)?)?;
+    m.add_function(wrap_pyfunction!(ecc::decoder::logical_failure_probability, m)?)?;
 
     let sim = PyModule::new_bound(m.py(), "sim")?;
     sim.add_class::<sim::ising_backend::IsingSimulator>()?;
@@ -38,6 +49,23 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     analog.add_class::<analog::photonic::PhotonicGBSParameters>()?;
     analog.add_class::<analog::photonic::PhotonicCompiler>()?;
     m.add_submodule(&analog)?;
+
+    let ecc = PyModule::new_bound(m.py(), "ecc")?;
+    ecc.add_class::<ecc::surface_code::SurfaceCodePatch>()?;
+    ecc.add_function(wrap_pyfunction!(ecc::surface_code::build_surface_code, &ecc)?)?;
+    ecc.add_class::<ecc::selector::PatchAssignment>()?;
+    ecc.add_function(wrap_pyfunction!(ecc::selector::select_patches, &ecc)?)?;
+    ecc.add_function(wrap_pyfunction!(ecc::remapper::remap_circuit, &ecc)?)?;
+    m.add_submodule(&ecc)?;
+
+    let cutting = PyModule::new_bound(m.py(), "cutting")?;
+    cutting.add_class::<cutting::reconstruct::SubcircuitSampleCounts>()?;
+    cutting.add_class::<cutting::reconstruct::SampleCoefficient>()?;
+    cutting.add_function(wrap_pyfunction!(
+        cutting::reconstruct::reconstruct_expectation,
+        &cutting
+    )?)?;
+    m.add_submodule(&cutting)?;
 
     Ok(())
 }

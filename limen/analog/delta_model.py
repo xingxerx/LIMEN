@@ -1,16 +1,8 @@
-# Copyright 2026 LIMEN Contributors
+# Copyright (C) 2026 xingxerx / CGX
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Licensed under the Elastic License 2.0 (ELv2); you may not use this file
+# except in compliance with the License. See the LICENSE file in the
+# repository root for the full terms.
 """Live calibration abstraction layer for analog hardware.
 
 Captures per-device drift, coupling errors, and detuning offsets so that
@@ -166,6 +158,30 @@ class HardwareDeltaModel:
                 key: J / max(1.0 + self.drift.coupling_scale_errors.get(key, 0.0), 0.01)
                 for key, J in couplings.items()
             }
+
+    def apply_rabi_correction(self, rabi_frequency: float) -> float:
+        """Return a corrected global Rabi frequency with drive error divided out.
+
+        Delegates to the limen_core Rust extension when available; falls back
+        to a pure Python implementation otherwise.
+
+        The corrected value is rabi_frequency / (1 + drift.global_rabi_error).
+        The denominator is clamped to a minimum of 0.01 to prevent division
+        by zero, matching apply_coupling_correction.
+
+        Args:
+            rabi_frequency: Target global Rabi drive strength.
+
+        Returns:
+            The pre-distorted Rabi frequency to submit to hardware.
+        """
+        try:
+            from limen_core import apply_rabi_correction as _rust_fn
+            return _rust_fn(rabi_frequency, self.drift.global_rabi_error)
+        except ImportError:
+            # Pure Python fallback for environments without the Rust extension.
+            denom = max(1.0 + self.drift.global_rabi_error, 0.01)
+            return rabi_frequency / denom
 
     @classmethod
     def identity(

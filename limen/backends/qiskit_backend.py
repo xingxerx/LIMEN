@@ -1,16 +1,8 @@
-# Copyright 2026 LIMEN Contributors
+# Copyright (C) 2026 xingxerx / CGX
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Licensed under the Elastic License 2.0 (ELv2); you may not use this file
+# except in compliance with the License. See the LICENSE file in the
+# repository root for the full terms.
 """IBM Qiskit backend adapter for LIMEN.
 
 Converts a PhysicalEncoding into an Ising Hamiltonian and solves it using
@@ -230,12 +222,17 @@ def _run_qaoa(
     num_shots: int,
     reps: int,
     seed: int,
+    params: list[float] | None = None,
 ) -> tuple[list[dict[str, int]], list[float], int | None]:
-    """Run QAOA using AerSimulator with fixed initial parameters (β=γ=0.1).
+    """Run QAOA using AerSimulator.
 
     Uses statevector simulation for small circuits and MPS for larger ones
     to keep memory bounded. Parameters are bound before simulation so this
     works with any qiskit-aer version that exposes AerSimulator.run().
+
+    Args:
+        params: QAOA parameter vector (gamma/beta per layer). Defaults to
+            the flat, unoptimized 0.1 for every parameter when None.
     """
     try:
         from qiskit_aer import AerSimulator  # type: ignore[import]
@@ -254,7 +251,8 @@ def _run_qaoa(
     ansatz = QAOAAnsatz(cost_op, reps=reps)
 
     n_params = ansatz.num_parameters
-    params = [0.1] * n_params
+    if params is None:
+        params = [0.1] * n_params
 
     n = len(variables)
     method = "matrix_product_state" if n > _QAOA_MPS_THRESHOLD else "statevector"
@@ -340,6 +338,7 @@ def run_qiskit(
     ibm_token: str | None = None,
     ibm_backend: str = "ibm_brisbane",
     seed: int = 42,
+    params: list[float] | None = None,
 ) -> QiskitResult:
     """Submit a PhysicalEncoding to a Qiskit sampler and return results.
 
@@ -352,6 +351,9 @@ def run_qiskit(
         ibm_token: IBM Quantum API token (runtime path only).
         ibm_backend: IBM backend name (runtime path only).
         seed: RNG seed for deterministic simulation.
+        params: QAOA parameter vector (gamma/beta per layer), used only when
+            ``algorithm == "qaoa"``. Defaults to the flat, unoptimized 0.1
+            for every parameter when None.
 
     Returns:
         A QiskitResult with samples sorted by energy ascending.
@@ -380,7 +382,9 @@ def run_qiskit(
         samples, energies, circuit_depth = _run_exact(qubo, variables, num_shots, seed)
         backend_name = "statevector"
     elif algorithm == "qaoa":
-        samples, energies, circuit_depth = _run_qaoa(qubo, variables, num_shots, reps, seed)
+        samples, energies, circuit_depth = _run_qaoa(
+            qubo, variables, num_shots, reps, seed, params=params
+        )
         backend_name = "aer_simulator"
     elif algorithm == "vqe":
         samples, energies, circuit_depth = _run_vqe(qubo, variables, num_shots, reps, seed)
@@ -469,13 +473,13 @@ def run_qiskit_qpu(
     timeout: float = 600.0,
     dynamical_decoupling: bool = False,
     twirling: bool = False,
+    params: list[float] | None = None,
 ) -> QiskitResult:
     """Execute a PhysicalEncoding as a QAOA circuit on a real IBM QPU.
 
     Builds a depth-`reps` QAOAAnsatz from the encoding's QUBO with the
     cost Hamiltonian scaled by ``cost_scale``, transpiles it for the
-    target backend, and runs it via SamplerV2 with fixed parameters
-    (β=0.1, γ=0.1 per layer).
+    target backend, and runs it via SamplerV2.
 
     Args:
         encoding: A compiled PhysicalEncoding from the LIMEN compiler.
@@ -490,6 +494,10 @@ def run_qiskit_qpu(
             RuntimeError (default 600). Pass None to wait indefinitely.
         dynamical_decoupling: If True, enables XY4 sequence dynamical decoupling on idle qubits.
         twirling: If True, enables Pauli and measurement twirling.
+        params: QAOA parameter vector (gamma/beta per layer), typically
+            tuned classically against the noiseless Aer statevector before
+            spending real QPU time. Defaults to the flat, unoptimized 0.1
+            for every parameter when None.
 
     Returns:
         A QiskitResult with samples sorted by energy ascending. The raw
@@ -515,8 +523,10 @@ def run_qiskit_qpu(
     variables: list[str] = sorted({name for pair in qubo for name in pair})
 
     ansatz = _build_qaoa_ansatz(qubo, variables, reps, cost_scale)
-    params = [0.1] * ansatz.num_parameters
-    ideal = _ideal_distribution(ansatz, params)
+    resolved_params: list[float] = (
+        params if params is not None else [0.1] * ansatz.num_parameters
+    )
+    ideal = _ideal_distribution(ansatz, resolved_params)
 
     measured = ansatz.copy()
     measured.measure_all()
@@ -536,7 +546,7 @@ def run_qiskit_qpu(
         sampler.options.twirling.enable_gates = True
         sampler.options.twirling.enable_measure = True
 
-    job = sampler.run([(transpiled, params)], shots=shots)
+    job = sampler.run([(transpiled, resolved_params)], shots=shots)
     pub_result = job.result(timeout=timeout)[0]
     counts: dict[str, int] = pub_result.data.meas.get_counts()
 
@@ -554,6 +564,7 @@ def run_qiskit_qpu(
             "num_shots": shots,
             "backend": backend_name,
             "cost_scale": cost_scale,
+            "params": resolved_params,
             "counts": counts,
             "ideal_distribution": ideal,
             "job_id": job.job_id(),

@@ -76,6 +76,70 @@ def brute_force_solve(
     return spectrum.best_assignment, spectrum.best_energy
 
 
+def _simulate_bits_energies(
+    qubo: dict[tuple[str, str], float],
+    n_runs: int,
+    noise_level: float,
+    seed: int,
+    base_assignment: dict[str, int] | None = None,
+) -> tuple[list[str], list[list[int]], list[float]]:
+    """Core noisy-run simulation, returning raw bits and energies.
+
+    Shared by simulate_runs (which packs per-run assignment dicts) and
+    validate (which only consumes the energies — packing n_runs dicts of
+    len(variables) keys dominated the wall time of the Rust path, ~80%
+    at 10k runs, so validate skips it entirely).
+
+    Args:
+        base_assignment: The assignment to perturb. Pass the precomputed
+            brute-force optimum to skip the 2^n sweep here — validate()
+            needs the same sweep for classical_energy, and it dominates
+            simulation cost on brute-forceable instances. When None,
+            solves (or falls back to a random assignment for
+            >20-variable problems, where brute_force_solve returns None
+            immediately at no cost).
+
+    Returns:
+        (variables, per-run bit lists indexed like variables, energies).
+    """
+    rng = random.Random(seed)
+    variables: list[str] = sorted({name for pair in qubo for name in pair})
+
+    if base_assignment is None:
+        bf_result = brute_force_solve(qubo)
+        if bf_result is not None:
+            base_assignment = bf_result[0]
+        else:
+            base_assignment = {v: rng.randint(0, 1) for v in variables}
+
+    try:
+        from limen_core import simulate_qubo_runs as _rust_simulate
+    except ImportError:
+        _rust_simulate = None
+
+    if _rust_simulate is not None:
+        index_of = {name: idx for idx, name in enumerate(variables)}
+        indexed_terms = [
+            ((index_of[i], index_of[j]), w) for (i, j), w in qubo.items()
+        ]
+        base_bits = [base_assignment[v] for v in variables]
+        assignments, energies = _rust_simulate(
+            indexed_terms, base_bits, n_runs, noise_level, seed
+        )
+        return variables, assignments, energies
+
+    bit_lists: list[list[int]] = []
+    energies: list[float] = []
+    for _ in range(n_runs):
+        noisy = {
+            v: (1 - val if rng.random() < noise_level else val)
+            for v, val in base_assignment.items()
+        }
+        bit_lists.append([noisy[v] for v in variables])
+        energies.append(_compute_energy(qubo, noisy))
+    return variables, bit_lists, energies
+
+
 def simulate_runs(
     qubo: dict[tuple[str, str], float],
     n_runs: int,
@@ -96,25 +160,22 @@ def simulate_runs(
 
     Returns:
         A list of (assignment, energy) tuples, one per run.
+
+    Note:
+        Uses the limen_core Rust extension when built (bit flips and energy
+        evaluation both move out of interpreted Python — this is the hot
+        loop of the co-design iteration); otherwise falls back to the pure
+        Python loop in _simulate_bits_energies. Both paths are deterministic
+        per seed, but their RNG streams differ, so exact energies vary
+        between backends.
     """
-    rng = random.Random(seed)
-    variables: list[str] = sorted({name for pair in qubo for name in pair})
-
-    bf_result = brute_force_solve(qubo)
-    if bf_result is not None:
-        base_assignment, _ = bf_result
-    else:
-        base_assignment = {v: rng.randint(0, 1) for v in variables}
-
-    results: list[tuple[dict[str, int], float]] = []
-    for _ in range(n_runs):
-        noisy = {
-            v: (1 - val if rng.random() < noise_level else val)
-            for v, val in base_assignment.items()
-        }
-        results.append((noisy, _compute_energy(qubo, noisy)))
-
-    return results
+    variables, bit_lists, energies = _simulate_bits_energies(
+        qubo, n_runs, noise_level, seed
+    )
+    return [
+        (dict(zip(variables, bits)), energy)
+        for bits, energy in zip(bit_lists, energies)
+    ]
 
 
 def validate(
@@ -137,14 +198,20 @@ def validate(
     """
     qubo = encoding.qubo
 
-    simulated = simulate_runs(qubo, n_runs=runs, noise_level=noise_level, seed=seed)
     bf_result = brute_force_solve(qubo)
+    _, _, energies = _simulate_bits_energies(
+        qubo,
+        n_runs=runs,
+        noise_level=noise_level,
+        seed=seed,
+        base_assignment=bf_result[0] if bf_result is not None else None,
+    )
 
     classical_energy: float | None = bf_result[1] if bf_result is not None else None
-    best_energy = min(e for _, e in simulated) if simulated else 0.0
+    best_energy = min(energies) if energies else 0.0
 
     tol = abs(best_energy) * 0.05 if best_energy != 0.0 else 0.01
-    feasible_runs = sum(1 for _, e in simulated if e <= best_energy + tol)
+    feasible_runs = sum(1 for e in energies if e <= best_energy + tol)
     confidence = feasible_runs / runs if runs > 0 else 0.0
 
     notes: list[str] = []

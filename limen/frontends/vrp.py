@@ -1,16 +1,8 @@
-# Copyright 2026 LIMEN Contributors
+# Copyright (C) 2026 xingxerx / CGX
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Licensed under the Elastic License 2.0 (ELv2); you may not use this file
+# except in compliance with the License. See the LICENSE file in the
+# repository root for the full terms.
 """Vehicle Routing Problem (VRP) frontend for LIMEN.
 
 Encodes a multi-vehicle routing instance as a QUBO and converts it into a
@@ -102,6 +94,12 @@ def vrp_qubo(
         A tuple of (qubo dict, customer_ids) where customer_ids maps
         augmented customer node index back to the original coordinate
         index, for use with ``decode_routes``.
+
+    Note:
+        Uses the limen_core Rust extension when built — the O(n^3) term
+        accumulation below dominates frontend time in interpreted Python
+        once instances reach benchmark scale. The two paths produce
+        identical QUBO dicts.
     """
     if num_vehicles < 1:
         raise ValueError("num_vehicles must be at least 1")
@@ -114,6 +112,14 @@ def vrp_qubo(
     )
     if penalty_a is None:
         penalty_a = penalty_b * max_dist * n * 5
+
+    try:
+        from limen_core import vrp_qubo_terms as _rust_terms
+    except ImportError:
+        _rust_terms = None
+
+    if _rust_terms is not None:
+        return _rust_terms(dist, penalty_a, penalty_b), customer_ids
 
     qubo: dict[tuple[str, str], float] = {}
 

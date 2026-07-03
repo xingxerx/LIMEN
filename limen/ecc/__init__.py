@@ -6,6 +6,12 @@ coefficient error / Theorem 1) - this package's LogicalErrorCertificate
 quantifies quantum logical error rate instead.
 """
 
+from limen.ecc.budget import (
+    PatchAssignment,
+    allocate_ecc_budget,
+    rank_criticality,
+    select_patches,
+)
 from limen.ecc.certificate import LogicalErrorCertificate, certify_logical_qubit
 from limen.ecc.decoder import LookupDecoder
 from limen.ecc.encoder import (
@@ -28,4 +34,8 @@ __all__ = [
     "build_z_syndrome_circuit",
     "run_logical_roundtrip",
     "verify_corrects_all_weight_one",
+    "PatchAssignment",
+    "rank_criticality",
+    "select_patches",
+    "allocate_ecc_budget",
 ]

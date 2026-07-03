@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-27T09:51:07.520090+00:00",
+  "generated_at": "2026-06-29T20:55:13.842022+00:00",
   "source": "live_query",
   "nodes": [
     {
@@ -9,7 +9,8 @@
       "num_qubits": 156,
       "validated": true,
       "job_ids": [
-        "d8vl8j1ropqc738cjvug"
+        "d8vl8j1ropqc738cjvug",
+        "d91euieu9n7c73amjlcg"
       ]
     },
     {
@@ -17,8 +18,10 @@
       "provider": "IBM Quantum Platform",
       "modality": "superconducting",
       "num_qubits": 156,
-      "validated": false,
-      "job_ids": []
+      "validated": true,
+      "job_ids": [
+        "d91epe6u9n7c73amjcmg"
+      ]
     },
     {
       "backend": "ibm_kingston",
@@ -46,7 +49,7 @@
       "modality": "superconducting",
       "num_qubits": 20,
       "status": "Online",
-      "accepting_jobs": false,
+      "accepting_jobs": true,
       "validated": false,
       "job_ids": []
     },
@@ -56,7 +59,7 @@
       "modality": "superconducting",
       "num_qubits": 54,
       "status": "Online",
-      "accepting_jobs": false,
+      "accepting_jobs": true,
       "validated": false,
       "job_ids": []
     },
@@ -65,8 +68,8 @@
       "provider": "Open Quantum",
       "modality": "trapped-ion",
       "num_qubits": 36,
-      "status": "Offline",
-      "accepting_jobs": false,
+      "status": "Online",
+      "accepting_jobs": true,
       "validated": false,
       "job_ids": []
     },
@@ -96,7 +99,7 @@
       "modality": "superconducting",
       "num_qubits": 108,
       "status": "Online",
-      "accepting_jobs": true,
+      "accepting_jobs": false,
       "validated": true,
       "job_ids": [
         "c281a62f-52c1-43b5-9c25-93fc2e6258a2"
@@ -105,7 +108,8 @@
   ],
   "summary": {
     "total_nodes": 9,
-    "validated_nodes": 3,
-    "total_physical_qubits": 734
+    "validated_nodes": 4,
+    "total_physical_qubits": 734,
+    "validated_physical_qubits": 576
   }
 }
