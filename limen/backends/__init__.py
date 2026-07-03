@@ -20,6 +20,9 @@ def __getattr__(name: str):
     if name in ("OpenQuantumResult", "run_openquantum", "list_backend_classes"):
         from limen.backends import openquantum
         return getattr(openquantum, name)
+    if name in ("AzureAtomResult", "run_azure_atom", "list_azure_targets"):
+        from limen.backends import azure_atom
+        return getattr(azure_atom, name)
     raise AttributeError(f"module 'limen.backends' has no attribute {name!r}")
 
 
@@ -27,4 +30,5 @@ __all__ = [
     "DWaveResult", "run_dwave", "QiskitResult", "run_qiskit",
     "run_neutral_atom", "run_photonic", "BraketResult", "run_braket",
     "OpenQuantumResult", "run_openquantum", "list_backend_classes",
+    "AzureAtomResult", "run_azure_atom", "list_azure_targets",
 ]
