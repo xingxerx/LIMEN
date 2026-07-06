@@ -46,6 +46,12 @@ __all__ = [
     "QKDResult",
     "EndToEndCertificate",
     "run_pipeline",
+    "Tier",
+    "BackendProfile",
+    "RouteRequest",
+    "RoutePlan",
+    "DEFAULT_FLEET",
+    "route",
 ]
 
 
@@ -110,6 +116,25 @@ def __getattr__(name: str):
         return {
             "EndToEndCertificate": EndToEndCertificate,
             "run_pipeline": run_pipeline,
+        }[name]
+    if name in (
+        "Tier", "BackendProfile", "RouteRequest", "RoutePlan", "DEFAULT_FLEET", "route",
+    ):
+        from limen.router import (
+            DEFAULT_FLEET,
+            BackendProfile,
+            RoutePlan,
+            RouteRequest,
+            Tier,
+            route,
+        )
+        return {
+            "Tier": Tier,
+            "BackendProfile": BackendProfile,
+            "RouteRequest": RouteRequest,
+            "RoutePlan": RoutePlan,
+            "DEFAULT_FLEET": DEFAULT_FLEET,
+            "route": route,
         }[name]
     raise AttributeError(f"module 'limen' has no attribute {name!r}")
 
