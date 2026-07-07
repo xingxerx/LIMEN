@@ -9,6 +9,11 @@ from limen.router.budget_router import (
     Tier,
     route,
 )
+from limen.router.calibration import (
+    apply_calibration,
+    fetch_backend_calibration,
+    scan_calibration,
+)
 from limen.router.history import BackendHistory, apply_history, scan_results
 from limen.router.job_state import JobState, JobStatus, retry_transient
 
@@ -22,6 +27,9 @@ __all__ = [
     "BackendHistory",
     "scan_results",
     "apply_history",
+    "fetch_backend_calibration",
+    "scan_calibration",
+    "apply_calibration",
     "JobState",
     "JobStatus",
     "retry_transient",

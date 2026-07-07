@@ -91,6 +91,12 @@ class BackendProfile:
     history-derived fields (see limen.router.history): None until at
     least one finished cert for this backend has been scanned from
     results/.
+
+    ``physical_error_rate`` is an optional calibration-derived field (see
+    limen.router.calibration): None until a live calibration snapshot
+    for this backend has been fetched and scanned. When set, route()
+    prefers it over RouteRequest.physical_error_rate's hardcoded default
+    for Tier 2 planning.
     """
 
     name: str
@@ -100,6 +106,7 @@ class BackendProfile:
     validated: bool = False
     avg_queue_seconds: float | None = None
     measured_logical_error: float | None = None
+    physical_error_rate: float | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in _BACKEND_KINDS:
@@ -136,8 +143,11 @@ class RouteRequest:
             the free simulator tier.
         force_tier: Pin the tier instead of letting the criticality
             signal choose (used by loopback tests and manual overrides).
-        physical_error_rate: Per-qubit bit-flip rate assumed by the
-            Tier 2 surface-code certificate.
+        physical_error_rate: Fallback per-qubit bit-flip rate for the
+            Tier 2 surface-code certificate, used only when the chosen
+            backend carries no calibration-derived
+            ``BackendProfile.physical_error_rate`` (see
+            limen.router.calibration).
         offline: If True, the plan's ``pipeline_kwargs`` execute on the
             local simulator regardless of tier, while every other
             planning decision (backend choice, cutting, ECC allocation,
@@ -393,7 +403,15 @@ def route(
     if tier == Tier.HW_CERTIFIED:
         kwargs["encode_logical"] = True
         kwargs["distance"] = ecc_distance
-        kwargs["physical_error_rate"] = request.physical_error_rate
+        if backend.physical_error_rate is not None:
+            kwargs["physical_error_rate"] = backend.physical_error_rate
+            notes.append(
+                f"physical_error_rate {backend.physical_error_rate:.3e} from "
+                f"{backend.name} calibration (overrides the "
+                f"{request.physical_error_rate:.3e} request default)"
+            )
+        else:
+            kwargs["physical_error_rate"] = request.physical_error_rate
     else:
         kwargs["encode_logical"] = False
 
