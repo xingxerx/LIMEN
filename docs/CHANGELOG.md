@@ -3,6 +3,39 @@
 All notable changes to LIMEN are documented in this file. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.3] - 2026-07-07
+
+- Budget router (`limen.router`): deterministic fidelity-tier planning for
+  QUBO runs — picks a tier, backend, cutting strategy, ECC allocation, and
+  shot count against an explicit credit budget before anything is submitted
+  (`route()`, `RouteRequest`/`RoutePlan`, `DEFAULT_FLEET`).
+- Router cost-model seeding from real run history
+  (`limen.router.history`): `scan_results()`/`apply_history()` fold cached
+  `results/*.json` run records into the fleet's backend profiles offline.
+- Router calibration seeding from live hardware
+  (`limen.router.calibration`): `fetch_backend_calibration()` queries
+  gate/readout error from IBM Runtime; `scan_calibration()`/
+  `apply_calibration()` fold cached `results/calibration_*.json` snapshots
+  in offline. `route()` now prefers a backend's calibrated
+  `physical_error_rate` over the request's hardcoded default — the first
+  real ibm_kingston snapshot (2.586e-2) is 25x closer to measured Tier 2
+  behavior than the old 1e-3 guess.
+- Crash-resilient QPU job lifecycle (`limen.router.job_state` +
+  `pipeline.submit_qpu_job()`): submission is decoupled from
+  result-waiting; job state (SUBMITTED/QUEUED/RUNNING/DONE/ERROR/
+  CANCELLED/TIMED_OUT) is persisted to disk at every step so a closed
+  terminal or mid-poll crash can't strand a completed job. Includes a
+  transient-error-only retry helper; errored/cancelled jobs are never
+  auto-resubmitted. First hardware validation: ibm_kingston Tier 2 run,
+  job `d965qgotcv6s73djc1l0`.
+- Azure Quantum backend adapter for Atom Computing gate-model
+  neutral-atom devices (`limen.backends.azure_atom`). Status: DORMANT —
+  import-clean and unit-tested, but never exercised against a live Azure
+  Quantum workspace; not in `DEFAULT_FLEET` until hardware-validated.
+- Probabilistic validator refactor with a Rust-extension parity guard
+  test (`tests/test_rust_exports.py`), catching stale-wheel drift between
+  `limen_core` and the Python fallbacks.
+
 ## [0.8.2] - 2026-07-01
 
 - Adaptive ECC patch-budget allocation (`limen.ecc.budget`): wires the
