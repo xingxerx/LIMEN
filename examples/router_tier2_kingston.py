@@ -4,37 +4,35 @@
 # except in compliance with the License. See the LICENSE file in the
 # repository root for the full terms.
 
-"""Tier 2 hardware validation: route a small instance to ibm_kingston.
+"""Tier 2 hardware validation: submit a small instance to ibm_kingston.
 
 Routes a d=3 ECC-budgeted Max-Cut instance (5 logical vars -> 45 physical
 qubits of patch budget, well inside kingston's 156) through the budget
-router at Tier 2, executes the plan on real hardware, and compares the
-measured logical error against the offline surface-code prediction from
-the certificate.
+router at Tier 2, then submits the routed plan to real hardware and
+exits immediately — it does not wait for the job to finish.
 
-The "measured logical error" here is the hardware success-probability
-deficit relative to the exact statevector baseline for the same circuit:
-everything the device loses versus the noiseless simulation. The success
-bar is that this deficit stays within sampling noise of the certificate's
-predicted aggregate logical error rate — i.e. the offline prediction is
-not *underestimating* the hardware.
+Submitting and waiting are deliberately separate processes: an IBM
+Runtime job runs on IBM's servers regardless of what this script does
+afterwards, and kingston's queue can sit in "maintenance" for a long
+time. Blocking this process on job.result() would mean a closed
+terminal (or a hardware queue outlasting your patience) loses the
+ability to certify a completed job. Instead this script just persists
+{job_id, plan, submitted_at} to a local state file and exits; run
+examples/router_tier2_kingston_fetch.py <job_id> whenever you're ready
+to poll for and certify the result — it re-attaches by job id, which
+never expires.
 
-Requires IBM credentials (never written to the plan, certificate, or the
-results file):
+Requires IBM credentials (never written to the plan, state file, or
+certificate):
 
     export IBM_QUANTUM_TOKEN=...
     export IBM_QUANTUM_CRN=...
     python examples/router_tier2_kingston.py
-
-Results are logged to results/router_tier2_kingston_<timestamp>.json,
-following the eil51 run convention.
 """
 
 from __future__ import annotations
 
-import datetime
 import json
-import math
 import os
 import pathlib
 import sys
@@ -50,8 +48,9 @@ try:
 except ModuleNotFoundError:
     pass
 
-from limen.pipeline import run_pipeline
-from limen.router import DEFAULT_FLEET, RouteRequest, Tier, route
+from limen.pipeline import submit_qpu_job
+from limen.router import DEFAULT_FLEET, JobState, JobStatus, RouteRequest, Tier, route
+from limen.router.job_state import now_iso, retry_transient, save_state
 
 SHOTS = 1000
 RESULTS_DIR = pathlib.Path(__file__).resolve().parent.parent / "results"
@@ -96,49 +95,39 @@ def main() -> int:
     print("RoutePlan:")
     print(json.dumps(plan.to_dict(), indent=2))
 
-    # Offline baseline: same plan executed on the exact simulator.
-    offline_kwargs = dict(plan.pipeline_kwargs)
-    offline_kwargs.update(backend="statevector", qpu_backend_name="aer_simulator")
-    baseline = run_pipeline(qubo, **offline_kwargs)
-    assert baseline.is_optimal, "statevector baseline must certify optimal"
+    # Submission is safe to retry on a transient network error (nothing
+    # has been accepted by IBM yet); a real submission failure (bad
+    # credentials, unknown backend) is not retried and surfaces directly.
+    try:
+        job_id = retry_transient(
+            lambda: submit_qpu_job(
+                qubo,
+                qpu_backend_name=plan.backend.name,
+                qpu_shots=plan.shots,
+                qpu_token=token,
+                qpu_instance=crn,
+            )
+        )
+    except Exception as exc:
+        print(f"Submission failed: {exc!r}", file=sys.stderr)
+        return 1
 
-    # Hardware run: the routed plan, plus credentials supplied at call time.
-    hw_cert = run_pipeline(
-        qubo, **plan.pipeline_kwargs, qpu_token=token, qpu_instance=crn
+    state = JobState(
+        job_id=job_id,
+        status=JobStatus.SUBMITTED,
+        plan=plan.to_dict(),
+        submitted_at=now_iso(),
     )
+    save_state(RESULTS_DIR, state)
 
-    predicted = hw_cert.aggregate_logical_error_rate
-    measured = max(0.0, baseline.success_probability - hw_cert.success_probability)
-    # Two-sigma binomial sampling noise on the measured success probability.
-    noise = 2.0 * math.sqrt(
-        max(hw_cert.success_probability * (1.0 - hw_cert.success_probability), 1e-12)
-        / plan.shots
+    print(f"\n[limen] Submitted job {job_id} on {plan.backend.name} ({plan.shots} shots)")
+    print(f"[limen] State saved to results/router_tier2_kingston_{job_id}.state.json")
+    print(
+        "[limen] This process does not wait for the result. When you're "
+        "ready to check on it or certify a completed run:\n"
+        f"    python examples/router_tier2_kingston_fetch.py {job_id}"
     )
-    within = measured <= (predicted or 0.0) + noise
-
-    record = {
-        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "plan": plan.to_dict(),
-        "baseline_certificate": baseline.to_dict(),
-        "hardware_certificate": hw_cert.to_dict(),
-        "predicted_aggregate_logical_error_rate": predicted,
-        "measured_success_deficit": measured,
-        "two_sigma_sampling_noise": noise,
-        "measured_within_prediction": within,
-    }
-    RESULTS_DIR.mkdir(exist_ok=True)
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out = RESULTS_DIR / f"router_tier2_kingston_{stamp}.json"
-    out.write_text(json.dumps(record, indent=2))
-    print(f"\nLogged to {out}")
-
-    print(f"optimal on hardware: {hw_cert.is_optimal}")
-    print(f"predicted aggregate logical error: {predicted:.3e}")
-    print(f"measured success deficit:          {measured:.3e} (±{noise:.3e})")
-    print(f"within prediction: {within}")
-    ok = bool(hw_cert.is_optimal) and within
-    print("PASS" if ok else "FAIL")
-    return 0 if ok else 1
+    return 0
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ from limen.router.budget_router import (
     route,
 )
 from limen.router.history import BackendHistory, apply_history, scan_results
+from limen.router.job_state import JobState, JobStatus, retry_transient
 
 __all__ = [
     "Tier",
@@ -21,4 +22,7 @@ __all__ = [
     "BackendHistory",
     "scan_results",
     "apply_history",
+    "JobState",
+    "JobStatus",
+    "retry_transient",
 ]

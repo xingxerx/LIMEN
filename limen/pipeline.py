@@ -174,16 +174,19 @@ def _aer_probabilities(
     return {bits[::-1]: count / total for bits, count in result.counts.items()}
 
 
-def _qpu_probabilities(
+def _transpile_and_submit_qpu_job(
     circuit: Any,
     backend_name: str,
     shots: int,
     token: str,
     instance: str,
-) -> dict[str, float]:
-    """Execute *circuit* on a real IBM QPU; return qubit-0-first probs.
+) -> Any:
+    """Transpile *circuit* for *backend_name* and submit it via SamplerV2.
 
-    Requires the ``qiskit`` and ``qiskit-ibm-runtime`` extras.
+    Returns the (unresolved) qiskit-ibm-runtime job immediately — the
+    caller decides whether to block on ``job.result()`` or persist the
+    job id and return, letting a separate process poll for completion
+    later (see examples/router_tier2_kingston_fetch.py).
 
     Raises:
         ImportError: If qiskit or qiskit-ibm-runtime are not installed.
@@ -211,7 +214,25 @@ def _qpu_probabilities(
     transpiled = pm.run(qc)
 
     sampler = SamplerV2(mode=backend)
-    job = sampler.run([transpiled], shots=shots)
+    return sampler.run([transpiled], shots=shots)
+
+
+def _qpu_probabilities(
+    circuit: Any,
+    backend_name: str,
+    shots: int,
+    token: str,
+    instance: str,
+) -> dict[str, float]:
+    """Submit *circuit* to a real IBM QPU, block for the result, and return
+    qubit-0-first probs.
+
+    Requires the ``qiskit`` and ``qiskit-ibm-runtime`` extras.
+
+    Raises:
+        ImportError: If qiskit or qiskit-ibm-runtime are not installed.
+    """
+    job = _transpile_and_submit_qpu_job(circuit, backend_name, shots, token, instance)
     print(
         f"[limen] QPU job submitted — ID: {job.job_id()}  "
         f"backend: {backend_name}  shots: {shots}\n"
@@ -224,6 +245,40 @@ def _qpu_probabilities(
     if total == 0:
         return {}
     return {bits[::-1]: count / total for bits, count in counts.items()}
+
+
+def submit_qpu_job(
+    qubo: dict[tuple[str, str], float],
+    *,
+    qaoa_layers: int = 1,
+    grid_size: int = 12,
+    qpu_backend_name: str,
+    qpu_shots: int = 1000,
+    qpu_token: str,
+    qpu_instance: str,
+) -> str:
+    """Compile *qubo*'s QAOA circuit and submit it to an IBM QPU without
+    waiting for a result; return the job id immediately.
+
+    Runs the identical deterministic offline grid-search
+    ``run_pipeline(backend="qpu")`` performs internally, so a later
+    ``run_pipeline(qubo, ..., qpu_counts=<fetched counts>)`` call
+    reproduces the same QAOA parameters without needing them persisted
+    alongside the job id — decoupling "submit a job" from "wait for and
+    certify its result" into two independently restartable steps.
+
+    Raises:
+        ImportError: If qiskit or qiskit-ibm-runtime are not installed.
+    """
+    graph = from_qubo_dict(qubo)
+    params, _ = _grid_search(graph, qaoa_layers, grid_size)
+    circuit = compile_qaoa(
+        graph, [params["gamma"]] * qaoa_layers, [params["beta"]] * qaoa_layers
+    )
+    job = _transpile_and_submit_qpu_job(
+        circuit, qpu_backend_name, qpu_shots, qpu_token, qpu_instance
+    )
+    return job.job_id()
 
 
 def _counts_to_probabilities(counts: dict[str, int]) -> dict[str, float]:
