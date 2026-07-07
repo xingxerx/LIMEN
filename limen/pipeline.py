@@ -42,7 +42,18 @@ _BACKEND_CHOICES = frozenset({"statevector", "aer", "qpu", "dwave", "braket", "o
 
 @dataclass
 class EndToEndCertificate:
-    """Composed result of the full QUBO -> gates -> ECC pipeline."""
+    """Composed result of the full QUBO -> gates -> ECC pipeline.
+
+    ``aggregate_logical_error_rate`` is always the surface-code model's
+    own prediction, untouched by any empirical data.
+    ``measured_logical_error_prior`` is an optional empirical prior from
+    run history on the same backend (limen.router.history), and
+    ``predicted_logical_error_bound`` is the conservative envelope
+    ``max(model, prior)`` — the number "did the measured deficit land
+    within prediction?" checks should compare against. The two inputs
+    are deliberately never averaged: a blend would obscure that the
+    model is a proxy while the prior is a measurement.
+    """
 
     solution: dict[str, int]
     energy: float
@@ -59,6 +70,8 @@ class EndToEndCertificate:
     notes: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     distributed_compilation: dict[str, Any] | None = None
+    measured_logical_error_prior: float | None = None
+    predicted_logical_error_bound: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +87,8 @@ class EndToEndCertificate:
             "physical_error_rate": self.physical_error_rate,
             "distance": self.distance,
             "n_logical_qubits": self.n_logical_qubits,
+            "measured_logical_error_prior": self.measured_logical_error_prior,
+            "predicted_logical_error_bound": self.predicted_logical_error_bound,
             "notes": list(self.notes),
             "metadata": dict(self.metadata),
             "distributed_compilation": (
@@ -322,6 +337,196 @@ def run_pipeline_from_plan(
     return run_pipeline(qubo, **plan.pipeline_kwargs)
 
 
+def run_route_request(
+    request: Any,
+    *,
+    results_dir: Any = None,
+    fleet: Any = None,
+    qpu_token: str | None = None,
+    qpu_instance: str | None = None,
+    poll_initial_seconds: float = 30.0,
+    poll_backoff_cap_seconds: float = 300.0,
+    poll_ceiling_seconds: float = 24 * 3600.0,
+) -> EndToEndCertificate:
+    """QUBO + budget in, certified answer out — route and execute in one call.
+
+    The zero-manual-steps composition of the router and the pipeline:
+    builds an informed fleet from *results_dir* (run history + calibration
+    snapshots, see :func:`limen.router.informed_fleet`), routes *request*
+    through :func:`limen.router.route`, and executes the resulting plan.
+
+    Simulator and synchronous-hardware plans dispatch straight through
+    :func:`run_pipeline_from_plan`. IBM QPU plans go through the
+    deliberately decoupled submit -> poll -> certify chain (see
+    examples/router_tier2_kingston.py for why submission and waiting are
+    separate concerns): the job id and lifecycle state are persisted to
+    *results_dir* at every poll when one is given, so a crash or timeout
+    here loses nothing — examples/router_tier2_kingston_fetch.py (or a
+    rerun) can re-attach by job id and finish the certification.
+
+    Args:
+        request: A limen.router.RouteRequest.
+        results_dir: Directory holding past certs and calibration
+            snapshots. When given, it seeds the fleet (unless *fleet*
+            overrides it) and receives QPU job-state files. When None,
+            the DEFAULT_FLEET static profiles are used and no state is
+            persisted.
+        fleet: Explicit fleet override; skips informed_fleet entirely.
+        qpu_token: IBM Quantum Platform API token; falls back to the
+            IBM_QUANTUM_TOKEN environment variable. Only consulted for
+            IBM QPU plans.
+        qpu_instance: IBM Quantum CRN; falls back to IBM_QUANTUM_CRN.
+            Only consulted for IBM QPU plans.
+        poll_initial_seconds: First poll delay for QPU jobs; doubles each
+            poll up to *poll_backoff_cap_seconds*.
+        poll_backoff_cap_seconds: Maximum delay between polls.
+        poll_ceiling_seconds: Give up polling (TimeoutError) after this
+            long; the job keeps running on IBM's side and the persisted
+            job id can be re-attached later.
+
+    Returns:
+        The EndToEndCertificate for the executed plan.
+
+    Raises:
+        ValueError: If the plan needs IBM credentials and none are
+            available.
+        RuntimeError: If the QPU job ends in ERROR or CANCELLED.
+        TimeoutError: If *poll_ceiling_seconds* elapses before the QPU
+            job reaches a terminal status.
+        NotImplementedError: If the plan requires circuit cutting (see
+            :func:`run_pipeline_from_plan`).
+    """
+    import os
+
+    from limen.router import DEFAULT_FLEET, informed_fleet, route
+
+    if fleet is None:
+        fleet = (
+            informed_fleet(results_dir) if results_dir is not None else DEFAULT_FLEET
+        )
+    plan = route(request, fleet=fleet)
+
+    if plan.pipeline_kwargs.get("backend") != "qpu":
+        return run_pipeline_from_plan(request.qubo, plan)
+
+    if plan.use_cutting:
+        # Reject before submitting: run_pipeline_from_plan would raise the
+        # same error, but only after credits were already spent on a job
+        # whose counts nothing here could certify.
+        return run_pipeline_from_plan(request.qubo, plan)
+
+    token = qpu_token or os.environ.get("IBM_QUANTUM_TOKEN")
+    instance = qpu_instance or os.environ.get("IBM_QUANTUM_CRN")
+    if not (token and instance):
+        raise ValueError(
+            "This plan targets IBM hardware "
+            f"({plan.backend.name}); pass qpu_token/qpu_instance or set "
+            "IBM_QUANTUM_TOKEN and IBM_QUANTUM_CRN."
+        )
+
+    job_id = submit_qpu_job(
+        request.qubo,
+        qpu_backend_name=plan.pipeline_kwargs["qpu_backend_name"],
+        qpu_shots=plan.shots,
+        qpu_token=token,
+        qpu_instance=instance,
+    )
+    counts = _poll_qpu_counts(
+        job_id,
+        plan,
+        token,
+        instance,
+        results_dir=results_dir,
+        poll_initial_seconds=poll_initial_seconds,
+        poll_backoff_cap_seconds=poll_backoff_cap_seconds,
+        poll_ceiling_seconds=poll_ceiling_seconds,
+    )
+    return run_pipeline(request.qubo, **plan.pipeline_kwargs, qpu_counts=counts)
+
+
+def _poll_qpu_counts(
+    job_id: str,
+    plan: Any,
+    token: str,
+    instance: str,
+    *,
+    results_dir: Any,
+    poll_initial_seconds: float,
+    poll_backoff_cap_seconds: float,
+    poll_ceiling_seconds: float,
+) -> dict[str, int]:
+    """Poll an IBM Runtime job to a terminal status and return its counts.
+
+    Persists a limen.router.job_state.JobState to *results_dir* (when
+    given) at submission and every poll, mirroring
+    examples/router_tier2_kingston_fetch.py's crash-resilience contract:
+    the job id never expires, so any non-DONE exit here can be resumed by
+    a later process.
+    """
+    import pathlib
+    import time
+
+    from qiskit_ibm_runtime import QiskitRuntimeService  # type: ignore[import]
+
+    from limen.router import JobState, JobStatus
+    from limen.router.job_state import now_iso, save_state
+
+    if results_dir is not None:
+        results_dir = pathlib.Path(results_dir)
+
+    terminal = {
+        "DONE": JobStatus.DONE,
+        "ERROR": JobStatus.ERROR,
+        "CANCELLED": JobStatus.CANCELLED,
+    }
+
+    state = JobState(
+        job_id=job_id,
+        status=JobStatus.SUBMITTED,
+        plan=plan.to_dict(),
+        submitted_at=now_iso(),
+    )
+    if results_dir is not None:
+        save_state(results_dir, state)
+
+    service = QiskitRuntimeService(
+        channel="ibm_quantum_platform", token=token, instance=instance
+    )
+    job = service.job(job_id)
+
+    start = time.monotonic()
+    backoff = poll_initial_seconds
+    while True:
+        raw_status = str(job.status())
+        mapped = terminal.get(raw_status)
+        state.status = mapped if mapped is not None else JobStatus.QUEUED
+        state.last_polled_at = now_iso()
+        if results_dir is not None:
+            save_state(results_dir, state)
+
+        if mapped is JobStatus.DONE:
+            return job.result()[0].data.c.get_counts()
+        if mapped is not None:
+            raise RuntimeError(
+                f"QPU job {job_id} ended with status {raw_status}; not "
+                "resubmitting automatically — a hardware-side failure "
+                "would burn credits on a problem this pipeline can't fix. "
+                "Submit a fresh request deliberately if you want to retry."
+            )
+        if time.monotonic() - start >= poll_ceiling_seconds:
+            state.status = JobStatus.TIMED_OUT
+            if results_dir is not None:
+                save_state(results_dir, state)
+            raise TimeoutError(
+                f"QPU job {job_id} still {raw_status} after "
+                f"{poll_ceiling_seconds:.0f}s; it keeps running on IBM's "
+                "side — re-attach later by job id (e.g. "
+                f"examples/router_tier2_kingston_fetch.py {job_id})."
+            )
+        time.sleep(backoff)
+        backoff = min(backoff * 2, poll_backoff_cap_seconds)
+
+
 def _counts_to_probabilities(counts: dict[str, int]) -> dict[str, float]:
     """Convert raw Qiskit counts (qubit-0 rightmost) to qubit-0-first probs."""
     total = sum(counts.values())
@@ -529,6 +734,7 @@ def run_pipeline(
     grid_size: int = 12,
     distance: int = 3,
     physical_error_rate: float | None = None,
+    measured_logical_error: float | None = None,
     encode_logical: bool = True,
     server_addresses: list[str] | None = None,
     num_partitions: int | None = None,
@@ -561,6 +767,13 @@ def run_pipeline(
         distance: Surface-code distance for the logical-qubit certificate.
         physical_error_rate: Per-qubit bit-flip rate for the ECC term;
             if None, the logical-qubit certificate is skipped.
+        measured_logical_error: Optional empirical logical-error prior
+            for the target backend, measured from previous certified
+            runs (see limen.router.history). Recorded on the certificate
+            as ``measured_logical_error_prior`` and folded into
+            ``predicted_logical_error_bound = max(model, prior)`` — it
+            never alters ``aggregate_logical_error_rate``, which stays
+            the surface-code model's own prediction.
         encode_logical: Whether to compute the surface-code certificate.
         server_addresses: Optional "host:port" peer addresses. If given, the
             logical graph is compiled across these peers via the Coordination
@@ -799,6 +1012,7 @@ def run_pipeline(
 
     logical_rate: float | None = None
     aggregate_rate: float | None = None
+    predicted_bound: float | None = None
     roundtrip_corrects_all_weight1: bool | None = None
     notes: list[str] = []
     if encode_logical and physical_error_rate is not None:
@@ -807,6 +1021,28 @@ def run_pipeline(
         cert = certify_logical_qubit(patch, decoder, physical_error_rate)
         logical_rate = cert.logical_error_rate
         aggregate_rate = 1.0 - (1.0 - logical_rate) ** n
+        # Conservative envelope, not a blend: the model prediction stays
+        # reported untouched in aggregate_logical_error_rate; the bound
+        # takes whichever of (model, measured prior) is worse, so repeat
+        # runs on a backend with a known deficit land within prediction
+        # without pretending the model predicted it.
+        predicted_bound = aggregate_rate
+        if measured_logical_error is not None:
+            predicted_bound = max(aggregate_rate, measured_logical_error)
+            if measured_logical_error > aggregate_rate:
+                notes.append(
+                    f"Measured logical-error prior {measured_logical_error:.3e} "
+                    f"from run history exceeds the surface-code model's "
+                    f"aggregate prediction {aggregate_rate:.3e}; "
+                    f"predicted_logical_error_bound uses the prior."
+                )
+            else:
+                notes.append(
+                    f"Measured logical-error prior {measured_logical_error:.3e} "
+                    f"from run history is within the surface-code model's "
+                    f"aggregate prediction {aggregate_rate:.3e}; "
+                    f"predicted_logical_error_bound uses the model."
+                )
         # Back the analytic certificate with executed gate circuits: run
         # the syndrome-extraction loop on the simulator for every weight-1
         # X error and confirm the code corrects them all.
@@ -906,4 +1142,6 @@ def run_pipeline(
         notes=notes,
         metadata=metadata,
         distributed_compilation=distributed_compilation,
+        measured_logical_error_prior=measured_logical_error,
+        predicted_logical_error_bound=predicted_bound,
     )

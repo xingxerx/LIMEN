@@ -46,6 +46,8 @@ __all__ = [
     "QKDResult",
     "EndToEndCertificate",
     "run_pipeline",
+    "run_pipeline_from_plan",
+    "run_route_request",
     "Tier",
     "BackendProfile",
     "RouteRequest",
@@ -111,11 +113,21 @@ def __getattr__(name: str):
             "TeleportationResult": TeleportationResult,
             "QKDResult": QKDResult,
         }[name]
-    if name in ("EndToEndCertificate", "run_pipeline"):
-        from limen.pipeline import EndToEndCertificate, run_pipeline
+    if name in (
+        "EndToEndCertificate", "run_pipeline", "run_pipeline_from_plan",
+        "run_route_request",
+    ):
+        from limen.pipeline import (
+            EndToEndCertificate,
+            run_pipeline,
+            run_pipeline_from_plan,
+            run_route_request,
+        )
         return {
             "EndToEndCertificate": EndToEndCertificate,
             "run_pipeline": run_pipeline,
+            "run_pipeline_from_plan": run_pipeline_from_plan,
+            "run_route_request": run_route_request,
         }[name]
     if name in (
         "Tier", "BackendProfile", "RouteRequest", "RoutePlan", "DEFAULT_FLEET", "route",

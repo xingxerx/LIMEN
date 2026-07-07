@@ -413,16 +413,19 @@ def route(
         else:
             kwargs["physical_error_rate"] = request.physical_error_rate
         if backend.measured_logical_error is not None:
-            # Reported alongside the model prediction, not blended into it:
-            # the surface-code certificate predicts from physical_error_rate,
-            # while measured_logical_error is an independent empirical prior
-            # from limen.router.history. The two can disagree by 2-3x (see
-            # docs/architecture.md); hiding either behind an average would
-            # obscure that the model is a proxy, not a measurement.
+            # Forwarded to the certificate as an independent empirical
+            # prior, never blended into the model prediction: run_pipeline
+            # keeps aggregate_logical_error_rate as the surface-code
+            # model's own number and sets predicted_logical_error_bound to
+            # max(model, prior). The two can disagree by 2-3x; hiding
+            # either behind an average would obscure that the model is a
+            # proxy, not a measurement.
+            kwargs["measured_logical_error"] = backend.measured_logical_error
             notes.append(
                 f"measured_logical_error {backend.measured_logical_error:.3e} "
-                f"from {backend.name} run history (reported alongside, not "
-                "blended with, the surface-code model's prediction)"
+                f"from {backend.name} run history (forwarded to the "
+                "certificate as a max-bound prior, not blended into the "
+                "surface-code model's prediction)"
             )
     else:
         kwargs["encode_logical"] = False

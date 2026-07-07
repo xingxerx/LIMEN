@@ -158,7 +158,15 @@ def _certify(job_id: str, plan_dict: dict, counts: dict[str, int]) -> dict:
 
     hw_cert = run_pipeline(qubo, **plan_dict["pipeline_kwargs"], qpu_counts=counts)
 
-    predicted = hw_cert.aggregate_logical_error_rate or 0.0
+    model_predicted = hw_cert.aggregate_logical_error_rate or 0.0
+    # The bound is max(model, measured prior from run history) — see
+    # EndToEndCertificate. Plans routed before measured_logical_error
+    # forwarding existed carry no prior; the bound then equals the model.
+    predicted = (
+        hw_cert.predicted_logical_error_bound
+        if hw_cert.predicted_logical_error_bound is not None
+        else model_predicted
+    )
     physical_error_rate = plan_dict["pipeline_kwargs"]["physical_error_rate"]
     measured = max(0.0, baseline.success_probability - hw_cert.success_probability)
     noise = 2.0 * math.sqrt(
@@ -173,13 +181,16 @@ def _certify(job_id: str, plan_dict: dict, counts: dict[str, int]) -> dict:
         "plan": plan_dict,
         "baseline_certificate": baseline.to_dict(),
         "hardware_certificate": hw_cert.to_dict(),
-        "predicted_aggregate_logical_error_rate": predicted,
+        "predicted_aggregate_logical_error_rate": model_predicted,
+        "predicted_logical_error_bound": predicted,
+        "measured_logical_error_prior": hw_cert.measured_logical_error_prior,
         "physical_error_rate": physical_error_rate,
         "measured_success_deficit": measured,
         "two_sigma_sampling_noise": noise,
         "measured_within_prediction": within,
         "delta_measured_vs_physical_error_rate": measured - physical_error_rate,
-        "delta_measured_vs_predicted_aggregate": measured - predicted,
+        "delta_measured_vs_predicted_aggregate": measured - model_predicted,
+        "delta_measured_vs_predicted_bound": measured - predicted,
     }
 
 
@@ -191,6 +202,12 @@ def _print_summary(record: dict) -> bool:
         f"predicted aggregate logical error:   "
         f"{record['predicted_aggregate_logical_error_rate']:.3e}"
     )
+    # Certs written before the measured-prior bound existed lack the key.
+    if "predicted_logical_error_bound" in record:
+        print(
+            f"predicted bound (max(model, prior)): "
+            f"{record['predicted_logical_error_bound']:.3e}"
+        )
     print(
         f"measured success deficit:            {record['measured_success_deficit']:.3e} "
         f"(±{record['two_sigma_sampling_noise']:.3e})"

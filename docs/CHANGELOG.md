@@ -3,6 +3,44 @@
 All notable changes to LIMEN are documented in this file. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+- `informed_fleet()` (`limen.router`): one call that folds run history
+  (`apply_history`/`scan_results`) and calibration snapshots
+  (`apply_calibration`/`scan_calibration`) into a fleet, replacing the
+  hand-wired two-step chain in every caller. The
+  `router_tier2_kingston(_fetch)` examples now route against it, so
+  submissions and plan rebuilds use measured `physical_error_rate` and
+  run-history priors instead of raw `DEFAULT_FLEET`.
+- Measured logical-error prior in the certificate: `route()` forwards a
+  backend's history-derived `measured_logical_error` into
+  `pipeline_kwargs`; `run_pipeline()` records it as
+  `EndToEndCertificate.measured_logical_error_prior` and sets
+  `predicted_logical_error_bound = max(model, prior)` — a conservative
+  envelope, never an average. `aggregate_logical_error_rate` stays the
+  surface-code model's own prediction. The Tier 2 fetch example's
+  within-prediction check now compares against the bound.
+- T1/T2 decoherence term in `fetch_backend_calibration()`: the
+  `physical_error_rate` proxy now averages two-qubit gate error, readout
+  error, and an exponential T1-relaxation estimate scaled by
+  `expected_two_qubit_depth`; snapshots also record `avg_t1`/`avg_t2`/
+  `avg_two_qubit_gate_length`. Unvalidated against a measured deficit
+  until the next calibrated hardware run lands.
+- `run_pipeline_from_plan()` and `run_route_request()`
+  (`limen.pipeline`): RoutePlan and RouteRequest execution entry points.
+  `run_route_request()` is the zero-manual-steps path — QUBO + budget in,
+  certified answer out: builds the informed fleet, routes, and executes;
+  IBM QPU plans go through the decoupled submit -> poll -> certify chain
+  with job state persisted to `results_dir` at every poll. Circuit-cutting
+  plans still raise `NotImplementedError` (see the function docstring).
+- Stoer-Wagner min-cut graph partitioning (`limen.distributed.partition`
+  + `src/graph_partition.rs`): recursive min-cut bisection replaces
+  lexicographic variable chunking, keeping heavily-coupled variables in
+  the same partition instead of splitting them by alphabetical name order.
+- Second calibrated Tier 2 hardware run submitted on ibm_kingston (job
+  `d96mijgtcv6s73djv5a0`), the first routed with a calibration-seeded
+  `physical_error_rate` (2.586e-2 vs the prior run's 1e-3 guess).
+
 ## [0.8.3] - 2026-07-07
 
 - Budget router (`limen.router`): deterministic fidelity-tier planning for
