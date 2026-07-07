@@ -226,6 +226,14 @@ def _qpu_probabilities(
     return {bits[::-1]: count / total for bits, count in counts.items()}
 
 
+def _counts_to_probabilities(counts: dict[str, int]) -> dict[str, float]:
+    """Convert raw Qiskit counts (qubit-0 rightmost) to qubit-0-first probs."""
+    total = sum(counts.values())
+    if total == 0:
+        return {}
+    return {bits[::-1]: count / total for bits, count in counts.items()}
+
+
 def _dwave_solve(
     graph: LogicalGraph,
     num_reads: int,
@@ -434,6 +442,7 @@ def run_pipeline(
     qpu_shots: int = 1000,
     qpu_token: str | None = None,
     qpu_instance: str | None = None,
+    qpu_counts: dict[str, int] | None = None,
     dwave_num_reads: int = 1000,
     dwave_use_qpu: bool = False,
     dwave_endpoint: str | None = None,
@@ -501,6 +510,12 @@ def run_pipeline(
             or ``"qpu"`` backend.
         qpu_token: IBM Quantum Platform API token (``"qpu"`` only).
         qpu_instance: IBM Quantum CRN instance string (``"qpu"`` only).
+        qpu_counts: Raw Qiskit counts (qubit-0 rightmost) from a job
+            already submitted and fetched separately (``"qpu"`` only).
+            When given, no new job is submitted — *qpu_token*/
+            *qpu_instance* are not required — and these counts are
+            certified through the same grid-search/energy/ECC path a
+            live QPU run would use.
         dwave_num_reads: Number of samples to draw (``"dwave"`` only).
         dwave_use_qpu: If True, submit to a real D-Wave QPU instead of
             the local simulated annealer (``"dwave"`` only).
@@ -550,9 +565,10 @@ def run_pipeline(
             f"Unknown backend {backend!r}. Choose from: "
             + ", ".join(sorted(_BACKEND_CHOICES))
         )
-    if backend == "qpu" and not (qpu_token and qpu_instance):
+    if backend == "qpu" and qpu_counts is None and not (qpu_token and qpu_instance):
         raise ValueError(
-            "backend='qpu' requires both qpu_token and qpu_instance."
+            "backend='qpu' requires either qpu_counts, or both qpu_token "
+            "and qpu_instance."
         )
     if backend == "dwave" and dwave_use_qpu and not (dwave_endpoint and dwave_token):
         raise ValueError(
@@ -624,7 +640,9 @@ def run_pipeline(
             )
             if backend == "aer":
                 dist = _aer_probabilities(final_circuit, qpu_backend_name, qpu_shots)
-            else:  # "qpu"
+            elif qpu_counts is not None:  # "qpu", already-fetched job
+                dist = _counts_to_probabilities(qpu_counts)
+            else:  # "qpu", submit a new job
                 dist = _qpu_probabilities(
                     final_circuit, qpu_backend_name, qpu_shots,
                     qpu_token, qpu_instance,  # type: ignore[arg-type]

@@ -86,6 +86,11 @@ class BackendProfile:
     ``validated`` mirrors results/fleet_certificate.json: True means the
     backend has returned certified jobs from this stack before, which is
     a prerequisite for Tier 2.
+
+    ``avg_queue_seconds`` and ``measured_logical_error`` are optional
+    history-derived fields (see limen.router.history): None until at
+    least one finished cert for this backend has been scanned from
+    results/.
     """
 
     name: str
@@ -93,6 +98,8 @@ class BackendProfile:
     max_qubits: int
     cost_per_shot: float
     validated: bool = False
+    avg_queue_seconds: float | None = None
+    measured_logical_error: float | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in _BACKEND_KINDS:
@@ -191,6 +198,8 @@ class RoutePlan:
                 "max_qubits": self.backend.max_qubits,
                 "cost_per_shot": self.backend.cost_per_shot,
                 "validated": self.backend.validated,
+                "avg_queue_seconds": self.backend.avg_queue_seconds,
+                "measured_logical_error": self.backend.measured_logical_error,
             },
             "pipeline_kwargs": dict(self.pipeline_kwargs),
             "use_cutting": self.use_cutting,

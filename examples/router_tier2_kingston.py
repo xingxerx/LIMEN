@@ -39,6 +39,17 @@ import os
 import pathlib
 import sys
 
+# Allow running directly from the project root without a full package install.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
+# Load .env from the project root if present (never required — real env vars
+# take precedence via dotenv's override=False default).
+try:
+    from dotenv import load_dotenv  # type: ignore[import]
+    load_dotenv(pathlib.Path(__file__).resolve().parent.parent / ".env")
+except ModuleNotFoundError:
+    pass
+
 from limen.pipeline import run_pipeline
 from limen.router import DEFAULT_FLEET, RouteRequest, Tier, route
 

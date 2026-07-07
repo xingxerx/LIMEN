@@ -9,6 +9,7 @@ from limen.router.budget_router import (
     Tier,
     route,
 )
+from limen.router.history import BackendHistory, apply_history, scan_results
 
 __all__ = [
     "Tier",
@@ -17,4 +18,7 @@ __all__ = [
     "RoutePlan",
     "DEFAULT_FLEET",
     "route",
+    "BackendHistory",
+    "scan_results",
+    "apply_history",
 ]

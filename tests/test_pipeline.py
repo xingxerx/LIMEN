@@ -77,6 +77,33 @@ class TestEndToEndPipeline(unittest.TestCase):
         with self.assertRaises(ValueError, msg="requires qpu_token"):
             run_pipeline({("a", "a"): -1.0}, backend="qpu", encode_logical=False)
 
+    def test_qpu_counts_certifies_without_credentials(self):
+        # Qiskit counts are qubit-0 rightmost; a single logical qubit "a"
+        # measured as bit 1 all 100 shots means the counts key is "1".
+        cert = run_pipeline(
+            {("a", "a"): -1.0},
+            backend="qpu",
+            qpu_counts={"1": 100},
+            qpu_shots=100,
+            encode_logical=False,
+        )
+        self.assertEqual(cert.solution, {"a": 1})
+        self.assertTrue(cert.is_optimal)
+        self.assertEqual(cert.metadata["execution_backend"], "qpu")
+
+    def test_qpu_counts_takes_precedence_over_missing_credentials(self):
+        # No token/instance supplied, but qpu_counts alone is sufficient.
+        cert = run_pipeline(
+            {("a", "a"): -1.0, ("b", "b"): -1.0},
+            backend="qpu",
+            qpu_counts={"11": 80, "01": 20},
+            qpu_shots=100,
+            physical_error_rate=0.01,
+            distance=3,
+        )
+        self.assertIsNotNone(cert.aggregate_logical_error_rate)
+        self.assertAlmostEqual(cert.success_probability, 0.8)
+
 
 # ---------------------------------------------------------------------------
 # Aer backend tests (skip when Qiskit / Aer are not installed)
