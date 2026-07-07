@@ -49,7 +49,15 @@ except ModuleNotFoundError:
     pass
 
 from limen.pipeline import submit_qpu_job
-from limen.router import DEFAULT_FLEET, JobState, JobStatus, RouteRequest, Tier, route
+from limen.router import (
+    DEFAULT_FLEET,
+    JobState,
+    JobStatus,
+    RouteRequest,
+    Tier,
+    informed_fleet,
+    route,
+)
 from limen.router.job_state import now_iso, retry_transient, save_state
 
 SHOTS = 1000
@@ -83,9 +91,13 @@ def main() -> int:
         credit_budget=SHOTS * 0.002,  # kingston cost estimate -> 1000 shots
     )
     # Pin the fleet to kingston (plus the sims) so the router can't pick a
-    # sibling 156q device on the name tiebreak.
+    # sibling 156q device on the name tiebreak. Fold in run history and
+    # live calibration so physical_error_rate reflects measured hardware,
+    # not the 1e-3 hardcoded default (see limen.router.informed_fleet).
     fleet = tuple(
-        p for p in DEFAULT_FLEET if p.kind == "sim" or p.name == "ibm_kingston"
+        p
+        for p in informed_fleet(RESULTS_DIR, DEFAULT_FLEET)
+        if p.kind == "sim" or p.name == "ibm_kingston"
     )
     plan = route(request, fleet=fleet)
     assert plan.tier == Tier.HW_CERTIFIED, plan.tier

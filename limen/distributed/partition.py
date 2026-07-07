@@ -11,11 +11,17 @@ Coordination service's CompilePartition RPC), and merges the resulting
 PhysicalEncodings back into a single encoding equivalent to compiling
 the original graph in one shot.
 
-The partitioning strategy is a deterministic lexicographic split, not a
-min-cut or balanced-weight algorithm - naive by design, matching the
-existing lexicographic compiler's own philosophy (limen/core/compiler.py).
-A cross-partition interaction is owned by the lower-indexed partition
-exactly once; it is never duplicated or dropped.
+The partitioning strategy is Stoer-Wagner min-cut recursive bisection
+over the QUBO's variable-interaction graph (edge weight = summed
+absolute interaction weight between a pair of variables), not the
+lexicographic name-order split this module used before: two variables
+joined by a heavy interaction now tend to land in the same partition
+instead of being split apart by alphabetical name order, which lowers
+the merged encoding's cross-partition chain count for the same
+num_partitions. A cross-partition interaction is still owned by the
+lower-indexed partition exactly once; it is never duplicated or
+dropped. Partitioning remains a deterministic, pure function of
+(graph, num_partitions) -- see :func:`_min_cut_chunks`.
 
 Compiling each partition against its own namespaced hardware-qubit
 labels (e.g. "p0:q3" vs "p1:q3") is what makes merging the resulting
@@ -29,7 +35,136 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from limen.core.compiler import PhysicalEncoding, compile_lexicographic
-from limen.core.ir import Interaction, LogicalGraph, Variable
+from limen.core.ir import Interaction, LogicalGraph
+
+
+def _stoer_wagner_bisect(
+    nodes: list[str], edge_weight: dict[frozenset[str], float]
+) -> tuple[list[str], list[str]]:
+    """Split *nodes* into two groups via Stoer-Wagner global min-cut.
+
+    Uses the Rust implementation (limen_core.stoer_wagner_bisect) when
+    available; otherwise a pure-Python port of the same algorithm, so
+    partitioning still works (just slower) without the compiled
+    extension -- consistent with how limen.ecc.certificate falls back
+    to Python when limen_core is absent.
+    """
+    index = {name: i for i, name in enumerate(nodes)}
+    edges: list[tuple[int, int, float]] = []
+    for pair, w in edge_weight.items():
+        a, b = tuple(pair)
+        if a in index and b in index:
+            edges.append((index[a], index[b], w))
+
+    try:
+        from limen_core import stoer_wagner_bisect as _rust_bisect
+    except ImportError:
+        _rust_bisect = None
+
+    if _rust_bisect is not None:
+        _, side_a_idx = _rust_bisect(edges, len(nodes))
+    else:
+        side_a_idx = _python_stoer_wagner_bisect(edges, len(nodes))
+
+    side_a_set = set(side_a_idx)
+    side_a = [n for i, n in enumerate(nodes) if i in side_a_set]
+    side_b = [n for i, n in enumerate(nodes) if i not in side_a_set]
+    return side_a, side_b
+
+
+def _python_stoer_wagner_bisect(
+    edges: list[tuple[int, int, float]], n: int
+) -> list[int]:
+    """Pure-Python Stoer-Wagner global min-cut (fallback for no limen_core).
+
+    Mirrors src/graph_partition.rs's algorithm and determinism
+    guarantees (index-order scan, lowest-index tie-break) exactly, so
+    the two backends agree on every input.
+    """
+    weights = [[0.0] * n for _ in range(n)]
+    for a, b, w in edges:
+        weights[a][b] += w
+        weights[b][a] += w
+
+    merged_into: list[list[int]] = [[i] for i in range(n)]
+    active = [True] * n
+    active_count = n
+
+    best_cut_weight = float("inf")
+    best_group: list[int] = []
+
+    while active_count > 1:
+        start = next(i for i in range(n) if active[i])
+        in_a = [False] * n
+        in_a[start] = True
+        connection = [0.0] * n
+        for v in range(n):
+            if active[v] and v != start:
+                connection[v] = weights[start][v]
+
+        n_in_a = 1
+        prev = start
+        last = start
+        while n_in_a < active_count:
+            sel: int | None = None
+            best_w = float("-inf")
+            for v in range(n):
+                if active[v] and not in_a[v] and connection[v] > best_w:
+                    best_w = connection[v]
+                    sel = v
+            assert sel is not None, "a candidate remains while n_in_a < active_count"
+            prev, last = last, sel
+            in_a[last] = True
+            n_in_a += 1
+            for v in range(n):
+                if active[v] and not in_a[v]:
+                    connection[v] += weights[last][v]
+
+        cut_of_phase = sum(
+            weights[last][v] for v in range(n) if active[v] and v != last
+        )
+        if cut_of_phase < best_cut_weight:
+            best_cut_weight = cut_of_phase
+            best_group = list(merged_into[last])
+
+        for v in range(n):
+            if active[v] and v != prev and v != last:
+                weights[prev][v] += weights[last][v]
+                weights[v][prev] += weights[v][last]
+        merged_into[prev].extend(merged_into[last])
+        active[last] = False
+        active_count -= 1
+
+    return best_group
+
+
+def _min_cut_chunks(
+    var_names: list[str], interactions: list[Interaction], num_partitions: int
+) -> list[list[str]]:
+    """Split var_names into num_partitions groups via recursive min-cut bisection.
+
+    Repeatedly bisects the currently-largest group (deterministic tie-break:
+    lexicographically smallest member) until num_partitions groups exist.
+    Interaction self-loops (ix.i == ix.j, a linear/bias term) contribute no
+    edge weight -- only cross-variable interactions define the cut graph.
+    """
+    edge_weight: dict[frozenset[str], float] = {}
+    for ix in interactions:
+        if ix.i == ix.j:
+            continue
+        key = frozenset((ix.i, ix.j))
+        edge_weight[key] = edge_weight.get(key, 0.0) + abs(ix.weight)
+
+    groups: list[list[str]] = [sorted(var_names)]
+    while len(groups) < num_partitions:
+        groups.sort(key=lambda g: (-len(g), g[0]))
+        target = groups.pop(0)
+        side_a, side_b = _stoer_wagner_bisect(target, edge_weight)
+        groups.append(sorted(side_a))
+        groups.append(sorted(side_b))
+
+    groups.sort(key=lambda g: g[0])
+    return groups
 
 
 @dataclass
@@ -52,14 +187,16 @@ class GraphPartition:
 
 
 def partition_graph(graph: LogicalGraph, num_partitions: int) -> list[GraphPartition]:
-    """Split a LogicalGraph into num_partitions balanced, valid sub-graphs.
+    """Split a LogicalGraph into num_partitions min-cut, valid sub-graphs.
 
-    Variables are sorted lexicographically and divided into contiguous
-    chunks of nearly equal size (same ordering convention as
-    compile_lexicographic). For an interaction whose two variables fall
-    in different partitions, the lower-indexed partition owns it: that
-    interaction is included in its local graph, and the foreign
-    variable is added there as a boundary reference so the partition's
+    Variables are grouped via recursive Stoer-Wagner min-cut bisection
+    over the interaction graph (see :func:`_min_cut_chunks`), not
+    lexicographic name order: variables joined by heavier interactions
+    are kept together, minimizing cross-partition interaction weight.
+    For an interaction whose two variables fall in different
+    partitions, the lower-indexed partition owns it: that interaction
+    is included in its local graph, and the foreign variable is added
+    there as a boundary reference so the partition's
     LogicalGraph.validate() passes on its own.
 
     Args:
@@ -79,13 +216,11 @@ def partition_graph(graph: LogicalGraph, num_partitions: int) -> list[GraphParti
             f"num_partitions must be between 1 and {len(var_names)}, got {num_partitions}"
         )
 
-    chunks: list[list[str]] = [[] for _ in range(num_partitions)]
-    base, extra = divmod(len(var_names), num_partitions)
-    cursor = 0
-    for idx in range(num_partitions):
-        size = base + (1 if idx < extra else 0)
-        chunks[idx] = var_names[cursor : cursor + size]
-        cursor += size
+    chunks = (
+        [var_names]
+        if num_partitions == 1
+        else _min_cut_chunks(var_names, graph.interactions, num_partitions)
+    )
 
     owner: dict[str, int] = {}
     for idx, chunk in enumerate(chunks):

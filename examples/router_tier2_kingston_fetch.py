@@ -67,6 +67,7 @@ from limen.router import (
     RoutePlan,
     RouteRequest,
     Tier,
+    informed_fleet,
     route,
 )
 from limen.router.job_state import cert_path, load_state, now_iso, save_state
@@ -101,7 +102,9 @@ def _rebuild_plan() -> tuple[dict, RoutePlan]:
     qubo = star_maxcut(4)
     request = RouteRequest(qubo, fidelity_target=0.9, credit_budget=1000 * 0.002)
     fleet = tuple(
-        p for p in DEFAULT_FLEET if p.kind == "sim" or p.name == "ibm_kingston"
+        p
+        for p in informed_fleet(RESULTS_DIR, DEFAULT_FLEET)
+        if p.kind == "sim" or p.name == "ibm_kingston"
     )
     plan = route(request, fleet=fleet)
     assert plan.tier == Tier.HW_CERTIFIED, plan.tier

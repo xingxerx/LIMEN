@@ -7,7 +7,14 @@ import pathlib
 import tempfile
 import unittest
 
-from limen.router import DEFAULT_FLEET, apply_history, scan_results
+from limen.router import (
+    DEFAULT_FLEET,
+    RouteRequest,
+    Tier,
+    apply_history,
+    route,
+    scan_results,
+)
 from limen.router.history import _queue_seconds_from_timestamps
 
 RESULTS_DIR = pathlib.Path(__file__).resolve().parent.parent / "results"
@@ -104,6 +111,38 @@ class TestRouterTier2Shape(unittest.TestCase):
     def test_missing_timestamps_leaves_queue_seconds_none(self):
         self.assertIsNone(_queue_seconds_from_timestamps(None))
         self.assertIsNone(_queue_seconds_from_timestamps({"created": "bad"}))
+
+    def test_route_reports_measured_logical_error_without_blending(self):
+        # measured_logical_error is reported in plan.notes for visibility,
+        # but must never override physical_error_rate/pipeline_kwargs: the
+        # surface-code certificate's prediction and the empirical history
+        # prior are deliberately kept separate (see budget_router.route).
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = pathlib.Path(tmp)
+            self._write_cert(tmp_path, measured_success_deficit=0.0123)
+            history = scan_results(tmp_path)
+            fleet = tuple(
+                p
+                for p in apply_history(DEFAULT_FLEET, history)
+                if p.kind == "sim" or p.name == "ibm_kingston"
+            )
+            qubo: dict[tuple[str, str], float] = {}
+            hub = "hub"
+            for i in range(5):
+                leaf = f"leaf{i}"
+                qubo[(hub, leaf)] = 2.0
+                qubo[(hub, hub)] = qubo.get((hub, hub), 0.0) - 1.0
+                qubo[(leaf, leaf)] = -1.0
+            plan = route(
+                RouteRequest(qubo, fidelity_target=0.9, credit_budget=10.0),
+                fleet=fleet,
+            )
+            self.assertEqual(plan.tier, Tier.HW_CERTIFIED)
+            self.assertEqual(plan.backend.name, "ibm_kingston")
+            self.assertTrue(
+                any("measured_logical_error" in note for note in plan.notes)
+            )
+            self.assertNotEqual(plan.pipeline_kwargs["physical_error_rate"], 0.0123)
 
 
 if __name__ == "__main__":

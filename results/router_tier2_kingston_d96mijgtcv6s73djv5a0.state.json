@@ -1,0 +1,73 @@
+{
+  "job_id": "d96mijgtcv6s73djv5a0",
+  "status": "QUEUED",
+  "plan": {
+    "tier": 2,
+    "backend": {
+      "name": "ibm_kingston",
+      "kind": "ibm",
+      "max_qubits": 156,
+      "cost_per_shot": 0.021755569219589235,
+      "validated": true,
+      "avg_queue_seconds": 42437.904116,
+      "measured_logical_error": 0.06134930707784614
+    },
+    "pipeline_kwargs": {
+      "backend": "qpu",
+      "qpu_backend_name": "ibm_kingston",
+      "qpu_shots": 100,
+      "encode_logical": true,
+      "distance": 3,
+      "physical_error_rate": 0.025862911798496722
+    },
+    "use_cutting": false,
+    "num_partitions": null,
+    "ecc_distance": 3,
+    "physical_qubit_budget": 151,
+    "patch_assignments": [
+      {
+        "logical_var": 0,
+        "distance": 3,
+        "physical_start": 0,
+        "physical_end": 9
+      },
+      {
+        "logical_var": 1,
+        "distance": 3,
+        "physical_start": 9,
+        "physical_end": 18
+      },
+      {
+        "logical_var": 2,
+        "distance": 3,
+        "physical_start": 18,
+        "physical_end": 27
+      },
+      {
+        "logical_var": 3,
+        "distance": 3,
+        "physical_start": 27,
+        "physical_end": 36
+      },
+      {
+        "logical_var": 4,
+        "distance": 3,
+        "physical_start": 36,
+        "physical_end": 45
+      }
+    ],
+    "n_vars": 5,
+    "shots": 100,
+    "criticality_spread": 2.5,
+    "notes": [
+      "criticality spread 2.500 (threshold 2.0) -> tier 2",
+      "backend ibm_kingston (ibm, 156q, validated=True), 100 shots",
+      "ECC: distance 3, 151 physical qubits budgeted, 5 of 5 variables patched",
+      "physical_error_rate 2.586e-02 from ibm_kingston calibration (overrides the 1.000e-03 request default)",
+      "measured_logical_error 6.135e-02 from ibm_kingston run history (reported alongside, not blended with, the surface-code model's prediction)"
+    ]
+  },
+  "submitted_at": "2026-07-07T21:02:06.761811+00:00",
+  "last_polled_at": "2026-07-07T21:05:52.123498+00:00",
+  "error": null
+}

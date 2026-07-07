@@ -41,20 +41,40 @@ def _cross_partition_graph() -> LogicalGraph:
 
 class TestPartitionGraph(unittest.TestCase):
 
-    def test_balanced_split(self):
+    def test_min_cut_keeps_heaviest_edge_together(self):
+        # x1-x3 (weight 3.0) is the heaviest interaction; min-cut bisection
+        # keeps its endpoints in the same partition instead of splitting
+        # them apart on alphabetical name order (the old lexicographic
+        # behavior would have put x3 with x4/x5).
         partitions = partition_graph(_six_var_graph(), num_partitions=2)
-        self.assertEqual(partitions[0].local_vars, {"x0", "x1", "x2"})
-        self.assertEqual(partitions[1].local_vars, {"x3", "x4", "x5"})
+        local_var_sets = [p.local_vars for p in partitions]
+        owning = next(s for s in local_var_sets if {"x1", "x3"} <= s)
+        self.assertIn("x1", owning)
+        self.assertIn("x3", owning)
+
+    def test_split_is_deterministic(self):
+        a = partition_graph(_six_var_graph(), num_partitions=2)
+        b = partition_graph(_six_var_graph(), num_partitions=2)
+        self.assertEqual([p.local_vars for p in a], [p.local_vars for p in b])
 
     def test_cross_edge_owned_by_lower_partition(self):
-        partitions = partition_graph(_six_var_graph(), num_partitions=2)
-        owned_pairs = {(ix.i, ix.j) for ix in partitions[0].graph.interactions}
-        self.assertIn(("x1", "x3"), owned_pairs)
-        self.assertEqual(partitions[0].boundary_refs, {"x3"})
-        self.assertEqual(partitions[1].boundary_refs, set())
+        # _cross_partition_graph is a path x0-x1-x2-x3 with the lightest
+        # edge at x1-x2 (1.5 vs 2.0 on either side): min-cut bisection
+        # cuts there, so x1-x2 is the one cross-partition interaction.
+        partitions = partition_graph(_cross_partition_graph(), num_partitions=2)
+        owner_of = {}
+        for p in partitions:
+            for v in p.local_vars:
+                owner_of[v] = p.partition_id
+        owning_idx = min(owner_of["x1"], owner_of["x2"])
+        other_idx = 1 - owning_idx
+        owned_pairs = {
+            (ix.i, ix.j) for ix in partitions[owning_idx].graph.interactions
+        }
+        other_pairs = {(ix.i, ix.j) for ix in partitions[other_idx].graph.interactions}
+        self.assertIn(("x1", "x2"), owned_pairs)
         # The cross edge must not appear in the partition that doesn't own it.
-        other_pairs = {(ix.i, ix.j) for ix in partitions[1].graph.interactions}
-        self.assertNotIn(("x1", "x3"), other_pairs)
+        self.assertNotIn(("x1", "x2"), other_pairs)
 
     def test_each_sub_graph_is_locally_valid(self):
         partitions = partition_graph(_six_var_graph(), num_partitions=2)

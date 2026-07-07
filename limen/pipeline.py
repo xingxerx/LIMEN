@@ -281,6 +281,47 @@ def submit_qpu_job(
     return job.job_id()
 
 
+def run_pipeline_from_plan(
+    qubo: dict[tuple[str, str], float], plan: Any
+) -> EndToEndCertificate:
+    """Dispatch a QUBO through :func:`run_pipeline` using a router RoutePlan.
+
+    ``plan.pipeline_kwargs`` (see limen.router.budget_router.route) are
+    already exact run_pipeline keyword arguments, so this is the single
+    call site every router-planned execution should go through instead
+    of each caller manually unpacking the plan:
+    ``run_pipeline_from_plan(qubo, plan)`` in place of
+    ``run_pipeline(qubo, **plan.pipeline_kwargs)``.
+
+    Args:
+        qubo: The same QUBO dict passed to ``route()`` to produce *plan*.
+        plan: A limen.router.RoutePlan.
+
+    Raises:
+        NotImplementedError: If ``plan.use_cutting`` is True. Circuit
+            cutting (limen.cutting) reconstructs a Pauli observable's
+            expectation value from sub-circuit sub-experiments — a
+            fundamentally different output shape than EndToEndCertificate's
+            sampled solution bitstring, and cutting needs an observable
+            string run_pipeline has no way to supply. Callers whose plan
+            requires cutting must still build the CutPlan and dispatch it
+            themselves via limen.cutting.find_cuts_and_partition and
+            limen.cutting.dispatch.run_cut_circuit.
+    """
+    if plan.use_cutting:
+        raise NotImplementedError(
+            "RoutePlan.use_cutting is True: this problem exceeds the "
+            f"chosen backend's {plan.backend.max_qubits} qubits and needs "
+            f"{plan.num_partitions} cut partitions. run_pipeline has no "
+            "cutting path (it returns a sampled solution certificate, not "
+            "a reconstructed observable expectation value) — build and "
+            "dispatch the CutPlan directly via "
+            "limen.cutting.find_cuts_and_partition and "
+            "limen.cutting.dispatch.run_cut_circuit instead."
+        )
+    return run_pipeline(qubo, **plan.pipeline_kwargs)
+
+
 def _counts_to_probabilities(counts: dict[str, int]) -> dict[str, float]:
     """Convert raw Qiskit counts (qubit-0 rightmost) to qubit-0-first probs."""
     total = sum(counts.values())

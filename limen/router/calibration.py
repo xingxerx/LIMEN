@@ -26,9 +26,13 @@ independent per-qubit bit-flip probability (see limen.ecc.certificate).
 Real device calibration reports many distinct error channels (per-pair
 two-qubit gate error, per-qubit readout error, T1/T2 decoherence, ...).
 physical_error_rate here is a single-number proxy — the mean of two-qubit
-gate error and readout error across the backend — not a faithful
-reproduction of the device's full noise profile. It replaces one guess
-(1e-3) with a better, measured guess; it is not itself ground truth.
+gate error, readout error, and a T1-relaxation estimate scaled by the
+caller's expected circuit depth — not a faithful reproduction of the
+device's full noise profile. It replaces one guess (1e-3) with a better,
+measured guess; it is not itself ground truth. The T1/T2 term is
+unvalidated against a measured deficit as of this writing — see
+docs/architecture.md and results/ for the calibrated-vs-measured
+comparison once a second hardware run lands.
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import json
+import math
 import pathlib
 import statistics
 from typing import Any
@@ -43,7 +48,9 @@ from typing import Any
 from limen.router.budget_router import BackendProfile
 
 
-def fetch_backend_calibration(service: Any, backend_name: str) -> dict[str, Any]:
+def fetch_backend_calibration(
+    service: Any, backend_name: str, *, expected_two_qubit_depth: int = 1
+) -> dict[str, Any]:
     """Query live calibration data for one IBM backend.
 
     Requires a connected ``QiskitRuntimeService`` (network + credentials).
@@ -51,6 +58,15 @@ def fetch_backend_calibration(service: Any, backend_name: str) -> dict[str, Any]
     to ``results/calibration_<backend_name>_<timestamp>.json`` themselves
     (see examples/fetch_backend_calibration.py) so :func:`scan_calibration`
     can pick it up later without a live connection.
+
+    Args:
+        service: A connected ``QiskitRuntimeService``.
+        backend_name: The backend to query.
+        expected_two_qubit_depth: Number of sequential two-qubit-gate
+            layers the caller expects the circuit to have (e.g. QAOA
+            layers times the ECC patch's internal gate depth). Used only
+            to scale the T1 decoherence estimate below; defaults to 1
+            (a single layer) when the caller has no better estimate.
 
     Raises:
         RuntimeError: If the backend exposes no calibration properties
@@ -64,14 +80,18 @@ def fetch_backend_calibration(service: Any, backend_name: str) -> dict[str, Any]
             "(simulators and some fake backends don't)."
         )
 
+    two_qubit_gates = [gate for gate in props.gates if len(gate.qubits) == 2]
     two_qubit_gate_errors = [
-        props.gate_error(gate.gate, gate.qubits)
-        for gate in props.gates
-        if len(gate.qubits) == 2
+        props.gate_error(gate.gate, gate.qubits) for gate in two_qubit_gates
+    ]
+    two_qubit_gate_lengths = [
+        props.gate_length(gate.gate, gate.qubits) for gate in two_qubit_gates
     ]
     readout_errors = [
         props.readout_error(q) for q in range(backend.num_qubits)
     ]
+    t1_times = [props.t1(q) for q in range(backend.num_qubits)]
+    t2_times = [props.t2(q) for q in range(backend.num_qubits)]
 
     avg_two_qubit_gate_error = (
         statistics.fmean(two_qubit_gate_errors) if two_qubit_gate_errors else None
@@ -79,13 +99,33 @@ def fetch_backend_calibration(service: Any, backend_name: str) -> dict[str, Any]
     avg_readout_error = (
         statistics.fmean(readout_errors) if readout_errors else None
     )
+    avg_two_qubit_gate_length = (
+        statistics.fmean(two_qubit_gate_lengths) if two_qubit_gate_lengths else None
+    )
+    avg_t1 = statistics.fmean(t1_times) if t1_times else None
+    avg_t2 = statistics.fmean(t2_times) if t2_times else None
+
+    # Exponential T1 relaxation over the expected circuit duration: the
+    # probability a qubit has decohered by the time the circuit finishes,
+    # independent of (and additional to) per-gate error above. This is
+    # what's missing from the pre-existing gate+readout average — it's
+    # the piece that scales with circuit depth rather than being a fixed
+    # per-gate constant. Not yet validated against a measured deficit;
+    # see limen/router/calibration.py module docstring.
+    decoherence_prob = None
+    if avg_t1 is not None and avg_two_qubit_gate_length is not None:
+        circuit_duration = expected_two_qubit_depth * avg_two_qubit_gate_length
+        decoherence_prob = 1.0 - math.exp(-circuit_duration / avg_t1)
 
     components = [
-        e for e in (avg_two_qubit_gate_error, avg_readout_error) if e is not None
+        e
+        for e in (avg_two_qubit_gate_error, avg_readout_error, decoherence_prob)
+        if e is not None
     ]
     if not components:
         raise RuntimeError(
-            f"{backend_name!r} properties() carried no gate or readout errors."
+            f"{backend_name!r} properties() carried no gate, readout, or "
+            "T1/T2 data."
         )
     physical_error_rate = statistics.fmean(components)
 
@@ -94,6 +134,11 @@ def fetch_backend_calibration(service: Any, backend_name: str) -> dict[str, Any]
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "avg_two_qubit_gate_error": avg_two_qubit_gate_error,
         "avg_readout_error": avg_readout_error,
+        "avg_two_qubit_gate_length": avg_two_qubit_gate_length,
+        "avg_t1": avg_t1,
+        "avg_t2": avg_t2,
+        "expected_two_qubit_depth": expected_two_qubit_depth,
+        "decoherence_prob": decoherence_prob,
         "physical_error_rate": physical_error_rate,
     }
 

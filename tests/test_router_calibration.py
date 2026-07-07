@@ -7,8 +7,10 @@ import pathlib
 import tempfile
 import unittest
 
+import math
+
 from limen.router import DEFAULT_FLEET, RouteRequest, Tier, apply_calibration, route
-from limen.router.calibration import scan_calibration
+from limen.router.calibration import fetch_backend_calibration, scan_calibration
 
 
 def _write_snapshot(tmp_path: pathlib.Path, backend: str, rate: float, when: str) -> None:
@@ -98,6 +100,91 @@ class TestRoutePrefersCalibration(unittest.TestCase):
         self.assertEqual(plan.backend.name, "ibm_kingston")
         self.assertAlmostEqual(plan.pipeline_kwargs["physical_error_rate"], 0.0614)
         self.assertTrue(any("calibration" in note for note in plan.notes))
+
+
+class _FakeGate:
+    def __init__(self, gate: str, qubits: tuple[int, ...]) -> None:
+        self.gate = gate
+        self.qubits = qubits
+
+
+class _FakeProperties:
+    """Duck-types the subset of qiskit BackendProperties fetch_backend_calibration
+    reads: gates/gate_error/gate_length for two-qubit gates, and per-qubit
+    readout_error/t1/t2."""
+
+    def __init__(self, num_qubits: int, t1: float, t2: float) -> None:
+        self.gates = [_FakeGate("ecr", (i, i + 1)) for i in range(num_qubits - 1)]
+        self._t1 = t1
+        self._t2 = t2
+
+    def gate_error(self, gate: str, qubits) -> float:
+        return 0.01
+
+    def gate_length(self, gate: str, qubits) -> float:
+        return 200e-9  # 200ns, a typical two-qubit gate duration
+
+    def readout_error(self, qubit: int) -> float:
+        return 0.02
+
+    def t1(self, qubit: int) -> float:
+        return self._t1
+
+    def t2(self, qubit: int) -> float:
+        return self._t2
+
+
+class _FakeBackend:
+    def __init__(self, num_qubits: int, t1: float, t2: float) -> None:
+        self.num_qubits = num_qubits
+        self._props = _FakeProperties(num_qubits, t1, t2)
+
+    def properties(self):
+        return self._props
+
+
+class _FakeService:
+    def __init__(self, backend: _FakeBackend) -> None:
+        self._backend = backend
+
+    def backend(self, name: str) -> _FakeBackend:
+        return self._backend
+
+
+class TestFetchBackendCalibrationDecoherence(unittest.TestCase):
+    """T1/T2-weighted decoherence estimate: the piece of physical_error_rate
+    that scales with expected circuit depth rather than being a fixed
+    per-gate constant (see calibration.py module docstring)."""
+
+    T1 = 100e-6  # 100us, a typical IBM T1
+
+    def test_decoherence_prob_matches_exponential_model(self):
+        service = _FakeService(_FakeBackend(3, t1=self.T1, t2=self.T1))
+        record = fetch_backend_calibration(
+            service, "fake_backend", expected_two_qubit_depth=10
+        )
+        expected_duration = 10 * 200e-9
+        expected_decoherence = 1.0 - math.exp(-expected_duration / self.T1)
+        self.assertAlmostEqual(record["decoherence_prob"], expected_decoherence)
+        self.assertAlmostEqual(record["avg_t1"], self.T1)
+        self.assertAlmostEqual(record["avg_two_qubit_gate_length"], 200e-9)
+
+    def test_deeper_circuit_increases_physical_error_rate(self):
+        service = _FakeService(_FakeBackend(3, t1=self.T1, t2=self.T1))
+        shallow = fetch_backend_calibration(
+            service, "fake_backend", expected_two_qubit_depth=1
+        )
+        deep = fetch_backend_calibration(
+            service, "fake_backend", expected_two_qubit_depth=1000
+        )
+        self.assertLess(
+            shallow["physical_error_rate"], deep["physical_error_rate"]
+        )
+
+    def test_defaults_to_depth_one(self):
+        service = _FakeService(_FakeBackend(3, t1=self.T1, t2=self.T1))
+        record = fetch_backend_calibration(service, "fake_backend")
+        self.assertEqual(record["expected_two_qubit_depth"], 1)
 
 
 if __name__ == "__main__":
