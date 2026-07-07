@@ -55,10 +55,21 @@ class BackendHistory:
 def _parse_timestamp(value: Any) -> datetime.datetime | None:
     if not isinstance(value, str):
         return None
+    # Primary: ISO 8601 (legacy certs and IBM Runtime job metrics both use this).
     try:
         return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
+        pass
+    # Fallback: human-readable format produced by now_iso() after the v0.8.3
+    # timestamp change ("YYYY-MM-DD HH:MM:SS UTC"). Without this, certs written
+    # after that change silently drop their queue-time samples from the cost model.
+    try:
+        return datetime.datetime.strptime(value, "%Y-%m-%d %H:%M:%S UTC").replace(
+            tzinfo=datetime.timezone.utc
+        )
+    except ValueError:
         return None
+
 
 
 def _queue_seconds_from_timestamps(timestamps: Any) -> float | None:

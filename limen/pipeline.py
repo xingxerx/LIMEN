@@ -347,6 +347,8 @@ def run_route_request(
     poll_initial_seconds: float = 30.0,
     poll_backoff_cap_seconds: float = 300.0,
     poll_ceiling_seconds: float = 24 * 3600.0,
+    server_addresses: list[str] | None = None,
+    num_partitions: int | None = None,
 ) -> EndToEndCertificate:
     """QUBO + budget in, certified answer out — route and execute in one call.
 
@@ -383,6 +385,16 @@ def run_route_request(
         poll_ceiling_seconds: Give up polling (TimeoutError) after this
             long; the job keeps running on IBM's side and the persisted
             job id can be re-attached later.
+        server_addresses: Optional list of ``"host:port"`` gRPC peer
+            addresses. When given, the LogicalGraph is compiled across
+            these peers via the :class:`~limen.distributed.server.CoordinationServicer`
+            ``CompilePartition`` RPC instead of only locally, and the
+            merged encoding is recorded on the certificate. Requires
+            the distributed extra (grpcio). When None (default), all
+            compilation is local.
+        num_partitions: Number of partitions to split the graph into
+            when dispatching to peers; defaults to
+            ``len(server_addresses)``.
 
     Returns:
         The EndToEndCertificate for the executed plan.
@@ -407,7 +419,12 @@ def run_route_request(
     plan = route(request, fleet=fleet)
 
     if plan.pipeline_kwargs.get("backend") != "qpu":
-        return run_pipeline_from_plan(request.qubo, plan)
+        return run_pipeline(
+            request.qubo,
+            **plan.pipeline_kwargs,
+            server_addresses=server_addresses,
+            num_partitions=num_partitions,
+        )
 
     if plan.use_cutting:
         # Reject before submitting: run_pipeline_from_plan would raise the
@@ -441,7 +458,13 @@ def run_route_request(
         poll_backoff_cap_seconds=poll_backoff_cap_seconds,
         poll_ceiling_seconds=poll_ceiling_seconds,
     )
-    return run_pipeline(request.qubo, **plan.pipeline_kwargs, qpu_counts=counts)
+    return run_pipeline(
+        request.qubo,
+        **plan.pipeline_kwargs,
+        qpu_counts=counts,
+        server_addresses=server_addresses,
+        num_partitions=num_partitions,
+    )
 
 
 def _poll_qpu_counts(
