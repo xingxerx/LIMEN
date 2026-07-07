@@ -115,7 +115,11 @@ def _poll_until_terminal(service, state: JobState) -> JobState:
     """Poll job status with exponential backoff, persisting state at every
     step, until a terminal status is reached or the 24h ceiling expires."""
     job = service.job(state.job_id)
-    submitted_at = datetime.datetime.fromisoformat(state.submitted_at)
+    try:
+        submitted_at = datetime.datetime.fromisoformat(state.submitted_at)
+    except ValueError:
+        submitted_at = datetime.datetime.strptime(state.submitted_at, "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=datetime.timezone.utc)
+
     backoff = POLL_INITIAL_SECONDS
 
     while True:

@@ -1,6 +1,6 @@
 {
   "backend": "ibm_kingston",
-  "generated_at": "2026-07-07T20:18:20.830032+00:00",
+  "generated_at": "2026-07-07 20:18:20 UTC",
   "avg_two_qubit_gate_error": 0.033897297955967805,
   "avg_readout_error": 0.01782852564102564,
   "physical_error_rate": 0.025862911798496722

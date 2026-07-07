@@ -131,7 +131,7 @@ def fetch_backend_calibration(
 
     return {
         "backend": backend_name,
-        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "avg_two_qubit_gate_error": avg_two_qubit_gate_error,
         "avg_readout_error": avg_readout_error,
         "avg_two_qubit_gate_length": avg_two_qubit_gate_length,

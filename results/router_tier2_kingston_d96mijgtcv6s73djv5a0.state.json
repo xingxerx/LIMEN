@@ -67,7 +67,7 @@
       "measured_logical_error 6.135e-02 from ibm_kingston run history (reported alongside, not blended with, the surface-code model's prediction)"
     ]
   },
-  "submitted_at": "2026-07-07T21:02:06.761811+00:00",
-  "last_polled_at": "2026-07-07T21:05:52.123498+00:00",
+  "submitted_at": "2026-07-07 21:02:06 UTC",
+  "last_polled_at": "2026-07-07 21:19:53 UTC",
   "error": null
 }

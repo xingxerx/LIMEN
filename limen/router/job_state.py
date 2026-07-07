@@ -84,7 +84,7 @@ class JobState:
 
 
 def now_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def state_path(results_dir: pathlib.Path, job_id: str) -> pathlib.Path:

@@ -25,7 +25,7 @@ class TestJobStateRoundTrip(unittest.TestCase):
                 job_id="abc123",
                 status=JobStatus.SUBMITTED,
                 plan={"tier": 2},
-                submitted_at="2026-07-06T20:00:00+00:00",
+                submitted_at="2026-07-06 20:00:00 UTC",
             )
             save_state(results_dir, state)
             loaded = load_state(results_dir, "abc123")
@@ -50,11 +50,11 @@ class TestJobStateRoundTrip(unittest.TestCase):
                 job_id="abc123",
                 status=JobStatus.SUBMITTED,
                 plan={},
-                submitted_at="2026-07-06T20:00:00+00:00",
+                submitted_at="2026-07-06 20:00:00 UTC",
             )
             save_state(results_dir, state)
             state.status = JobStatus.RUNNING
-            state.last_polled_at = "2026-07-06T20:05:00+00:00"
+            state.last_polled_at = "2026-07-06 20:05:00 UTC"
             save_state(results_dir, state)
             loaded = load_state(results_dir, "abc123")
             self.assertEqual(loaded.status, JobStatus.RUNNING)
@@ -67,7 +67,7 @@ class TestJobStateRoundTrip(unittest.TestCase):
                 job_id="abc123",
                 status=JobStatus.TIMED_OUT,
                 plan={},
-                submitted_at="2026-07-06T20:00:00+00:00",
+                submitted_at="2026-07-06 20:00:00 UTC",
                 error="polling ceiling exceeded",
             )
             save_state(results_dir, state)
