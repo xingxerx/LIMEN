@@ -29,11 +29,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install maturin and build limen_core extension
-        run: |
-          pip install maturin
-          maturin develop --release
-      - name: Install package with all optional backends
+      - name: Install package with all optional backends (builds limen_core via maturin)
         run: pip install ".[all]"
       - name: Install test dependencies
         run: pip install pytest

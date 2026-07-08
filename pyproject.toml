@@ -34,7 +34,7 @@ dependencies = []
 [project.optional-dependencies]
 pyqubo = ["pyqubo>=1.4"]
 dwave = ["dwave-ocean-sdk>=6.0"]
-ibm = ["qiskit>=1.0"]
+ibm = ["qiskit>=1.0", "qiskit-aer>=0.14"]
 braket = ["amazon-braket-sdk>=1.70"]
 openquantum = ["openquantum-sdk"]
 cutting = ["qiskit-addon-cutting>=0.9", "qiskit-ibm-runtime>=0.25"]
@@ -49,6 +49,7 @@ all = [
   "pyqubo>=1.4",
   "dwave-ocean-sdk>=6.0",
   "qiskit>=1.0",
+  "qiskit-aer>=0.14",
   "amazon-braket-sdk>=1.70",
   "openquantum-sdk",
   "qiskit-addon-cutting>=0.9",
