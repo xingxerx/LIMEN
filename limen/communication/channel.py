@@ -284,7 +284,12 @@ class QuantumChannel:
             circuits.append(qc)
 
         backend = self._get_backend()
-        transpiled_circuits = transpile(circuits, backend)
+        # num_processes=1: Qiskit's multiprocess transpile pool (enabled on
+        # Linux CI, not Windows) fails to unpickle the pass manager in fresh
+        # worker processes, crashing with "module 'qiskit.transpiler.
+        # preset_passmanagers' has no attribute 'common'". These circuits
+        # are tiny, so serial transpilation is free and avoids the bug.
+        transpiled_circuits = transpile(circuits, backend, num_processes=1)
 
         bob_results = []
         if self.use_runtime:
