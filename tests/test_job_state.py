@@ -12,8 +12,11 @@ from limen.router.job_state import (
     load_state,
     retry_transient,
     save_state,
+    sign_state,
     state_path,
+    verify_state,
 )
+from limen.security.pqc import generate_signing_key
 
 
 class TestJobStateRoundTrip(unittest.TestCase):
@@ -73,6 +76,53 @@ class TestJobStateRoundTrip(unittest.TestCase):
             save_state(results_dir, state)
             loaded = load_state(results_dir, "abc123")
             self.assertEqual(loaded.error, "polling ceiling exceeded")
+
+
+class TestPqcSigning(unittest.TestCase):
+    """sign_state/verify_state are purely additive -- save_state/load_state
+    behavior (tested above) is unaffected whether or not a caller signs."""
+
+    def test_valid_signature_verifies(self):
+        key = generate_signing_key()
+        state = JobState(
+            job_id="abc123",
+            status=JobStatus.SUBMITTED,
+            plan={"tier": 2},
+            submitted_at="2026-07-06 20:00:00 UTC",
+        )
+        sig = sign_state(state, key)
+        self.assertTrue(verify_state(state, sig, key.public_key()))
+
+    def test_tampered_state_fails_verification(self):
+        key = generate_signing_key()
+        state = JobState(
+            job_id="abc123",
+            status=JobStatus.SUBMITTED,
+            plan={"tier": 2},
+            submitted_at="2026-07-06 20:00:00 UTC",
+        )
+        sig = sign_state(state, key)
+        state.status = JobStatus.CANCELLED
+        self.assertFalse(verify_state(state, sig, key.public_key()))
+
+    def test_signing_does_not_change_persisted_shape(self):
+        # sign_state must not mutate JobState or add fields to to_dict().
+        with tempfile.TemporaryDirectory() as tmp:
+            results_dir = pathlib.Path(tmp)
+            state = JobState(
+                job_id="abc123",
+                status=JobStatus.SUBMITTED,
+                plan={"tier": 2},
+                submitted_at="2026-07-06 20:00:00 UTC",
+            )
+            key = generate_signing_key()
+            sign_state(state, key)
+            save_state(results_dir, state)
+            loaded = load_state(results_dir, "abc123")
+            self.assertEqual(loaded, state)
+            self.assertEqual(set(state.to_dict().keys()), {
+                "job_id", "status", "plan", "submitted_at", "last_polled_at", "error",
+            })
 
 
 class TestRetryTransient(unittest.TestCase):

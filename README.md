@@ -172,8 +172,12 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 - [x] Calibration seeding from live hardware: `fetch_backend_calibration()` (IBM Runtime gate/readout error) + offline `scan_calibration()`/`apply_calibration()`; `route()` prefers calibrated `physical_error_rate` over hardcoded defaults
 - [x] Crash-resilient QPU job lifecycle: submission decoupled from result-waiting, on-disk state machine (`limen.router.job_state`), transient-error-only retry, no auto-resubmission of errored/cancelled jobs
 - [x] First hardware validation: ibm_kingston Tier 2 run (job `d965qgotcv6s73djc1l0`, `results/router_tier2_kingston_d965qgotcv6s73djc1l0.json`)
+- [x] Router-driven multi-backend dispatch: `run_route_request()` (`limen.pipeline`) is the zero-manual-steps entry point — QUBO + budget in, certified answer out. Builds the informed fleet, routes, and executes; IBM QPU plans go through the decoupled submit → poll → certify chain
+- [x] Cut-circuit bridge: `RoutePlan.use_cutting` plans (problem too large for any single backend) dispatch through `run_cut_route_request()` (`limen.cutting`), returning a `CuttingCertificate` reconstructed from per-qubit `<Z_i>` marginals and certified with the same ECC term `run_pipeline` uses
+- [x] gRPC peer auto-discovery: `run_route_request()` falls back to `LIMEN_KNOWN_PEERS` for distributed compilation when `server_addresses` is omitted
+- [x] Substrate-aware routing: `ProblemProfile`/`BackendProfile.substrate_affinity` break ties between backends already tied on cost/capacity/validation
+- [x] Co-design history loop: `codesign_from_history()` (`limen.codesign`) seeds a fresh Stackelberg run from the best prior chain-strength in `results/`; standalone by design (see `docs/ROADMAP.md`)
 - [ ] Azure Quantum / Atom Computing adapter hardware validation (`limen.backends.azure_atom` is import-clean and unit-tested but dormant — never run against a live Azure workspace; excluded from `DEFAULT_FLEET` until validated)
-- [ ] Router-driven multi-backend dispatch from `run_pipeline` (today the router plans; execution scripts consume the plan)
 
 ---
 

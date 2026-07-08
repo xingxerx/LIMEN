@@ -47,8 +47,14 @@ distributed = [
   "grpcio-tools>=1.60",
   "protobuf>=4.25",
   "grpcio-health-checking>=1.60",
-  "cryptography>=42",
+  "cryptography>=48",
 ]
+# cryptography>=48: the first version confirmed (locally + in CI) to expose
+# hazmat.primitives.asymmetric.mldsa/mlkem (ML-DSA/ML-KEM, FIPS 204/203),
+# used by limen.security.pqc to sign persisted/exchanged artifacts. Split
+# out as its own extra so post-quantum signing doesn't require the full
+# grpcio/distributed stack.
+pqc = ["cryptography>=48"]
 all = [
   "pyqubo>=1.4",
   "dwave-ocean-sdk>=6.0",
@@ -62,7 +68,7 @@ all = [
   "grpcio-tools>=1.60",
   "protobuf>=4.25",
   "grpcio-health-checking>=1.60",
-  "cryptography>=42",
+  "cryptography>=48",
 ]
 
 [project.urls]

@@ -54,6 +54,9 @@ __all__ = [
     "RoutePlan",
     "DEFAULT_FLEET",
     "route",
+    "generate_signing_key",
+    "sign_json",
+    "verify_json",
 ]
 
 
@@ -147,6 +150,13 @@ def __getattr__(name: str):
             "RoutePlan": RoutePlan,
             "DEFAULT_FLEET": DEFAULT_FLEET,
             "route": route,
+        }[name]
+    if name in ("generate_signing_key", "sign_json", "verify_json"):
+        from limen.security import generate_signing_key, sign_json, verify_json
+        return {
+            "generate_signing_key": generate_signing_key,
+            "sign_json": sign_json,
+            "verify_json": verify_json,
         }[name]
     raise AttributeError(f"module 'limen' has no attribute {name!r}")
 

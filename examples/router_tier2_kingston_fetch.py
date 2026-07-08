@@ -70,7 +70,7 @@ from limen.router import (
     informed_fleet,
     route,
 )
-from limen.router.job_state import cert_path, load_state, now_iso, save_state
+from limen.router.job_state import cert_path, load_state, now_iso, save_state, state_path
 from examples.router_tier2_kingston import star_maxcut
 
 RESULTS_DIR = pathlib.Path(__file__).resolve().parent.parent / "results"
@@ -315,6 +315,10 @@ def main() -> int:
     out = cert_path(RESULTS_DIR, job_id)
     out.write_text(json.dumps(record, indent=2))
     print(f"\nLogged to {out}")
+
+    # The state file's only purpose was tracking this job until a
+    # certificate existed; now that it does, it's redundant bookkeeping.
+    state_path(RESULTS_DIR, job_id).unlink(missing_ok=True)
 
     ok = _print_summary(record)
     return 0 if ok else 1

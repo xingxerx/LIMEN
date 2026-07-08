@@ -35,7 +35,7 @@ High-level overview documentation for LIMEN.
 * **`CHANGELOG.md`** — Release history in Keep-a-Changelog format.
 * **`CONTRIBUTING.md`** — Developer guidelines detailing coding standards, PR workflows, and setup instructions.
 * **`DIRECTORY_MAP.md`** *(This file)* — High-level map labeling all folders and files in the workspace.
-* **`ROADMAP.md`** — Planned integration gaps and extensions beyond v0.8.3: co-design feedback loop (Phase 2 × Phase 6), router-peer auto-discovery (Phase 4 × Phase 6), automatic substrate selection (Phase 3), and the cut-circuit → `EndToEndCertificate` bridge (Phase 4 × Phase 5).
+* **`ROADMAP.md`** — Tracks the six-phase feedback loops: co-design history loop (Phase 2 × Phase 6), router-peer auto-discovery (Phase 4 × Phase 6), automatic substrate selection (Phase 3), and the cut-circuit → certificate bridge (Phase 4 × Phase 5) are all shipped; documents what remains explicitly out of scope.
 
 ---
 

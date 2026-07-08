@@ -1,108 +1,56 @@
 # LIMEN Roadmap
 
-> *The following describes work planned beyond v0.8.3. All currently implemented phases are documented in `docs/architecture.md` and `docs/DIRECTORY_MAP.md`. This document covers the integration gaps and extensions needed to realise the closed-loop quantum systems deployment framework described in the six-phase vision.*
+> *All currently implemented phases and feedback loops are documented in `docs/architecture.md` and `docs/DIRECTORY_MAP.md`. This document tracks what's shipped vs. still open beyond the six-phase vision.*
 
 ---
 
-## Current State (v0.8.3)
+## Current State (v0.8.3+, unreleased)
 
-LIMEN's six phases are individually complete:
+LIMEN's six phases are individually complete, and as of commit `23e1eaa` the feedback paths that connect them at runtime are wired in too:
 
 | Phase | Module(s) | Status |
 |-------|-----------|--------|
 | 1 — Lexicographic Compiler & IR | `limen.core` | ✅ |
-| 2 — Stackelberg Co-Design | `limen.codesign` | ✅ (standalone) |
+| 2 — Stackelberg Co-Design | `limen.codesign` | ✅ (standalone; see "Shipped: Co-Design History Loop" below) |
 | 3 — Multi-Backend Execution | `limen.backends`, `limen.analog` | ✅ |
-| 4 — Distributed Compilation | `limen.distributed` | ✅ (requires `server_addresses=`) |
+| 4 — Distributed Compilation | `limen.distributed` | ✅ (auto-discovers peers; `server_addresses=` still overrides) |
 | 5 — Gate-Model Pipeline + ECC | `limen.gates`, `limen.ecc`, `limen.pipeline` | ✅ |
 | 6 — Crash-Resilient Job Lifecycle | `limen.router.job_state` | ✅ |
 
-What is not yet wired is the **feedback paths** that let each phase inform the next at runtime — the loops that turn six independent tools into a single autonomous framework.
+`run_route_request()` — QUBO + budget in, certified answer out — is the zero-manual-steps entry point tying all six together. It now handles every `RoutePlan` shape, including oversized problems that require circuit cutting.
 
 ---
 
-## Planned: Co-Design Feedback Loop (Phase 2 × Phase 6)
+## Shipped: Cut-Circuit → Certificate Bridge (Phase 4 × Phase 5)
 
-### What it does
+When `RoutePlan.use_cutting = True`, the problem is too large for any single backend and is fragmented via `limen.cutting`. `run_pipeline_from_plan()` and `run_route_request()` dispatch this case to `run_cut_route_request()` (`limen/pipeline.py`), which:
 
-After `run_route_request()` completes and writes a cert to `results/`, the execution metadata from that cert (measured logical error rate, chain-break fraction) should automatically seed a `run_codesign()` call that updates the penalty coefficients and chain strength for the *next* run on the same backend.
+1. Decomposes the QUBO into Ising terms and compiles the same QAOA circuit `run_pipeline` would use.
+2. Reconstructs every qubit's `<Z_i>` marginal via `limen.cutting` (one cut + dispatch + reconstruct round trip per qubit).
+3. Decodes a solution bitstring from those marginals by threshold rounding and computes its exact classical energy.
+4. Certifies the result with the same surface-code ECC term `run_pipeline` uses (`limen.ecc.certificate.certify_logical_qubit`, reused unmodified).
 
-### Gap
-
-`run_codesign()` is today a standalone function. The router reads history into fleet profiles (`informed_fleet()`) but there is no path from a completed cert back into the Stackelberg solver. The co-design loop only runs if the user explicitly calls it via `examples/codesign_demo.py` or `examples/dwave_codesign_qpu.py`.
-
-### Planned implementation
-
-1. **`codesign_from_history(results_dir, encoding) → CoDesignResult | None`** — a new function in `limen.codesign` that scans `results/` for the most recent cert on the target backend, extracts the chain-break fraction (D-Wave path) or measured logical error (IBM path), and runs `run_codesign()` with that as the initial `chain_break_fraction_fn` prior.
-
-2. **`run_route_request(..., enable_codesign: bool = False)`** — when `True`, calls `codesign_from_history()` after plan selection and feeds the result's `encoding` into the `run_pipeline()` call, replacing the default lexicographic embedding.
-
-3. **Persistence** — `CoDesignResult` gets a `to_dict()` / `from_dict()` pair so the converged `encoding` and κ history can be written alongside the cert and loaded on the next call without re-running the full loop.
-
-### Why it matters
-
-Without this loop, penalty coefficients are static defaults regardless of how many QPU runs have accumulated in `results/`. With it, the compiler automatically routes around noisy qubits and drift after each completed job.
+The return type is `CuttingCertificate` (`limen.cutting.certificate`), not `EndToEndCertificate` — deliberately a different shape, since circuit cutting reconstructs Pauli-observable expectation values rather than a sampled solution. `is_optimal` is always `None` and `reconstructed_expected_energy` is an explicitly documented mean-field approximation.
 
 ---
 
-## Planned: Router Awareness of gRPC Peers (Phase 4 × Phase 6)
+## Shipped: Router Awareness of gRPC Peers (Phase 4 × Phase 6)
 
-### What it does
-
-`run_route_request()` should be able to discover available `limen.distributed` peer nodes from the environment and automatically include them in the compilation plan — so that a caller deploying a cluster of LIMEN nodes gets distributed compilation for free without hand-wiring `server_addresses=`.
-
-### Gap
-
-`run_route_request()` accepts `server_addresses` as of v0.8.3 and forwards them to `run_pipeline()`. However:
-- There is no automatic peer discovery from `LIMEN_KNOWN_PEERS` at the `run_route_request()` level.
-- The `RoutePlan` does not record the distributed split decision, so the plan is not self-describing for async re-execution.
-
-### Planned implementation
-
-1. **Auto-discovery from env** — when `server_addresses=None`, `run_route_request()` falls back to `NodeConfig.from_env().known_peers` if the distributed extra is installed. The caller gets distributed compilation just by setting `LIMEN_KNOWN_PEERS`.
-
-2. **`RoutePlan.server_addresses`** — add an optional field to `RoutePlan` so `run_pipeline_from_plan()` can reconstruct the distributed execution without the caller re-supplying the peer list.
+`run_route_request()` auto-discovers `limen.distributed` peers from the environment: when `server_addresses=None`, it falls back to `NodeConfig.from_env().known_peers` (the `LIMEN_KNOWN_PEERS` env var) if `LIMEN_NODE_ID` is set, so a deployed LIMEN cluster gets distributed compilation without every caller hand-wiring the peer list. `RoutePlan.server_addresses` records the decision so a plan is self-describing for async re-execution. Explicitly passing `server_addresses=` still overrides auto-discovery.
 
 ---
 
-## Planned: Automatic Substrate Selection (Phase 3)
+## Shipped: Automatic Substrate Selection (Phase 3)
 
-### What it does
-
-The router currently selects backends by cost tier and qubit count (`budget_router.route()`). A future extension would score each backend against the problem's structure and prefer the native substrate:
-
-- Dense, unfrustrated Ising → D-Wave annealer
-- Planar, unit-disk interaction graph → Rydberg neutral-atom array (QuEra Aquila)
-- Gate circuit within qubit budget → IBM / IonQ gate-model
-- Problem exceeds any single device → circuit cutting or distributed annealing
-
-### Gap
-
-`BackendProfile` has no substrate-affinity field, and `route()` has no problem-structure scoring. The user must select a backend explicitly via `RouteRequest` or accept the cost-tier default.
-
-### Planned implementation
-
-1. **`ProblemProfile`** — a lightweight struct computed from the QUBO before routing: variable count, edge density, frustration index, max coupling magnitude.
-
-2. **`BackendProfile.substrate_affinity: dict[str, float]`** — a scored mapping from problem-profile features to expected performance on this backend (e.g. `{"low_frustration": 0.9, "planar": 0.7}`).
-
-3. **`route()` substrate scoring pass** — after cost-tier filtering, rank remaining candidates by affinity dot-product with the problem profile.
+`limen.router.problem_profile.ProblemProfile` computes structural signals (edge density, a heuristic `frustration_index`) once per QUBO. `BackendProfile.substrate_affinity: dict[str, float]` scores each backend's fit against those signals. `_select_backend()` in `budget_router.py` uses this strictly as a **tiebreaker**, applied only after all existing cost/capacity/validation filtering — regression tests confirm it never overrides those criteria, only decides between backends already tied on them.
 
 ---
 
-## Planned: Cut-Circuit → `EndToEndCertificate` Bridge (Phase 4 × Phase 5)
+## Shipped: Co-Design History Loop (Phase 2 × Phase 6)
 
-### What it does
+`limen.codesign.solver.codesign_from_history(results_dir, encoding)` scans `results/` for the most recent cert on a target backend and seeds a fresh `run_codesign()` call from the best prior chain-strength. `CoDesignResult` gained `to_dict()`/`from_dict()` so state round-trips through `results/`.
 
-When `RoutePlan.use_cutting = True`, the problem is too large for any single backend and must be fragmented via `limen.cutting`. Currently `run_pipeline_from_plan()` raises `NotImplementedError` in this case because `CutDispatchResult` (reconstructed expectation value) and `EndToEndCertificate` (sampled solution bitstring + ECC cert) have incompatible output shapes.
-
-### Planned implementation
-
-1. **`CuttingCertificate`** — a new datatype returned by cut-circuit runs, containing: reconstructed expectation value, per-partition job IDs, partition plan, and an optional ECC budget note.
-
-2. **`run_cut_route_request()`** — a new orchestrator for the cutting path that takes a `RoutePlan` with `use_cutting=True`, calls `find_cuts_and_partition` + `run_cut_circuit`, reconstructs the expectation value, and wraps it in a `CuttingCertificate`.
-
-3. **`run_route_request()` dispatch** — when `plan.use_cutting`, forward to `run_cut_route_request()` instead of raising.
+This is **intentionally standalone** rather than wired into `run_route_request()`'s D-Wave dispatch: that path compiles against a complete hardware graph, where `chain_strength` is provably inert. Wiring it into `run_route_request()` would have been a no-op dressed up as a feature. Direct callers with a real sparse hardware graph (e.g. `examples/dwave_codesign_qpu.py`) get the benefit; the fully-connected router path does not need it.
 
 ---
 

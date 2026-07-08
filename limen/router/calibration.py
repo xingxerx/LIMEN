@@ -195,3 +195,32 @@ def apply_calibration(
             continue
         updated.append(dataclasses.replace(profile, physical_error_rate=rate))
     return tuple(updated)
+
+
+def sign_calibration_record(record: dict[str, Any], private_key: Any) -> str:
+    """Sign a calibration record (as returned by
+    :func:`fetch_backend_calibration`) with a post-quantum (ML-DSA) key --
+    see limen.security.pqc.
+
+    Returns a detached base64 signature; callers who want tamper-evidence
+    for a snapshot sitting in results/ for months store it alongside the
+    record (e.g. ``record["signature"] = sign_calibration_record(record,
+    key)`` before writing, or a sibling ``.sig`` file) and check it later
+    with :func:`verify_calibration_record`. Purely opt-in --
+    fetch_backend_calibration/scan_calibration/apply_calibration are
+    unchanged and never require a keypair.
+    """
+    from limen.security.pqc import sign_json
+
+    return sign_json(private_key, record)
+
+
+def verify_calibration_record(
+    record: dict[str, Any], signature: str, public_key: Any
+) -> bool:
+    """Verify a signature produced by :func:`sign_calibration_record`
+    against *record*'s current contents. Returns False (not an exception)
+    on any mismatch, including a tampered record or wrong key."""
+    from limen.security.pqc import verify_json
+
+    return verify_json(public_key, record, signature)

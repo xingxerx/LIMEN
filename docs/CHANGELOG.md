@@ -31,8 +31,42 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `run_route_request()` is the zero-manual-steps path — QUBO + budget in,
   certified answer out: builds the informed fleet, routes, and executes;
   IBM QPU plans go through the decoupled submit -> poll -> certify chain
-  with job state persisted to `results_dir` at every poll. Circuit-cutting
-  plans still raise `NotImplementedError` (see the function docstring).
+  with job state persisted to `results_dir` at every poll.
+- Cut-circuit bridge (`limen.cutting.qubo_bridge`, `.certificate`,
+  `.local_dispatch`): `RoutePlan.use_cutting` plans (problem too large for
+  any single backend) now dispatch through `run_cut_route_request()`
+  instead of raising `NotImplementedError`. Decomposes the QUBO into Ising
+  terms, reconstructs per-qubit `<Z_i>` marginals via `limen.cutting`,
+  decodes a solution bitstring by threshold rounding, and certifies it
+  with the same ECC term `run_pipeline()` uses. Returns a
+  `CuttingCertificate`, not `EndToEndCertificate` (`is_optimal` is always
+  `None`; `reconstructed_expected_energy` is an explicitly documented
+  mean-field approximation) since circuit cutting reconstructs
+  expectation values, not a brute-force-verified optimal bitstring.
+- gRPC peer auto-discovery: `run_route_request()` falls back to
+  `NodeConfig.from_env().known_peers` (`LIMEN_KNOWN_PEERS`) when
+  `server_addresses` is omitted and `LIMEN_NODE_ID` is set.
+  `RoutePlan.server_addresses` now records the decision so a plan is
+  self-describing for async re-execution.
+- Co-design history loop (`limen.codesign.solver.codesign_from_history`):
+  seeds a fresh `run_codesign()` run from the best prior chain-strength
+  found in `results/` for a given backend. `CoDesignResult` gained
+  `to_dict()`/`from_dict()`. Deliberately standalone rather than wired
+  into `run_route_request()`'s D-Wave dispatch, since that path compiles
+  against a complete hardware graph where `chain_strength` is provably
+  inert.
+- Substrate-aware routing (`limen.router.problem_profile`): a
+  `frustration_index` heuristic and `ProblemProfile` signal, plus
+  `BackendProfile.substrate_affinity`, used strictly as a tiebreaker in
+  `_select_backend()` after all existing cost/capacity/validation
+  filtering — regression-tested to never override those criteria.
+- IBM fleet calibration extended to `ibm_fez` and `ibm_marrakesh` (in
+  addition to `ibm_kingston`) via `fetch_backend_calibration()`, hardened
+  against qubits with missing T1/T2 data.
+- `.github/workflows/ci.yml`: cargo test + pytest (py3.11/3.12) matrix,
+  building the `limen_core` extension via maturin and installing every
+  optional backend extra so `importorskip`-guarded tests run instead of
+  skipping.
 - Stoer-Wagner min-cut graph partitioning (`limen.distributed.partition`
   + `src/graph_partition.rs`): recursive min-cut bisection replaces
   lexicographic variable chunking, keeping heavily-coupled variables in

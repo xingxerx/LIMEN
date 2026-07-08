@@ -87,6 +87,30 @@ def now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def sign_state(state: JobState, private_key: Any) -> str:
+    """Sign this job state's canonical dict form with a post-quantum
+    (ML-DSA) key -- see limen.security.pqc.
+
+    Returns a detached base64 signature the caller stores/transmits
+    alongside the state (e.g. in a sibling ``.sig`` file); this does not
+    modify ``JobState`` or ``save_state``/``load_state``'s existing JSON
+    shape. Purely opt-in -- nothing else in this module requires a
+    keypair to exist.
+    """
+    from limen.security.pqc import sign_json
+
+    return sign_json(private_key, state.to_dict())
+
+
+def verify_state(state: JobState, signature: str, public_key: Any) -> bool:
+    """Verify a signature produced by :func:`sign_state` against this job
+    state's current canonical dict form. Returns False (not an exception)
+    on any mismatch, including a tampered ``state`` or wrong key."""
+    from limen.security.pqc import verify_json
+
+    return verify_json(public_key, state.to_dict(), signature)
+
+
 def _normalize_iso(ts: str | None) -> str | None:
     """Reformat a ``now_iso()``-style string to ISO-8601 with a ``+00:00`` offset.
 

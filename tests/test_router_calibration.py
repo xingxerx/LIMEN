@@ -10,7 +10,13 @@ import unittest
 import math
 
 from limen.router import DEFAULT_FLEET, RouteRequest, Tier, apply_calibration, route
-from limen.router.calibration import fetch_backend_calibration, scan_calibration
+from limen.router.calibration import (
+    fetch_backend_calibration,
+    scan_calibration,
+    sign_calibration_record,
+    verify_calibration_record,
+)
+from limen.security.pqc import generate_signing_key
 
 
 def _write_snapshot(tmp_path: pathlib.Path, backend: str, rate: float, when: str) -> None:
@@ -100,6 +106,37 @@ class TestRoutePrefersCalibration(unittest.TestCase):
         self.assertEqual(plan.backend.name, "ibm_kingston")
         self.assertAlmostEqual(plan.pipeline_kwargs["physical_error_rate"], 0.0614)
         self.assertTrue(any("calibration" in note for note in plan.notes))
+
+
+class TestPqcSigning(unittest.TestCase):
+    """sign_calibration_record/verify_calibration_record are purely
+    additive -- fetch_backend_calibration/scan_calibration/apply_calibration
+    (tested above) never require a keypair."""
+
+    def test_valid_signature_verifies(self):
+        key = generate_signing_key()
+        record = {"backend": "ibm_kingston", "physical_error_rate": 0.0614}
+        sig = sign_calibration_record(record, key)
+        self.assertTrue(verify_calibration_record(record, sig, key.public_key()))
+
+    def test_tampered_record_fails_verification(self):
+        key = generate_signing_key()
+        record = {"backend": "ibm_kingston", "physical_error_rate": 0.0614}
+        sig = sign_calibration_record(record, key)
+        tampered = {"backend": "ibm_kingston", "physical_error_rate": 1e-6}
+        self.assertFalse(verify_calibration_record(tampered, sig, key.public_key()))
+
+    def test_signature_survives_json_round_trip(self):
+        # A record written to disk, reloaded, and re-verified -- the real
+        # usage shape for a results/calibration_*.json snapshot.
+        key = generate_signing_key()
+        record = {"backend": "ibm_fez", "physical_error_rate": 0.0229}
+        sig = sign_calibration_record(record, key)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "calibration_ibm_fez_test.json"
+            path.write_text(json.dumps(record))
+            reloaded = json.loads(path.read_text())
+        self.assertTrue(verify_calibration_record(reloaded, sig, key.public_key()))
 
 
 class _FakeGate:
