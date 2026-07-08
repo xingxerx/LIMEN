@@ -8,6 +8,19 @@ name = "limen_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.21", features = ["extension-module"] }
+pyo3 = { version = "0.21" }
 rayon = "1.10"
 petgraph = "0.8"
+
+[features]
+# extension-module must NOT be a default/unconditional dependency feature:
+# it tells pyo3 to skip linking libpython, which is correct for the cdylib
+# maturin builds (loaded *by* a running Python process, which supplies
+# those symbols) but breaks `cargo test`'s standalone test binary on Linux
+# (no Python process to supply them -> undefined symbol link errors; this
+# is invisible on Windows, where DLL symbol resolution works differently,
+# which is why this went undetected in local dev). maturin passes
+# `--features pyo3/extension-module` explicitly (see [tool.maturin] in
+# pyproject.toml), so plain `cargo test` -- which does not request this
+# feature -- now links against libpython normally.
+extension-module = ["pyo3/extension-module"]

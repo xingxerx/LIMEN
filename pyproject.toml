@@ -69,6 +69,7 @@ all = [
 [tool.maturin]
 module-name = "limen_core"
 features = ["pyo3/extension-module"]
+python-packages = ["limen"]
 
 [tool.pyright]
 pythonVersion = "3.13"
