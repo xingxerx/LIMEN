@@ -34,7 +34,11 @@ dependencies = []
 [project.optional-dependencies]
 pyqubo = ["pyqubo>=1.4"]
 dwave = ["dwave-ocean-sdk>=6.0"]
-ibm = ["qiskit>=1.0", "qiskit-aer>=0.14"]
+# qiskit<2.5: qiskit 2.5.0 removed/restructured qiskit.transpiler.preset_passmanagers.common,
+# which qiskit-aer 0.17.2's internal transpile path still imports -- breaks AerSimulator.run()
+# with AttributeError until qiskit-aer catches up. Revisit this cap once a qiskit-aer release
+# is confirmed compatible with qiskit>=2.5.
+ibm = ["qiskit>=1.0,<2.5", "qiskit-aer>=0.14"]
 braket = ["amazon-braket-sdk>=1.70"]
 openquantum = ["openquantum-sdk"]
 cutting = ["qiskit-addon-cutting>=0.9", "qiskit-ibm-runtime>=0.25"]
@@ -48,7 +52,7 @@ distributed = [
 all = [
   "pyqubo>=1.4",
   "dwave-ocean-sdk>=6.0",
-  "qiskit>=1.0",
+  "qiskit>=1.0,<2.5",
   "qiskit-aer>=0.14",
   "amazon-braket-sdk>=1.70",
   "openquantum-sdk",
