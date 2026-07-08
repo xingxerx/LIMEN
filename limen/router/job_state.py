@@ -67,7 +67,7 @@ class JobState:
             "status": self.status.value,
             "plan": self.plan,
             "submitted_at": self.submitted_at,
-            "last_polled_at": self.last_polled_at,
+            "last_polled_at": _normalize_iso(self.last_polled_at),
             "error": self.error,
         }
 
@@ -85,6 +85,25 @@ class JobState:
 
 def now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _normalize_iso(ts: str | None) -> str | None:
+    """Reformat a ``now_iso()``-style string to ISO-8601 with a ``+00:00`` offset.
+
+    Only applied to ``last_polled_at`` — ``submitted_at`` is the 24h-polling-
+    ceiling anchor and must round-trip byte-for-byte (see module docstring).
+    """
+    if ts is None:
+        return None
+    try:
+        dt = datetime.datetime.strptime(ts, "%Y-%m-%d %H:%M:%S UTC").replace(
+            tzinfo=datetime.timezone.utc
+        )
+    except ValueError:
+        # Already normalized (e.g. re-saving a state that was previously
+        # loaded) -- pass through unchanged instead of raising.
+        return ts
+    return dt.isoformat()
 
 
 def state_path(results_dir: pathlib.Path, job_id: str) -> pathlib.Path:

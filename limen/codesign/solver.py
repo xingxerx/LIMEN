@@ -10,7 +10,11 @@ The Rust StackelbergSolver scores each iteration; this module handles
 recompilation when the chain strength recommendation changes.
 """
 
+import json
+import pathlib
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from limen.core.compiler import PhysicalEncoding, compile_lexicographic
@@ -53,6 +57,56 @@ class CoDesignResult:
     confidence_history: list[float]
     converged: bool
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict.
+
+        ``score`` (a Rust ``EquilibriumScore`` or its pure-Python
+        equivalent) is flattened to its scalar fields rather than
+        round-tripped as an object — ``kappa``/``kappa_std`` are already
+        top-level on this dataclass, so nothing is lost for history
+        purposes (see :func:`codesign_from_history`).
+        """
+        return {
+            "encoding": self.encoding.to_dict(),
+            "score": {
+                "kappa": self.score.kappa,
+                "confidence": self.score.confidence,
+                "energy_gap": self.score.energy_gap,
+                "kappa_std": self.score.kappa_std,
+            },
+            "kappa": self.kappa,
+            "kappa_std": self.kappa_std,
+            "iterations": self.iterations,
+            "chain_strength_history": list(self.chain_strength_history),
+            "confidence_history": list(self.confidence_history),
+            "converged": self.converged,
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "CoDesignResult":
+        """Deserialize a :meth:`to_dict` record.
+
+        ``score`` comes back as a plain namespace exposing the same
+        ``.kappa``/``.confidence``/``.energy_gap``/``.kappa_std``
+        attributes as the original ``EquilibriumScore`` — not the Rust
+        or pure-Python solver class itself, which this module has no
+        need to reconstruct outside a live co-design loop.
+        """
+        score_dict = d["score"]
+        score = SimpleNamespace(**score_dict)
+        return cls(
+            encoding=PhysicalEncoding.from_dict(d["encoding"]),
+            score=score,
+            kappa=d["kappa"],
+            kappa_std=d["kappa_std"],
+            iterations=d["iterations"],
+            chain_strength_history=list(d["chain_strength_history"]),
+            confidence_history=list(d["confidence_history"]),
+            converged=d["converged"],
+            metadata=dict(d.get("metadata", {})),
+        )
 
 
 def _second_best_energy(qubo: dict, best_energy: float) -> float:
@@ -172,3 +226,84 @@ def run_codesign(
             "solver_backend": "rust" if _RUST_AVAILABLE else "python",
         },
     )
+
+
+def save_codesign_result(
+    results_dir: pathlib.Path | str, backend_name: str, result: CoDesignResult
+) -> pathlib.Path:
+    """Persist a CoDesignResult so a later run can seed from it via
+    :func:`codesign_from_history`.
+
+    Writes ``results/codesign_<backend_name>_<timestamp>.json``, mirroring
+    the ``calibration_<backend>_<timestamp>.json`` convention already used
+    by :mod:`limen.router.calibration`.
+    """
+    results_dir = pathlib.Path(results_dir)
+    results_dir.mkdir(exist_ok=True)
+    record = result.to_dict()
+    record["backend_name"] = backend_name
+    generated_at = datetime.now(timezone.utc).isoformat()
+    record["generated_at"] = generated_at
+    timestamp = generated_at.replace("+00:00", "Z").replace(":", "")
+    path = results_dir / f"codesign_{backend_name}_{timestamp}.json"
+    path.write_text(json.dumps(record, indent=2))
+    return path
+
+
+def codesign_from_history(
+    results_dir: pathlib.Path | str,
+    encoding: PhysicalEncoding,
+    *,
+    backend_name: str,
+    **run_codesign_kwargs: Any,
+) -> CoDesignResult:
+    """Run co-design seeded with the best prior chain strength on *backend_name*.
+
+    Scans ``results_dir`` for ``codesign_<backend_name>_*.json`` records
+    written by :func:`save_codesign_result`, and starts the loop from the
+    highest-kappa run's final chain strength instead of the compiler's
+    static default -- so repeated co-design runs on the same backend get
+    physically smarter as history accumulates, the same way
+    :func:`limen.router.informed_fleet` folds run history into cost/queue
+    estimates.
+
+    Falls back to running from *encoding* unchanged (today's behaviour)
+    when no matching history exists yet.
+
+    Note: this seeds the *starting* chain strength for a fresh co-design
+    loop. It is unrelated to (and not wired into) the D-Wave dispatch path
+    in ``limen.pipeline.run_pipeline``/``run_route_request``: that path
+    compiles against ``default_hardware_graph`` -- a complete graph, on
+    which the lexicographic embedder never grows a chain -- so
+    chain_strength has no effect there today. Use this function directly
+    against a real (sparse) hardware graph, as in
+    ``examples/codesign_demo.py``/``examples/dwave_codesign_qpu.py``.
+    """
+    results_dir = pathlib.Path(results_dir)
+    best_chain_strength: float | None = None
+    best_kappa = -1.0
+    for path in sorted(results_dir.glob(f"codesign_{backend_name}_*.json")):
+        try:
+            doc = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(doc, dict) or doc.get("backend_name") != backend_name:
+            continue
+        history = doc.get("chain_strength_history") or None
+        kappa = doc.get("kappa")
+        if not history or kappa is None:
+            continue
+        if kappa > best_kappa:
+            best_kappa = kappa
+            best_chain_strength = history[-1]
+
+    if best_chain_strength is not None:
+        hw = _rebuild_hardware_graph(encoding.embedding)
+        encoding = compile_lexicographic(
+            encoding.graph,
+            hw,
+            chain_strength=best_chain_strength,
+            seed=run_codesign_kwargs.get("seed", 42),
+        )
+
+    return run_codesign(encoding, **run_codesign_kwargs)

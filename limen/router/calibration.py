@@ -48,6 +48,21 @@ from typing import Any
 from limen.router.budget_router import BackendProfile
 
 
+def _collect(fn: Any, args_list: list[tuple[Any, ...]]) -> list[float]:
+    """Call ``fn(*args)`` for each entry, skipping qubits/gates the provider
+    doesn't report calibration data for (observed on ibm_fez: some qubits
+    raise instead of returning None for a missing T2 reading) rather than
+    letting one gap abort the whole fetch.
+    """
+    values = []
+    for args in args_list:
+        try:
+            values.append(fn(*args))
+        except Exception:
+            continue
+    return values
+
+
 def fetch_backend_calibration(
     service: Any, backend_name: str, *, expected_two_qubit_depth: int = 1
 ) -> dict[str, Any]:
@@ -81,17 +96,13 @@ def fetch_backend_calibration(
         )
 
     two_qubit_gates = [gate for gate in props.gates if len(gate.qubits) == 2]
-    two_qubit_gate_errors = [
-        props.gate_error(gate.gate, gate.qubits) for gate in two_qubit_gates
-    ]
-    two_qubit_gate_lengths = [
-        props.gate_length(gate.gate, gate.qubits) for gate in two_qubit_gates
-    ]
-    readout_errors = [
-        props.readout_error(q) for q in range(backend.num_qubits)
-    ]
-    t1_times = [props.t1(q) for q in range(backend.num_qubits)]
-    t2_times = [props.t2(q) for q in range(backend.num_qubits)]
+    gate_args = [(g.gate, g.qubits) for g in two_qubit_gates]
+    two_qubit_gate_errors = _collect(props.gate_error, gate_args)
+    two_qubit_gate_lengths = _collect(props.gate_length, gate_args)
+    qubit_args = [(q,) for q in range(backend.num_qubits)]
+    readout_errors = _collect(props.readout_error, qubit_args)
+    t1_times = _collect(props.t1, qubit_args)
+    t2_times = _collect(props.t2, qubit_args)
 
     avg_two_qubit_gate_error = (
         statistics.fmean(two_qubit_gate_errors) if two_qubit_gate_errors else None
@@ -131,7 +142,7 @@ def fetch_backend_calibration(
 
     return {
         "backend": backend_name,
-        "generated_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "avg_two_qubit_gate_error": avg_two_qubit_gate_error,
         "avg_readout_error": avg_readout_error,
         "avg_two_qubit_gate_length": avg_two_qubit_gate_length,

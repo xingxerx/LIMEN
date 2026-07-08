@@ -190,5 +190,92 @@ class TestFleetSeed(unittest.TestCase):
         self.assertIn("statevector", by_name)
 
 
+class TestSubstrateAffinityTiebreak(unittest.TestCase):
+    """substrate_affinity must only ever decide between backends already
+    tied on cost/capacity/validation -- never override those criteria."""
+
+    def test_no_affinity_falls_back_to_name_unchanged(self):
+        # Two backends identical except name: default (empty) affinity
+        # must reproduce the pre-existing name tiebreak.
+        fleet = (
+            BackendProfile("alpha", "ibm", 156, 0.002, validated=True),
+            BackendProfile("beta", "ibm", 156, 0.002, validated=True),
+        )
+        plan = route(
+            RouteRequest(
+                cycle_maxcut(6),
+                fidelity_target=0.9,
+                credit_budget=2.0,
+                force_tier=Tier.HW_STANDARD,
+            ),
+            fleet=fleet,
+        )
+        self.assertEqual(plan.backend.name, "alpha")
+
+    def test_affinity_breaks_a_genuine_tie(self):
+        # Same tie as above, but "beta" prefers high frustration_index --
+        # cycle_maxcut has a nonzero, deterministic frustration_index, so
+        # a positive affinity weight must swing the tie to "beta".
+        fleet = (
+            BackendProfile("alpha", "ibm", 156, 0.002, validated=True),
+            BackendProfile(
+                "beta", "ibm", 156, 0.002, validated=True,
+                substrate_affinity={"frustration_index": 1.0},
+            ),
+        )
+        plan = route(
+            RouteRequest(
+                cycle_maxcut(6),
+                fidelity_target=0.9,
+                credit_budget=2.0,
+                force_tier=Tier.HW_STANDARD,
+            ),
+            fleet=fleet,
+        )
+        self.assertEqual(plan.backend.name, "beta")
+
+    def test_affinity_never_overrides_cost(self):
+        # "beta" scores far better on substrate affinity but costs more --
+        # cost must still win; affinity must not override it.
+        fleet = (
+            BackendProfile("alpha", "ibm", 156, 0.002, validated=True),
+            BackendProfile(
+                "beta", "ibm", 156, 0.01, validated=True,
+                substrate_affinity={"frustration_index": 1000.0},
+            ),
+        )
+        plan = route(
+            RouteRequest(
+                cycle_maxcut(6),
+                fidelity_target=0.9,
+                credit_budget=2.0,
+                force_tier=Tier.HW_STANDARD,
+            ),
+            fleet=fleet,
+        )
+        self.assertEqual(plan.backend.name, "alpha")
+
+    def test_affinity_never_overrides_validation_for_tier2(self):
+        # "beta" scores far better on substrate affinity but is unvalidated
+        # -- Tier 2 must still exclude it entirely.
+        fleet = (
+            BackendProfile("alpha", "ibm", 156, 0.002, validated=True),
+            BackendProfile(
+                "beta", "ibm", 156, 0.002, validated=False,
+                substrate_affinity={"frustration_index": 1000.0},
+            ),
+        )
+        plan = route(
+            RouteRequest(
+                star_maxcut(6),
+                fidelity_target=0.99,
+                credit_budget=2.0,
+                force_tier=Tier.HW_CERTIFIED,
+            ),
+            fleet=fleet,
+        )
+        self.assertEqual(plan.backend.name, "alpha")
+
+
 if __name__ == "__main__":
     unittest.main()

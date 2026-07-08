@@ -69,6 +69,31 @@ class TestOfflineDispatch(unittest.TestCase):
         self.assertTrue(actual.is_optimal)
 
 
+class TestPeerAutoDiscovery(unittest.TestCase):
+
+    def test_known_peers_from_env_used_when_server_addresses_omitted(self):
+        request = RouteRequest(cycle_maxcut(4), fidelity_target=0.9, credit_budget=0.0)
+        with mock.patch.dict(
+            os.environ,
+            {"LIMEN_NODE_ID": "test-node", "LIMEN_KNOWN_PEERS": "peer-a:50051,peer-b:50051"},
+        ):
+            with mock.patch("limen.pipeline._distributed_compile") as compile_mock:
+                compile_mock.return_value = ({"num_partitions": 2}, ["note"])
+                run_route_request(request, fleet=DEFAULT_FLEET)
+        compile_mock.assert_called_once()
+        called_addresses = compile_mock.call_args[0][1]
+        self.assertEqual(list(called_addresses), ["peer-a:50051", "peer-b:50051"])
+
+    def test_no_node_id_stays_local(self):
+        request = RouteRequest(cycle_maxcut(4), fidelity_target=0.9, credit_budget=0.0)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("LIMEN_NODE_ID", None)
+            with mock.patch("limen.pipeline._distributed_compile") as compile_mock:
+                actual = run_route_request(request, fleet=DEFAULT_FLEET)
+        compile_mock.assert_not_called()
+        self.assertIsNone(actual.distributed_compilation)
+
+
 class TestQpuGuardRails(unittest.TestCase):
 
     def test_missing_credentials_raise_before_submitting(self):

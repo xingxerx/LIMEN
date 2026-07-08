@@ -47,6 +47,7 @@ from typing import Any
 from limen.ecc.budget import PatchAssignment, allocate_ecc_budget, rank_criticality
 from limen.frontends.pyqubo import from_qubo_dict
 from limen.gates.qaoa import variable_order
+from limen.router.problem_profile import ProblemProfile, compute_problem_profile
 
 # Below this fidelity target the caller has asked for so little that the
 # free exact simulator answers it; no reason to spend hardware credits.
@@ -97,6 +98,14 @@ class BackendProfile:
     for this backend has been fetched and scanned. When set, route()
     prefers it over RouteRequest.physical_error_rate's hardcoded default
     for Tier 2 planning.
+
+    ``substrate_affinity`` is an optional soft preference over
+    :class:`~limen.router.problem_profile.ProblemProfile` traits (keys
+    ``"frustration_index"``/``"edge_density"``, values a signed weight --
+    positive prefers a high trait value, negative prefers low). Empty by
+    default, which is a strict no-op: :func:`route` only ever consults it
+    to break a tie between backends already equal on cost/capacity/
+    validation, never to override those -- see ``_select_backend``.
     """
 
     name: str
@@ -107,6 +116,7 @@ class BackendProfile:
     avg_queue_seconds: float | None = None
     measured_logical_error: float | None = None
     physical_error_rate: float | None = None
+    substrate_affinity: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.kind not in _BACKEND_KINDS:
@@ -198,6 +208,7 @@ class RoutePlan:
     shots: int
     criticality_spread: float
     notes: tuple[str, ...] = field(default=())
+    server_addresses: tuple[str, ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -229,6 +240,7 @@ class RoutePlan:
             "shots": self.shots,
             "criticality_spread": self.criticality_spread,
             "notes": list(self.notes),
+            "server_addresses": list(self.server_addresses) if self.server_addresses else None,
         }
 
 
@@ -275,8 +287,27 @@ def _select_tier(request: RouteRequest, spread: float) -> Tier:
     return Tier.HW_STANDARD
 
 
+def _substrate_score(profile: BackendProfile, problem: ProblemProfile | None) -> float:
+    """Soft substrate-fit score; 0.0 (neutral) unless both sides opt in.
+
+    Higher is a better fit. Only ever used as the *last* key in
+    ``_select_backend``'s sort -- see that function's docstring.
+    """
+    if problem is None or not profile.substrate_affinity:
+        return 0.0
+    score = 0.0
+    if "frustration_index" in profile.substrate_affinity:
+        score += profile.substrate_affinity["frustration_index"] * problem.frustration_index
+    if "edge_density" in profile.substrate_affinity:
+        score += profile.substrate_affinity["edge_density"] * problem.edge_density
+    return score
+
+
 def _select_backend(
-    tier: Tier, n_vars: int, fleet: tuple[BackendProfile, ...]
+    tier: Tier,
+    n_vars: int,
+    fleet: tuple[BackendProfile, ...],
+    problem: ProblemProfile | None = None,
 ) -> BackendProfile:
     """Deterministically pick the backend for a tier.
 
@@ -284,6 +315,13 @@ def _select_backend(
     none fits). Tier 1 prefers validated backends that fit without
     cutting, then lowest cost, then name. Tier 2 restricts to validated
     hardware and prefers the largest device (more ECC headroom).
+
+    *problem*, when given, contributes exactly one extra sort key --
+    ``-_substrate_score(...)`` -- appended after every existing key. Since
+    Python's sort is applied key-tuple-lexicographically, this can only
+    ever decide between backends that are already tied on cost/capacity/
+    validation; it never overrides them. Backends with no
+    ``substrate_affinity`` set score 0.0 and are unaffected.
     """
     if tier == Tier.SIM:
         sims = [p for p in fleet if p.kind == "sim"]
@@ -291,7 +329,15 @@ def _select_backend(
             raise ValueError("fleet contains no simulator profile")
         fitting = [p for p in sims if p.max_qubits >= n_vars]
         if fitting:
-            return min(fitting, key=lambda p: (p.cost_per_shot, p.max_qubits, p.name))
+            return min(
+                fitting,
+                key=lambda p: (
+                    p.cost_per_shot,
+                    p.max_qubits,
+                    -_substrate_score(p, problem),
+                    p.name,
+                ),
+            )
         return max(sims, key=lambda p: (p.max_qubits, p.name))
 
     hardware = [p for p in fleet if p.kind != "sim"]
@@ -301,14 +347,26 @@ def _select_backend(
             raise ValueError("fleet contains no validated hardware for Tier 2")
         return min(
             hardware,
-            key=lambda p: (p.max_qubits < n_vars, -p.max_qubits, p.cost_per_shot, p.name),
+            key=lambda p: (
+                p.max_qubits < n_vars,
+                -p.max_qubits,
+                p.cost_per_shot,
+                -_substrate_score(p, problem),
+                p.name,
+            ),
         )
 
     if not hardware:
         raise ValueError("fleet contains no hardware profile for Tier 1")
     return min(
         hardware,
-        key=lambda p: (not p.validated, p.max_qubits < n_vars, p.cost_per_shot, p.name),
+        key=lambda p: (
+            not p.validated,
+            p.max_qubits < n_vars,
+            p.cost_per_shot,
+            -_substrate_score(p, problem),
+            p.name,
+        ),
     )
 
 
@@ -345,9 +403,10 @@ def route(
     n_vars = len(order)
     int_qubo = _int_qubo(request.qubo, order)
     spread = criticality_spread(int_qubo, n_vars)
+    problem = compute_problem_profile(int_qubo, n_vars)
 
     tier = _select_tier(request, spread)
-    backend = _select_backend(tier, n_vars, fleet)
+    backend = _select_backend(tier, n_vars, fleet, problem)
     shots = _shots_for_budget(request.credit_budget, backend.cost_per_shot)
 
     use_cutting = n_vars > backend.max_qubits

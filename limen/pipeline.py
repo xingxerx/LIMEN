@@ -99,6 +99,25 @@ class EndToEndCertificate:
         }
 
 
+def _known_peers_from_env() -> list[str] | None:
+    """Auto-discover gRPC peers from this node's own configuration.
+
+    Only activates when ``LIMEN_NODE_ID`` is set — i.e. when this process
+    is itself a configured LIMEN node, not an ad-hoc script — so a caller
+    that never opted into distributed mode still gets purely local
+    compilation, unchanged from before this fallback existed.
+    """
+    try:
+        from limen.distributed.config import NodeConfig
+    except ImportError:
+        return None
+    try:
+        node_config = NodeConfig.from_env()
+    except ValueError:
+        return None
+    return node_config.known_peers or None
+
+
 def _graph_qubo(graph: LogicalGraph) -> dict[tuple[str, str], float]:
     return {(ix.i, ix.j): ix.weight for ix in graph.interactions}
 
@@ -297,8 +316,13 @@ def submit_qpu_job(
 
 
 def run_pipeline_from_plan(
-    qubo: dict[tuple[str, str], float], plan: Any
-) -> EndToEndCertificate:
+    qubo: dict[tuple[str, str], float],
+    plan: Any,
+    *,
+    cut_offline: bool = False,
+    cut_token: str | None = None,
+    cut_crn: str | None = None,
+) -> Any:
     """Dispatch a QUBO through :func:`run_pipeline` using a router RoutePlan.
 
     ``plan.pipeline_kwargs`` (see limen.router.budget_router.route) are
@@ -311,30 +335,167 @@ def run_pipeline_from_plan(
     Args:
         qubo: The same QUBO dict passed to ``route()`` to produce *plan*.
         plan: A limen.router.RoutePlan.
+        cut_offline: Only consulted when ``plan.use_cutting`` is True.
+            True dispatches every cutting sub-experiment to a local
+            AerSimulator (zero credits) instead of ``plan.backend``'s
+            real hardware. See :func:`run_cut_route_request`.
+        cut_token: IBM Quantum Platform API token, forwarded to
+            :func:`run_cut_route_request`. Required unless
+            ``cut_offline=True``.
+        cut_crn: IBM Quantum CRN, forwarded to :func:`run_cut_route_request`.
+            Required unless ``cut_offline=True``.
 
-    Raises:
-        NotImplementedError: If ``plan.use_cutting`` is True. Circuit
-            cutting (limen.cutting) reconstructs a Pauli observable's
-            expectation value from sub-circuit sub-experiments — a
-            fundamentally different output shape than EndToEndCertificate's
-            sampled solution bitstring, and cutting needs an observable
-            string run_pipeline has no way to supply. Callers whose plan
-            requires cutting must still build the CutPlan and dispatch it
-            themselves via limen.cutting.find_cuts_and_partition and
-            limen.cutting.dispatch.run_cut_circuit.
+    Returns:
+        An :class:`EndToEndCertificate`, or — when ``plan.use_cutting`` is
+        True — a :class:`~limen.cutting.certificate.CuttingCertificate`
+        from :func:`run_cut_route_request`. These are deliberately
+        different shapes (see that class's docstring): circuit cutting
+        reconstructs Pauli-observable expectation values, not a sampled
+        solution bitstring, so a cutting-based certificate cannot claim
+        brute-force-verified optimality the way EndToEndCertificate does.
     """
     if plan.use_cutting:
-        raise NotImplementedError(
-            "RoutePlan.use_cutting is True: this problem exceeds the "
-            f"chosen backend's {plan.backend.max_qubits} qubits and needs "
-            f"{plan.num_partitions} cut partitions. run_pipeline has no "
-            "cutting path (it returns a sampled solution certificate, not "
-            "a reconstructed observable expectation value) — build and "
-            "dispatch the CutPlan directly via "
-            "limen.cutting.find_cuts_and_partition and "
-            "limen.cutting.dispatch.run_cut_circuit instead."
+        return run_cut_route_request(
+            qubo, plan, offline=cut_offline, token=cut_token, crn=cut_crn
         )
     return run_pipeline(qubo, **plan.pipeline_kwargs)
+
+
+def run_cut_route_request(
+    qubo: dict[tuple[str, str], float],
+    plan: Any,
+    *,
+    token: str | None = None,
+    crn: str | None = None,
+    offline: bool = False,
+    shots: int | None = None,
+) -> Any:
+    """Execute an oversized QUBO's RoutePlan via circuit cutting.
+
+    The cut-circuit counterpart to :func:`run_pipeline`: compiles the QUBO
+    to the same QAOA circuit run_pipeline would use, reconstructs every
+    qubit's single-Z expectation value <Z_i> via
+    limen.cutting (one cut + dispatch + reconstruct round trip per
+    qubit — see limen.cutting.qubo_bridge module docstring for why),
+    decodes a solution bitstring from those marginals by threshold
+    rounding, and certifies it with the same surface-code ECC term
+    run_pipeline uses (limen.ecc.certificate.certify_logical_qubit,
+    reused unmodified — it is solution-agnostic).
+
+    Args:
+        qubo: The QUBO dict ``plan`` was routed for.
+        plan: A limen.router.RoutePlan with ``use_cutting=True``.
+        token: IBM Quantum Platform API token. Required unless *offline*.
+        crn: IBM Quantum CRN. Required unless *offline*.
+        offline: If True, every cutting sub-experiment runs on a local
+            AerSimulator (limen.cutting.local_dispatch) instead of
+            ``plan.backend``'s real hardware — zero credits, the same
+            loopback semantics RouteRequest.offline uses elsewhere.
+        shots: Shots per cutting sub-experiment; defaults to ``plan.shots``.
+
+    Returns:
+        A :class:`~limen.cutting.certificate.CuttingCertificate`. Its
+        ``solution``/``decoded_classical_energy`` are the real, exactly
+        (classically) evaluated answer; ``is_optimal`` is always None —
+        see that class's docstring for why a cutting-based certificate
+        cannot claim optimality the way EndToEndCertificate does.
+
+    Raises:
+        ValueError: If neither *offline* nor both *token* and *crn* are given.
+        ImportError: If qiskit-addon-cutting (and, for a real dispatch,
+            qiskit-ibm-runtime; for an offline run, qiskit-aer) is not
+            installed.
+    """
+    from limen.cutting.certificate import CuttingCertificate
+    from limen.cutting.qubo_bridge import (
+        classical_energy,
+        decode_bitstring_from_marginals,
+        mean_field_expected_energy,
+        qubo_ising_terms,
+        reconstruct_z_marginals_via_cutting,
+    )
+    from limen.cutting.reconstruct import reconstruct_from_results
+
+    if not offline and not (token and crn):
+        raise ValueError(
+            "run_cut_route_request targeting real hardware requires both "
+            "token and crn (or pass offline=True for a local-sampler run)."
+        )
+
+    graph = from_qubo_dict(qubo)
+    order = variable_order(graph)
+    n = len(order)
+    h, j_coeffs, constant, _ = qubo_ising_terms(qubo)
+
+    params, _ = _grid_search(graph, 1, 8)
+    circuit = compile_qaoa(graph, [params["gamma"]], [params["beta"]])
+
+    max_subcircuit_qubits = plan.backend.max_qubits
+    run_shots = shots if shots is not None else plan.shots
+
+    if offline:
+        from limen.cutting.local_dispatch import run_cut_circuit_locally
+
+        def dispatch_fn(cut_plan: Any) -> Any:
+            return run_cut_circuit_locally(cut_plan, shots=run_shots)
+    else:
+        from limen.cutting.dispatch import run_cut_circuit
+
+        assert token is not None and crn is not None  # validated above
+        real_token, real_crn = token, crn
+
+        def dispatch_fn(cut_plan: Any) -> Any:
+            return run_cut_circuit(
+                cut_plan,
+                real_token,
+                real_crn,
+                backend_name=plan.backend.name,
+                shots=run_shots,
+            )
+
+    reconstruction = reconstruct_z_marginals_via_cutting(
+        circuit, list(range(n)), max_subcircuit_qubits, dispatch_fn, reconstruct_from_results
+    )
+
+    solution = decode_bitstring_from_marginals(reconstruction.marginals, order)
+    decoded_energy = classical_energy(qubo, solution)
+    expected_energy = mean_field_expected_energy(
+        h, j_coeffs, constant, reconstruction.marginals
+    )
+
+    distance = plan.pipeline_kwargs.get("distance", 3)
+    physical_error_rate = plan.pipeline_kwargs.get("physical_error_rate", 1e-3)
+    patch = build_surface_code(distance)
+    decoder = LookupDecoder(patch)
+    cert = certify_logical_qubit(patch, decoder, physical_error_rate)
+
+    notes = [
+        f"{n} vars exceeded backend capacity ({max_subcircuit_qubits}q): solved "
+        f"via circuit cutting into up to {reconstruction.num_partitions} "
+        f"partition(s), {reconstruction.num_cuts} cut(s).",
+        "solution decoded via cutting-reconstructed single-qubit <Z_i> "
+        "marginal threshold rounding, then evaluated exactly and "
+        "classically (decoded_classical_energy) -- not brute-force "
+        "verified optimal, hence is_optimal=None.",
+        "reconstructed_expected_energy is a mean-field cross-check "
+        "(<Z_i Z_j> approximated by <Z_i><Z_j>), not the true "
+        "reconstructed <H>.",
+    ]
+
+    return CuttingCertificate(
+        solution=solution,
+        decoded_classical_energy=decoded_energy,
+        reconstructed_expected_energy=expected_energy,
+        is_optimal=None,
+        num_partitions=reconstruction.num_partitions,
+        num_cuts=reconstruction.num_cuts,
+        job_ids=reconstruction.job_ids,
+        logical_error_rate=cert.logical_error_rate,
+        physical_error_rate=physical_error_rate,
+        distance=distance,
+        notes=notes,
+        metadata={"n_vars": n, "max_subcircuit_qubits": max_subcircuit_qubits},
+    )
 
 
 def run_route_request(
@@ -390,33 +551,49 @@ def run_route_request(
             these peers via the :class:`~limen.distributed.server.CoordinationServicer`
             ``CompilePartition`` RPC instead of only locally, and the
             merged encoding is recorded on the certificate. Requires
-            the distributed extra (grpcio). When None (default), all
-            compilation is local.
+            the distributed extra (grpcio). When None (default), this
+            node's own configuration is consulted:
+            ``NodeConfig.from_env().known_peers`` (the ``LIMEN_KNOWN_PEERS``
+            env var) is used automatically if ``LIMEN_NODE_ID`` is set,
+            so a deployed LIMEN cluster gets distributed compilation
+            without every caller re-wiring the peer list by hand. If
+            ``LIMEN_NODE_ID`` is unset, compilation stays local exactly
+            as before.
         num_partitions: Number of partitions to split the graph into
             when dispatching to peers; defaults to
             ``len(server_addresses)``.
 
     Returns:
-        The EndToEndCertificate for the executed plan.
+        The EndToEndCertificate for the executed plan, or — when the plan
+        targets IBM hardware and exceeds its qubit capacity
+        (``plan.use_cutting``) — a
+        :class:`~limen.cutting.certificate.CuttingCertificate` from
+        :func:`run_cut_route_request`, a deliberately different shape
+        (see that class's docstring for why).
 
     Raises:
         ValueError: If the plan needs IBM credentials and none are
-            available.
+            available (including for a cutting dispatch, which also
+            targets real IBM hardware).
         RuntimeError: If the QPU job ends in ERROR or CANCELLED.
         TimeoutError: If *poll_ceiling_seconds* elapses before the QPU
             job reaches a terminal status.
-        NotImplementedError: If the plan requires circuit cutting (see
-            :func:`run_pipeline_from_plan`).
     """
+    import dataclasses
     import os
 
     from limen.router import DEFAULT_FLEET, informed_fleet, route
+
+    if server_addresses is None:
+        server_addresses = _known_peers_from_env()
 
     if fleet is None:
         fleet = (
             informed_fleet(results_dir) if results_dir is not None else DEFAULT_FLEET
         )
     plan = route(request, fleet=fleet)
+    if server_addresses:
+        plan = dataclasses.replace(plan, server_addresses=tuple(server_addresses))
 
     if plan.pipeline_kwargs.get("backend") != "qpu":
         return run_pipeline(
@@ -426,12 +603,6 @@ def run_route_request(
             num_partitions=num_partitions,
         )
 
-    if plan.use_cutting:
-        # Reject before submitting: run_pipeline_from_plan would raise the
-        # same error, but only after credits were already spent on a job
-        # whose counts nothing here could certify.
-        return run_pipeline_from_plan(request.qubo, plan)
-
     token = qpu_token or os.environ.get("IBM_QUANTUM_TOKEN")
     instance = qpu_instance or os.environ.get("IBM_QUANTUM_CRN")
     if not (token and instance):
@@ -440,6 +611,9 @@ def run_route_request(
             f"({plan.backend.name}); pass qpu_token/qpu_instance or set "
             "IBM_QUANTUM_TOKEN and IBM_QUANTUM_CRN."
         )
+
+    if plan.use_cutting:
+        return run_cut_route_request(request.qubo, plan, token=token, crn=instance)
 
     job_id = submit_qpu_job(
         request.qubo,

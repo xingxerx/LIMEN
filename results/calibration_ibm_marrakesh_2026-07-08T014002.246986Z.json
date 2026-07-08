@@ -1,0 +1,12 @@
+{
+  "backend": "ibm_marrakesh",
+  "generated_at": "2026-07-08T01:40:02.246986+00:00",
+  "avg_two_qubit_gate_error": 0.05106752353948208,
+  "avg_readout_error": 0.032345502804487176,
+  "avg_two_qubit_gate_length": 7.018181818181818e-08,
+  "avg_t1": 0.00016138299949720465,
+  "avg_t2": 9.511085736936527e-05,
+  "expected_two_qubit_depth": 1,
+  "decoherence_prob": 0.00043478284806464096,
+  "physical_error_rate": 0.027949269730677965
+}
