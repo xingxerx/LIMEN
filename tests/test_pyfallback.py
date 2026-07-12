@@ -76,7 +76,7 @@ def test_kappa_std_zero_for_single_iteration():
 
 def test_parity_with_rust_extension():
     """Pure-Python fallback must match limen_core exactly on the same inputs."""
-    rust = pytest.importorskip("limen_core", reason="limen_core not built")
+    rust = pytest.importorskip("limen.limen_core", reason="limen_core not built")
 
     args = (
         [0.3, 0.5, 0.7, 0.6],
@@ -96,7 +96,7 @@ def test_parity_with_rust_extension():
 
 def test_qubo_energy_spectrum_parity_with_rust_extension():
     """Pure-Python qubo_energy_spectrum fallback must match limen_core exactly."""
-    rust = pytest.importorskip("limen_core", reason="limen_core not built")
+    rust = pytest.importorskip("limen.limen_core", reason="limen_core not built")
 
     from limen._qubo_spectrum_pyfallback import qubo_energy_spectrum as py_spectrum
 

@@ -42,7 +42,7 @@ def rank_criticality(
     weight 0.0 and sort last.
     """
     try:
-        import limen_core
+        from limen import limen_core
 
         _rust_rank = limen_core.qubo_criticality
     except (ImportError, AttributeError):
@@ -78,7 +78,7 @@ def select_patches(
     variables later in the list may still fit and will be tried).
     """
     try:
-        import limen_core
+        from limen import limen_core
 
         _rust_select = limen_core.ecc.select_patches
     except (ImportError, AttributeError):

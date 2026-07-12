@@ -37,7 +37,7 @@ def reconstruct_from_results(result: CutDispatchResult) -> float:
             data -- propagated from limen_core::cutting::reconstruct_expectation.
     """
     try:
-        import limen_core
+        from limen import limen_core
     except ModuleNotFoundError as exc:
         raise ImportError(_INSTALL_MSG) from exc
 

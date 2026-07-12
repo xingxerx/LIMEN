@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "limen"
-version = "0.8.2"
+version = "0.8.3"
 description = "A physics-aware compiler stack for translating classical optimization problems into native quantum and analog substrates."
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -26,6 +26,8 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Rust",
   "Topic :: Scientific/Engineering :: Physics",
   "Topic :: Software Development :: Compilers",
 ]
@@ -66,7 +68,7 @@ all = [
 "Documentation" = "https://github.com/xingxerx/LIMEN#readme"
 
 [tool.maturin]
-module-name = "limen_core"
+module-name = "limen.limen_core"
 features = ["pyo3/extension-module"]
 
 [tool.pyright]

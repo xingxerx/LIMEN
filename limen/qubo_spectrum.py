@@ -22,7 +22,7 @@ otherwise.
 from dataclasses import dataclass
 
 try:
-    from limen_core import qubo_energy_spectrum as _qubo_energy_spectrum_rust
+    from limen.limen_core import qubo_energy_spectrum as _qubo_energy_spectrum_rust
 
     _RUST_AVAILABLE = True
 except ImportError:

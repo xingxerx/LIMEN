@@ -119,7 +119,7 @@ class HardwareDeltaModel:
             New list of pre-distorted detunings.
         """
         try:
-            from limen_core import apply_detuning_correction as _rust_fn
+            from limen.limen_core import apply_detuning_correction as _rust_fn
             offsets = list(self.drift.site_detuning_offsets.items())
             return _rust_fn(detunings, offsets)
         except ImportError:
@@ -148,7 +148,7 @@ class HardwareDeltaModel:
             New dict of pre-distorted couplings.
         """
         try:
-            from limen_core import apply_coupling_correction as _rust_fn
+            from limen.limen_core import apply_coupling_correction as _rust_fn
             errors = list(self.drift.coupling_scale_errors.items())
             result_list = _rust_fn(list(couplings.items()), errors)
             return dict(result_list)
@@ -176,7 +176,7 @@ class HardwareDeltaModel:
             The pre-distorted Rabi frequency to submit to hardware.
         """
         try:
-            from limen_core import apply_rabi_correction as _rust_fn
+            from limen.limen_core import apply_rabi_correction as _rust_fn
             return _rust_fn(rabi_frequency, self.drift.global_rabi_error)
         except ImportError:
             # Pure Python fallback for environments without the Rust extension.

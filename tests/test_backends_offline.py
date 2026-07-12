@@ -120,6 +120,7 @@ def test_openquantum_import_error_with_helpful_message():
 # ── Open Quantum circuit/parsing helpers (no SDK required) ───────────────
 
 def test_build_qasm_circuit_produces_valid_openqasm2():
+    pytest.importorskip("qiskit", reason="qiskit not installed")
     qasm_text, depth = _build_qasm_circuit(_TRIVIAL_QUBO, ["q0", "q1"], reps=1)
     assert qasm_text.startswith("OPENQASM 2.0;")
     assert 'include "qelib1.inc";' in qasm_text

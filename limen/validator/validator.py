@@ -113,7 +113,7 @@ def _simulate_bits_energies(
             base_assignment = {v: rng.randint(0, 1) for v in variables}
 
     try:
-        from limen_core import simulate_qubo_runs as _rust_simulate
+        from limen.limen_core import simulate_qubo_runs as _rust_simulate
     except ImportError:
         _rust_simulate = None
 

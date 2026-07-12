@@ -23,9 +23,9 @@ from pathlib import Path
 
 LIMEN_SRC = Path(__file__).resolve().parent.parent / "limen"
 
-# `from limen_core import a, b as c` (possibly parenthesized/multiline)
+# `from limen.limen_core import a, b as c` (possibly parenthesized/multiline)
 _FROM_IMPORT = re.compile(
-    r"from limen_core import \(?([\w\s,]+?)\)?$", re.MULTILINE
+    r"from limen\.limen_core import \(?([\w\s,]+?)\)?$", re.MULTILINE
 )
 # `limen_core.name` or `limen_core.submodule.name` attribute chains,
 # in code or docstrings (a doc reference to a nonexistent symbol is
@@ -65,7 +65,7 @@ class TestRustExportsCurrent(unittest.TestCase):
 
     def setUp(self):
         try:
-            import limen_core
+            import limen.limen_core as limen_core
         except ImportError:
             self.skipTest(
                 "limen_core not built; pure-Python fallbacks are in use "

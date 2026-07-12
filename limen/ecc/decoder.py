@@ -52,7 +52,7 @@ class LookupDecoder:
         table: dict[tuple[int, ...], tuple[int, ...]] = {}
 
         try:
-            from limen_core import build_ecc_lookup_table as _rust_table
+            from limen.limen_core import build_ecc_lookup_table as _rust_table
         except ImportError:
             _rust_table = None
 
