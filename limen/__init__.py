@@ -46,6 +46,17 @@ __all__ = [
     "QKDResult",
     "EndToEndCertificate",
     "run_pipeline",
+    "run_pipeline_from_plan",
+    "run_route_request",
+    "Tier",
+    "BackendProfile",
+    "RouteRequest",
+    "RoutePlan",
+    "DEFAULT_FLEET",
+    "route",
+    "generate_signing_key",
+    "sign_json",
+    "verify_json",
 ]
 
 
@@ -105,11 +116,47 @@ def __getattr__(name: str):
             "TeleportationResult": TeleportationResult,
             "QKDResult": QKDResult,
         }[name]
-    if name in ("EndToEndCertificate", "run_pipeline"):
-        from limen.pipeline import EndToEndCertificate, run_pipeline
+    if name in (
+        "EndToEndCertificate", "run_pipeline", "run_pipeline_from_plan",
+        "run_route_request",
+    ):
+        from limen.pipeline import (
+            EndToEndCertificate,
+            run_pipeline,
+            run_pipeline_from_plan,
+            run_route_request,
+        )
         return {
             "EndToEndCertificate": EndToEndCertificate,
             "run_pipeline": run_pipeline,
+            "run_pipeline_from_plan": run_pipeline_from_plan,
+            "run_route_request": run_route_request,
+        }[name]
+    if name in (
+        "Tier", "BackendProfile", "RouteRequest", "RoutePlan", "DEFAULT_FLEET", "route",
+    ):
+        from limen.router import (
+            DEFAULT_FLEET,
+            BackendProfile,
+            RoutePlan,
+            RouteRequest,
+            Tier,
+            route,
+        )
+        return {
+            "Tier": Tier,
+            "BackendProfile": BackendProfile,
+            "RouteRequest": RouteRequest,
+            "RoutePlan": RoutePlan,
+            "DEFAULT_FLEET": DEFAULT_FLEET,
+            "route": route,
+        }[name]
+    if name in ("generate_signing_key", "sign_json", "verify_json"):
+        from limen.security import generate_signing_key, sign_json, verify_json
+        return {
+            "generate_signing_key": generate_signing_key,
+            "sign_json": sign_json,
+            "verify_json": verify_json,
         }[name]
     raise AttributeError(f"module 'limen' has no attribute {name!r}")
 

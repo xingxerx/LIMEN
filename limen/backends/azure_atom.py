@@ -13,6 +13,13 @@
 # limitations under the License.
 """Atom Computing backend adapter for LIMEN, via Azure Quantum.
 
+STATUS: DORMANT. This adapter has never been exercised against a live
+Azure Quantum workspace — no Atom Computing hardware run has validated
+it, and it is not part of results/fleet_certificate.json or the budget
+router's DEFAULT_FLEET. The code is kept import-clean and unit-testable,
+but treat it as unverified until a real target id and hardware run
+confirm it.
+
 Atom Computing's machines are *gate-model* neutral-atom devices (nuclear-spin
 qubits in Yb-171 held in optical tweezers), unlike QuEra Aquila's analog
 Hamiltonian mode. No LHZ parity fallback is needed: a compiled QUBO is run

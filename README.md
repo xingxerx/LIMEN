@@ -27,7 +27,7 @@ A hardware-agnostic intermediate representation for optimization problems. The s
 Single-pass, deterministic compilation from logical IR to physical encoding. No heuristic randomness. No undocumented magic. Reproducible output every time.
 
 **3. Hardware adapters**
-Clean interfaces to D-Wave (via Ocean SDK) and IBM Quantum (via Qiskit) out of the box. New backends are first-class citizens: write an adapter, plug it in.
+Clean interfaces to D-Wave (via Ocean SDK) and IBM Quantum (via Qiskit) out of the box, plus Open Quantum cross-vendor submission and a dormant Azure Quantum adapter for Atom Computing devices (`limen.backends.azure_atom` — unit-tested but not yet hardware-validated). New backends are first-class citizens: write an adapter, plug it in.
 
 **4. A gate-model pipeline with error-correction certification**
 An end-to-end path from QUBO to a certified result: QAOA compilation, exact statevector simulation, classical optimality verification, and a gate-executed surface-code ECC round-trip — all offline, no QPU required. Returns a single `EndToEndCertificate` with solution, optimality flag, logical error rate, and ECC metadata.
@@ -166,6 +166,19 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 - [x] QPU backend integration for pipeline execution step: `backend="aer"`/`"qpu"` (real IBM hardware via Qiskit Runtime) and `backend="dwave"` (real D-Wave QPU or simulated annealer) are all wired into `run_pipeline`
 - [x] Classical feedforward transport over `QuantumChannel` (Milestone 3, see Phase 4 above)
 
+### Phase 6 — Budget Router & Fleet Cost Model (In Progress)
+- [x] Budget router (`limen.router`): deterministic fidelity-tier planning — tier, backend, cutting strategy, ECC allocation, and shot count chosen against an explicit credit budget before submission
+- [x] Cost-model seeding from run history: `scan_results()`/`apply_history()` fold cached `results/*.json` records into fleet backend profiles offline
+- [x] Calibration seeding from live hardware: `fetch_backend_calibration()` (IBM Runtime gate/readout error) + offline `scan_calibration()`/`apply_calibration()`; `route()` prefers calibrated `physical_error_rate` over hardcoded defaults
+- [x] Crash-resilient QPU job lifecycle: submission decoupled from result-waiting, on-disk state machine (`limen.router.job_state`), transient-error-only retry, no auto-resubmission of errored/cancelled jobs
+- [x] First hardware validation: ibm_kingston Tier 2 run (job `d965qgotcv6s73djc1l0`, `results/router_tier2_kingston_d965qgotcv6s73djc1l0.json`)
+- [x] Router-driven multi-backend dispatch: `run_route_request()` (`limen.pipeline`) is the zero-manual-steps entry point — QUBO + budget in, certified answer out. Builds the informed fleet, routes, and executes; IBM QPU plans go through the decoupled submit → poll → certify chain
+- [x] Cut-circuit bridge: `RoutePlan.use_cutting` plans (problem too large for any single backend) dispatch through `run_cut_route_request()` (`limen.cutting`), returning a `CuttingCertificate` reconstructed from per-qubit `<Z_i>` marginals and certified with the same ECC term `run_pipeline` uses
+- [x] gRPC peer auto-discovery: `run_route_request()` falls back to `LIMEN_KNOWN_PEERS` for distributed compilation when `server_addresses` is omitted
+- [x] Substrate-aware routing: `ProblemProfile`/`BackendProfile.substrate_affinity` break ties between backends already tied on cost/capacity/validation
+- [x] Co-design history loop: `codesign_from_history()` (`limen.codesign`) seeds a fresh Stackelberg run from the best prior chain-strength in `results/`; standalone by design (see `docs/ROADMAP.md`)
+- [ ] Azure Quantum / Atom Computing adapter hardware validation (`limen.backends.azure_atom` is import-clean and unit-tested but dormant — never run against a live Azure workspace; excluded from `DEFAULT_FLEET` until validated)
+
 ---
 
 ## Getting Started
@@ -261,7 +274,7 @@ under ELv2.
 
 ## Status
 
-**v0.8.2 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Phase 4 complete · Phase 5 complete · Hardware validated.**
+**v0.8.3 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Phase 4 complete · Phase 5 complete · Phase 6 in progress · Hardware validated.**
 Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend
 adapters shipped and tested. Stackelberg co-design loop operational with
 Rust-backed κ scoring, stability-penalised learning rate, and portfolio
@@ -322,7 +335,7 @@ extension built; hardware SDK adapters, the gRPC distributed layer, and
 pipeline orchestration deliberately stay Python (I/O-bound glue, no compute
 of their own). Build with `maturin develop --release`.
 
-**Circuit cutting (gate-model, not yet reflected elsewhere in this README):**
+**Circuit cutting (gate-model):**
 `limen/cutting` + the Rust `limen_core::cutting` module split a wide circuit
 into sub-circuits via quasi-probability decomposition and reconstruct the
 original expectation value from real per-subcircuit sampler counts
@@ -330,7 +343,19 @@ original expectation value from real per-subcircuit sampler counts
 `src/cutting/reconstruct.rs`). Validated end-to-end against a plain
 AerSimulator run in `examples/cutting_smoke_test.py`.
 
-323 tests passing, 3 skipped (skips are environment-gated: optional SDKs not
+**Budget router (v0.8.3):** `limen.router` plans a QUBO run before any credit
+is spent — deterministic fidelity-tier selection (backend, cutting strategy,
+ECC allocation, shot count) against an explicit budget. Backend profiles are
+seeded from real run history (`limen.router.history`) and from live IBM
+calibration snapshots (`limen.router.calibration`); the first ibm_kingston
+calibration (physical error rate 2.586e-2) is 25x closer to measured Tier 2
+behavior than the previous hardcoded 1e-3. QPU job submission is decoupled
+from result-waiting with an on-disk state machine (`limen.router.job_state`),
+so a crashed terminal or a long maintenance-window queue can't strand a
+completed job. Hardware-validated on ibm_kingston (job
+`d965qgotcv6s73djc1l0`).
+
+387 tests passing, 3 skipped (skips are environment-gated: optional SDKs not
 installed in this dev environment). Zero regressions.
 
 If you are building in this space and want to collaborate, open an issue.

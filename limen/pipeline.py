@@ -42,7 +42,18 @@ _BACKEND_CHOICES = frozenset({"statevector", "aer", "qpu", "dwave", "braket", "o
 
 @dataclass
 class EndToEndCertificate:
-    """Composed result of the full QUBO -> gates -> ECC pipeline."""
+    """Composed result of the full QUBO -> gates -> ECC pipeline.
+
+    ``aggregate_logical_error_rate`` is always the surface-code model's
+    own prediction, untouched by any empirical data.
+    ``measured_logical_error_prior`` is an optional empirical prior from
+    run history on the same backend (limen.router.history), and
+    ``predicted_logical_error_bound`` is the conservative envelope
+    ``max(model, prior)`` — the number "did the measured deficit land
+    within prediction?" checks should compare against. The two inputs
+    are deliberately never averaged: a blend would obscure that the
+    model is a proxy while the prior is a measurement.
+    """
 
     solution: dict[str, int]
     energy: float
@@ -59,6 +70,8 @@ class EndToEndCertificate:
     notes: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     distributed_compilation: dict[str, Any] | None = None
+    measured_logical_error_prior: float | None = None
+    predicted_logical_error_bound: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +87,8 @@ class EndToEndCertificate:
             "physical_error_rate": self.physical_error_rate,
             "distance": self.distance,
             "n_logical_qubits": self.n_logical_qubits,
+            "measured_logical_error_prior": self.measured_logical_error_prior,
+            "predicted_logical_error_bound": self.predicted_logical_error_bound,
             "notes": list(self.notes),
             "metadata": dict(self.metadata),
             "distributed_compilation": (
@@ -82,6 +97,25 @@ class EndToEndCertificate:
                 else None
             ),
         }
+
+
+def _known_peers_from_env() -> list[str] | None:
+    """Auto-discover gRPC peers from this node's own configuration.
+
+    Only activates when ``LIMEN_NODE_ID`` is set — i.e. when this process
+    is itself a configured LIMEN node, not an ad-hoc script — so a caller
+    that never opted into distributed mode still gets purely local
+    compilation, unchanged from before this fallback existed.
+    """
+    try:
+        from limen.distributed.config import NodeConfig
+    except ImportError:
+        return None
+    try:
+        node_config = NodeConfig.from_env()
+    except ValueError:
+        return None
+    return node_config.known_peers or None
 
 
 def _graph_qubo(graph: LogicalGraph) -> dict[tuple[str, str], float]:
@@ -174,16 +208,19 @@ def _aer_probabilities(
     return {bits[::-1]: count / total for bits, count in result.counts.items()}
 
 
-def _qpu_probabilities(
+def _transpile_and_submit_qpu_job(
     circuit: Any,
     backend_name: str,
     shots: int,
     token: str,
     instance: str,
-) -> dict[str, float]:
-    """Execute *circuit* on a real IBM QPU; return qubit-0-first probs.
+) -> Any:
+    """Transpile *circuit* for *backend_name* and submit it via SamplerV2.
 
-    Requires the ``qiskit`` and ``qiskit-ibm-runtime`` extras.
+    Returns the (unresolved) qiskit-ibm-runtime job immediately — the
+    caller decides whether to block on ``job.result()`` or persist the
+    job id and return, letting a separate process poll for completion
+    later (see examples/router_tier2_kingston_fetch.py).
 
     Raises:
         ImportError: If qiskit or qiskit-ibm-runtime are not installed.
@@ -211,7 +248,25 @@ def _qpu_probabilities(
     transpiled = pm.run(qc)
 
     sampler = SamplerV2(mode=backend)
-    job = sampler.run([transpiled], shots=shots)
+    return sampler.run([transpiled], shots=shots)
+
+
+def _qpu_probabilities(
+    circuit: Any,
+    backend_name: str,
+    shots: int,
+    token: str,
+    instance: str,
+) -> dict[str, float]:
+    """Submit *circuit* to a real IBM QPU, block for the result, and return
+    qubit-0-first probs.
+
+    Requires the ``qiskit`` and ``qiskit-ibm-runtime`` extras.
+
+    Raises:
+        ImportError: If qiskit or qiskit-ibm-runtime are not installed.
+    """
+    job = _transpile_and_submit_qpu_job(circuit, backend_name, shots, token, instance)
     print(
         f"[limen] QPU job submitted — ID: {job.job_id()}  "
         f"backend: {backend_name}  shots: {shots}\n"
@@ -220,6 +275,457 @@ def _qpu_probabilities(
     pub_result = job.result()[0]
     counts: dict[str, int] = pub_result.data.c.get_counts()
 
+    total = sum(counts.values())
+    if total == 0:
+        return {}
+    return {bits[::-1]: count / total for bits, count in counts.items()}
+
+
+def submit_qpu_job(
+    qubo: dict[tuple[str, str], float],
+    *,
+    qaoa_layers: int = 1,
+    grid_size: int = 12,
+    qpu_backend_name: str,
+    qpu_shots: int = 1000,
+    qpu_token: str,
+    qpu_instance: str,
+) -> str:
+    """Compile *qubo*'s QAOA circuit and submit it to an IBM QPU without
+    waiting for a result; return the job id immediately.
+
+    Runs the identical deterministic offline grid-search
+    ``run_pipeline(backend="qpu")`` performs internally, so a later
+    ``run_pipeline(qubo, ..., qpu_counts=<fetched counts>)`` call
+    reproduces the same QAOA parameters without needing them persisted
+    alongside the job id — decoupling "submit a job" from "wait for and
+    certify its result" into two independently restartable steps.
+
+    Raises:
+        ImportError: If qiskit or qiskit-ibm-runtime are not installed.
+    """
+    graph = from_qubo_dict(qubo)
+    params, _ = _grid_search(graph, qaoa_layers, grid_size)
+    circuit = compile_qaoa(
+        graph, [params["gamma"]] * qaoa_layers, [params["beta"]] * qaoa_layers
+    )
+    job = _transpile_and_submit_qpu_job(
+        circuit, qpu_backend_name, qpu_shots, qpu_token, qpu_instance
+    )
+    return job.job_id()
+
+
+def run_pipeline_from_plan(
+    qubo: dict[tuple[str, str], float],
+    plan: Any,
+    *,
+    cut_offline: bool = False,
+    cut_token: str | None = None,
+    cut_crn: str | None = None,
+) -> Any:
+    """Dispatch a QUBO through :func:`run_pipeline` using a router RoutePlan.
+
+    ``plan.pipeline_kwargs`` (see limen.router.budget_router.route) are
+    already exact run_pipeline keyword arguments, so this is the single
+    call site every router-planned execution should go through instead
+    of each caller manually unpacking the plan:
+    ``run_pipeline_from_plan(qubo, plan)`` in place of
+    ``run_pipeline(qubo, **plan.pipeline_kwargs)``.
+
+    Args:
+        qubo: The same QUBO dict passed to ``route()`` to produce *plan*.
+        plan: A limen.router.RoutePlan.
+        cut_offline: Only consulted when ``plan.use_cutting`` is True.
+            True dispatches every cutting sub-experiment to a local
+            AerSimulator (zero credits) instead of ``plan.backend``'s
+            real hardware. See :func:`run_cut_route_request`.
+        cut_token: IBM Quantum Platform API token, forwarded to
+            :func:`run_cut_route_request`. Required unless
+            ``cut_offline=True``.
+        cut_crn: IBM Quantum CRN, forwarded to :func:`run_cut_route_request`.
+            Required unless ``cut_offline=True``.
+
+    Returns:
+        An :class:`EndToEndCertificate`, or — when ``plan.use_cutting`` is
+        True — a :class:`~limen.cutting.certificate.CuttingCertificate`
+        from :func:`run_cut_route_request`. These are deliberately
+        different shapes (see that class's docstring): circuit cutting
+        reconstructs Pauli-observable expectation values, not a sampled
+        solution bitstring, so a cutting-based certificate cannot claim
+        brute-force-verified optimality the way EndToEndCertificate does.
+    """
+    if plan.use_cutting:
+        return run_cut_route_request(
+            qubo, plan, offline=cut_offline, token=cut_token, crn=cut_crn
+        )
+    return run_pipeline(qubo, **plan.pipeline_kwargs)
+
+
+def run_cut_route_request(
+    qubo: dict[tuple[str, str], float],
+    plan: Any,
+    *,
+    token: str | None = None,
+    crn: str | None = None,
+    offline: bool = False,
+    shots: int | None = None,
+) -> Any:
+    """Execute an oversized QUBO's RoutePlan via circuit cutting.
+
+    The cut-circuit counterpart to :func:`run_pipeline`: compiles the QUBO
+    to the same QAOA circuit run_pipeline would use, reconstructs every
+    qubit's single-Z expectation value <Z_i> via
+    limen.cutting (one cut + dispatch + reconstruct round trip per
+    qubit — see limen.cutting.qubo_bridge module docstring for why),
+    decodes a solution bitstring from those marginals by threshold
+    rounding, and certifies it with the same surface-code ECC term
+    run_pipeline uses (limen.ecc.certificate.certify_logical_qubit,
+    reused unmodified — it is solution-agnostic).
+
+    Args:
+        qubo: The QUBO dict ``plan`` was routed for.
+        plan: A limen.router.RoutePlan with ``use_cutting=True``.
+        token: IBM Quantum Platform API token. Required unless *offline*.
+        crn: IBM Quantum CRN. Required unless *offline*.
+        offline: If True, every cutting sub-experiment runs on a local
+            AerSimulator (limen.cutting.local_dispatch) instead of
+            ``plan.backend``'s real hardware — zero credits, the same
+            loopback semantics RouteRequest.offline uses elsewhere.
+        shots: Shots per cutting sub-experiment; defaults to ``plan.shots``.
+
+    Returns:
+        A :class:`~limen.cutting.certificate.CuttingCertificate`. Its
+        ``solution``/``decoded_classical_energy`` are the real, exactly
+        (classically) evaluated answer; ``is_optimal`` is always None —
+        see that class's docstring for why a cutting-based certificate
+        cannot claim optimality the way EndToEndCertificate does.
+
+    Raises:
+        ValueError: If neither *offline* nor both *token* and *crn* are given.
+        ImportError: If qiskit-addon-cutting (and, for a real dispatch,
+            qiskit-ibm-runtime; for an offline run, qiskit-aer) is not
+            installed.
+    """
+    from limen.cutting.certificate import CuttingCertificate
+    from limen.cutting.qubo_bridge import (
+        classical_energy,
+        decode_bitstring_from_marginals,
+        mean_field_expected_energy,
+        qubo_ising_terms,
+        reconstruct_z_marginals_via_cutting,
+    )
+    from limen.cutting.reconstruct import reconstruct_from_results
+
+    if not offline and not (token and crn):
+        raise ValueError(
+            "run_cut_route_request targeting real hardware requires both "
+            "token and crn (or pass offline=True for a local-sampler run)."
+        )
+
+    graph = from_qubo_dict(qubo)
+    order = variable_order(graph)
+    n = len(order)
+    h, j_coeffs, constant, _ = qubo_ising_terms(qubo)
+
+    params, _ = _grid_search(graph, 1, 8)
+    circuit = compile_qaoa(graph, [params["gamma"]], [params["beta"]])
+
+    max_subcircuit_qubits = plan.backend.max_qubits
+    run_shots = shots if shots is not None else plan.shots
+
+    if offline:
+        from limen.cutting.local_dispatch import run_cut_circuit_locally
+
+        def dispatch_fn(cut_plan: Any) -> Any:
+            return run_cut_circuit_locally(cut_plan, shots=run_shots)
+    else:
+        from limen.cutting.dispatch import run_cut_circuit
+
+        assert token is not None and crn is not None  # validated above
+        real_token, real_crn = token, crn
+
+        def dispatch_fn(cut_plan: Any) -> Any:
+            return run_cut_circuit(
+                cut_plan,
+                real_token,
+                real_crn,
+                backend_name=plan.backend.name,
+                shots=run_shots,
+            )
+
+    reconstruction = reconstruct_z_marginals_via_cutting(
+        circuit, list(range(n)), max_subcircuit_qubits, dispatch_fn, reconstruct_from_results
+    )
+
+    solution = decode_bitstring_from_marginals(reconstruction.marginals, order)
+    decoded_energy = classical_energy(qubo, solution)
+    expected_energy = mean_field_expected_energy(
+        h, j_coeffs, constant, reconstruction.marginals
+    )
+
+    distance = plan.pipeline_kwargs.get("distance", 3)
+    physical_error_rate = plan.pipeline_kwargs.get("physical_error_rate", 1e-3)
+    patch = build_surface_code(distance)
+    decoder = LookupDecoder(patch)
+    cert = certify_logical_qubit(patch, decoder, physical_error_rate)
+
+    notes = [
+        f"{n} vars exceeded backend capacity ({max_subcircuit_qubits}q): solved "
+        f"via circuit cutting into up to {reconstruction.num_partitions} "
+        f"partition(s), {reconstruction.num_cuts} cut(s).",
+        "solution decoded via cutting-reconstructed single-qubit <Z_i> "
+        "marginal threshold rounding, then evaluated exactly and "
+        "classically (decoded_classical_energy) -- not brute-force "
+        "verified optimal, hence is_optimal=None.",
+        "reconstructed_expected_energy is a mean-field cross-check "
+        "(<Z_i Z_j> approximated by <Z_i><Z_j>), not the true "
+        "reconstructed <H>.",
+    ]
+
+    return CuttingCertificate(
+        solution=solution,
+        decoded_classical_energy=decoded_energy,
+        reconstructed_expected_energy=expected_energy,
+        is_optimal=None,
+        num_partitions=reconstruction.num_partitions,
+        num_cuts=reconstruction.num_cuts,
+        job_ids=reconstruction.job_ids,
+        logical_error_rate=cert.logical_error_rate,
+        physical_error_rate=physical_error_rate,
+        distance=distance,
+        notes=notes,
+        metadata={"n_vars": n, "max_subcircuit_qubits": max_subcircuit_qubits},
+    )
+
+
+def run_route_request(
+    request: Any,
+    *,
+    results_dir: Any = None,
+    fleet: Any = None,
+    qpu_token: str | None = None,
+    qpu_instance: str | None = None,
+    poll_initial_seconds: float = 30.0,
+    poll_backoff_cap_seconds: float = 300.0,
+    poll_ceiling_seconds: float = 24 * 3600.0,
+    server_addresses: list[str] | None = None,
+    num_partitions: int | None = None,
+) -> EndToEndCertificate:
+    """QUBO + budget in, certified answer out — route and execute in one call.
+
+    The zero-manual-steps composition of the router and the pipeline:
+    builds an informed fleet from *results_dir* (run history + calibration
+    snapshots, see :func:`limen.router.informed_fleet`), routes *request*
+    through :func:`limen.router.route`, and executes the resulting plan.
+
+    Simulator and synchronous-hardware plans dispatch straight through
+    :func:`run_pipeline_from_plan`. IBM QPU plans go through the
+    deliberately decoupled submit -> poll -> certify chain (see
+    examples/router_tier2_kingston.py for why submission and waiting are
+    separate concerns): the job id and lifecycle state are persisted to
+    *results_dir* at every poll when one is given, so a crash or timeout
+    here loses nothing — examples/router_tier2_kingston_fetch.py (or a
+    rerun) can re-attach by job id and finish the certification.
+
+    Args:
+        request: A limen.router.RouteRequest.
+        results_dir: Directory holding past certs and calibration
+            snapshots. When given, it seeds the fleet (unless *fleet*
+            overrides it) and receives QPU job-state files. When None,
+            the DEFAULT_FLEET static profiles are used and no state is
+            persisted.
+        fleet: Explicit fleet override; skips informed_fleet entirely.
+        qpu_token: IBM Quantum Platform API token; falls back to the
+            IBM_QUANTUM_TOKEN environment variable. Only consulted for
+            IBM QPU plans.
+        qpu_instance: IBM Quantum CRN; falls back to IBM_QUANTUM_CRN.
+            Only consulted for IBM QPU plans.
+        poll_initial_seconds: First poll delay for QPU jobs; doubles each
+            poll up to *poll_backoff_cap_seconds*.
+        poll_backoff_cap_seconds: Maximum delay between polls.
+        poll_ceiling_seconds: Give up polling (TimeoutError) after this
+            long; the job keeps running on IBM's side and the persisted
+            job id can be re-attached later.
+        server_addresses: Optional list of ``"host:port"`` gRPC peer
+            addresses. When given, the LogicalGraph is compiled across
+            these peers via the :class:`~limen.distributed.server.CoordinationServicer`
+            ``CompilePartition`` RPC instead of only locally, and the
+            merged encoding is recorded on the certificate. Requires
+            the distributed extra (grpcio). When None (default), this
+            node's own configuration is consulted:
+            ``NodeConfig.from_env().known_peers`` (the ``LIMEN_KNOWN_PEERS``
+            env var) is used automatically if ``LIMEN_NODE_ID`` is set,
+            so a deployed LIMEN cluster gets distributed compilation
+            without every caller re-wiring the peer list by hand. If
+            ``LIMEN_NODE_ID`` is unset, compilation stays local exactly
+            as before.
+        num_partitions: Number of partitions to split the graph into
+            when dispatching to peers; defaults to
+            ``len(server_addresses)``.
+
+    Returns:
+        The EndToEndCertificate for the executed plan, or — when the plan
+        targets IBM hardware and exceeds its qubit capacity
+        (``plan.use_cutting``) — a
+        :class:`~limen.cutting.certificate.CuttingCertificate` from
+        :func:`run_cut_route_request`, a deliberately different shape
+        (see that class's docstring for why).
+
+    Raises:
+        ValueError: If the plan needs IBM credentials and none are
+            available (including for a cutting dispatch, which also
+            targets real IBM hardware).
+        RuntimeError: If the QPU job ends in ERROR or CANCELLED.
+        TimeoutError: If *poll_ceiling_seconds* elapses before the QPU
+            job reaches a terminal status.
+    """
+    import dataclasses
+    import os
+
+    from limen.router import DEFAULT_FLEET, informed_fleet, route
+
+    if server_addresses is None:
+        server_addresses = _known_peers_from_env()
+
+    if fleet is None:
+        fleet = (
+            informed_fleet(results_dir) if results_dir is not None else DEFAULT_FLEET
+        )
+    plan = route(request, fleet=fleet)
+    if server_addresses:
+        plan = dataclasses.replace(plan, server_addresses=tuple(server_addresses))
+
+    if plan.pipeline_kwargs.get("backend") != "qpu":
+        return run_pipeline(
+            request.qubo,
+            **plan.pipeline_kwargs,
+            server_addresses=server_addresses,
+            num_partitions=num_partitions,
+        )
+
+    token = qpu_token or os.environ.get("IBM_QUANTUM_TOKEN")
+    instance = qpu_instance or os.environ.get("IBM_QUANTUM_CRN")
+    if not (token and instance):
+        raise ValueError(
+            "This plan targets IBM hardware "
+            f"({plan.backend.name}); pass qpu_token/qpu_instance or set "
+            "IBM_QUANTUM_TOKEN and IBM_QUANTUM_CRN."
+        )
+
+    if plan.use_cutting:
+        return run_cut_route_request(request.qubo, plan, token=token, crn=instance)
+
+    job_id = submit_qpu_job(
+        request.qubo,
+        qpu_backend_name=plan.pipeline_kwargs["qpu_backend_name"],
+        qpu_shots=plan.shots,
+        qpu_token=token,
+        qpu_instance=instance,
+    )
+    counts = _poll_qpu_counts(
+        job_id,
+        plan,
+        token,
+        instance,
+        results_dir=results_dir,
+        poll_initial_seconds=poll_initial_seconds,
+        poll_backoff_cap_seconds=poll_backoff_cap_seconds,
+        poll_ceiling_seconds=poll_ceiling_seconds,
+    )
+    return run_pipeline(
+        request.qubo,
+        **plan.pipeline_kwargs,
+        qpu_counts=counts,
+        server_addresses=server_addresses,
+        num_partitions=num_partitions,
+    )
+
+
+def _poll_qpu_counts(
+    job_id: str,
+    plan: Any,
+    token: str,
+    instance: str,
+    *,
+    results_dir: Any,
+    poll_initial_seconds: float,
+    poll_backoff_cap_seconds: float,
+    poll_ceiling_seconds: float,
+) -> dict[str, int]:
+    """Poll an IBM Runtime job to a terminal status and return its counts.
+
+    Persists a limen.router.job_state.JobState to *results_dir* (when
+    given) at submission and every poll, mirroring
+    examples/router_tier2_kingston_fetch.py's crash-resilience contract:
+    the job id never expires, so any non-DONE exit here can be resumed by
+    a later process.
+    """
+    import pathlib
+    import time
+
+    from qiskit_ibm_runtime import QiskitRuntimeService  # type: ignore[import]
+
+    from limen.router import JobState, JobStatus
+    from limen.router.job_state import now_iso, save_state
+
+    if results_dir is not None:
+        results_dir = pathlib.Path(results_dir)
+
+    terminal = {
+        "DONE": JobStatus.DONE,
+        "ERROR": JobStatus.ERROR,
+        "CANCELLED": JobStatus.CANCELLED,
+    }
+
+    state = JobState(
+        job_id=job_id,
+        status=JobStatus.SUBMITTED,
+        plan=plan.to_dict(),
+        submitted_at=now_iso(),
+    )
+    if results_dir is not None:
+        save_state(results_dir, state)
+
+    service = QiskitRuntimeService(
+        channel="ibm_quantum_platform", token=token, instance=instance
+    )
+    job = service.job(job_id)
+
+    start = time.monotonic()
+    backoff = poll_initial_seconds
+    while True:
+        raw_status = str(job.status())
+        mapped = terminal.get(raw_status)
+        state.status = mapped if mapped is not None else JobStatus.QUEUED
+        state.last_polled_at = now_iso()
+        if results_dir is not None:
+            save_state(results_dir, state)
+
+        if mapped is JobStatus.DONE:
+            return job.result()[0].data.c.get_counts()
+        if mapped is not None:
+            raise RuntimeError(
+                f"QPU job {job_id} ended with status {raw_status}; not "
+                "resubmitting automatically — a hardware-side failure "
+                "would burn credits on a problem this pipeline can't fix. "
+                "Submit a fresh request deliberately if you want to retry."
+            )
+        if time.monotonic() - start >= poll_ceiling_seconds:
+            state.status = JobStatus.TIMED_OUT
+            if results_dir is not None:
+                save_state(results_dir, state)
+            raise TimeoutError(
+                f"QPU job {job_id} still {raw_status} after "
+                f"{poll_ceiling_seconds:.0f}s; it keeps running on IBM's "
+                "side — re-attach later by job id (e.g. "
+                f"examples/router_tier2_kingston_fetch.py {job_id})."
+            )
+        time.sleep(backoff)
+        backoff = min(backoff * 2, poll_backoff_cap_seconds)
+
+
+def _counts_to_probabilities(counts: dict[str, int]) -> dict[str, float]:
+    """Convert raw Qiskit counts (qubit-0 rightmost) to qubit-0-first probs."""
     total = sum(counts.values())
     if total == 0:
         return {}
@@ -425,6 +931,7 @@ def run_pipeline(
     grid_size: int = 12,
     distance: int = 3,
     physical_error_rate: float | None = None,
+    measured_logical_error: float | None = None,
     encode_logical: bool = True,
     server_addresses: list[str] | None = None,
     num_partitions: int | None = None,
@@ -434,6 +941,7 @@ def run_pipeline(
     qpu_shots: int = 1000,
     qpu_token: str | None = None,
     qpu_instance: str | None = None,
+    qpu_counts: dict[str, int] | None = None,
     dwave_num_reads: int = 1000,
     dwave_use_qpu: bool = False,
     dwave_endpoint: str | None = None,
@@ -456,6 +964,13 @@ def run_pipeline(
         distance: Surface-code distance for the logical-qubit certificate.
         physical_error_rate: Per-qubit bit-flip rate for the ECC term;
             if None, the logical-qubit certificate is skipped.
+        measured_logical_error: Optional empirical logical-error prior
+            for the target backend, measured from previous certified
+            runs (see limen.router.history). Recorded on the certificate
+            as ``measured_logical_error_prior`` and folded into
+            ``predicted_logical_error_bound = max(model, prior)`` — it
+            never alters ``aggregate_logical_error_rate``, which stays
+            the surface-code model's own prediction.
         encode_logical: Whether to compute the surface-code certificate.
         server_addresses: Optional "host:port" peer addresses. If given, the
             logical graph is compiled across these peers via the Coordination
@@ -501,6 +1016,12 @@ def run_pipeline(
             or ``"qpu"`` backend.
         qpu_token: IBM Quantum Platform API token (``"qpu"`` only).
         qpu_instance: IBM Quantum CRN instance string (``"qpu"`` only).
+        qpu_counts: Raw Qiskit counts (qubit-0 rightmost) from a job
+            already submitted and fetched separately (``"qpu"`` only).
+            When given, no new job is submitted — *qpu_token*/
+            *qpu_instance* are not required — and these counts are
+            certified through the same grid-search/energy/ECC path a
+            live QPU run would use.
         dwave_num_reads: Number of samples to draw (``"dwave"`` only).
         dwave_use_qpu: If True, submit to a real D-Wave QPU instead of
             the local simulated annealer (``"dwave"`` only).
@@ -550,9 +1071,10 @@ def run_pipeline(
             f"Unknown backend {backend!r}. Choose from: "
             + ", ".join(sorted(_BACKEND_CHOICES))
         )
-    if backend == "qpu" and not (qpu_token and qpu_instance):
+    if backend == "qpu" and qpu_counts is None and not (qpu_token and qpu_instance):
         raise ValueError(
-            "backend='qpu' requires both qpu_token and qpu_instance."
+            "backend='qpu' requires either qpu_counts, or both qpu_token "
+            "and qpu_instance."
         )
     if backend == "dwave" and dwave_use_qpu and not (dwave_endpoint and dwave_token):
         raise ValueError(
@@ -624,7 +1146,9 @@ def run_pipeline(
             )
             if backend == "aer":
                 dist = _aer_probabilities(final_circuit, qpu_backend_name, qpu_shots)
-            else:  # "qpu"
+            elif qpu_counts is not None:  # "qpu", already-fetched job
+                dist = _counts_to_probabilities(qpu_counts)
+            else:  # "qpu", submit a new job
                 dist = _qpu_probabilities(
                     final_circuit, qpu_backend_name, qpu_shots,
                     qpu_token, qpu_instance,  # type: ignore[arg-type]
@@ -685,6 +1209,7 @@ def run_pipeline(
 
     logical_rate: float | None = None
     aggregate_rate: float | None = None
+    predicted_bound: float | None = None
     roundtrip_corrects_all_weight1: bool | None = None
     notes: list[str] = []
     if encode_logical and physical_error_rate is not None:
@@ -693,6 +1218,28 @@ def run_pipeline(
         cert = certify_logical_qubit(patch, decoder, physical_error_rate)
         logical_rate = cert.logical_error_rate
         aggregate_rate = 1.0 - (1.0 - logical_rate) ** n
+        # Conservative envelope, not a blend: the model prediction stays
+        # reported untouched in aggregate_logical_error_rate; the bound
+        # takes whichever of (model, measured prior) is worse, so repeat
+        # runs on a backend with a known deficit land within prediction
+        # without pretending the model predicted it.
+        predicted_bound = aggregate_rate
+        if measured_logical_error is not None:
+            predicted_bound = max(aggregate_rate, measured_logical_error)
+            if measured_logical_error > aggregate_rate:
+                notes.append(
+                    f"Measured logical-error prior {measured_logical_error:.3e} "
+                    f"from run history exceeds the surface-code model's "
+                    f"aggregate prediction {aggregate_rate:.3e}; "
+                    f"predicted_logical_error_bound uses the prior."
+                )
+            else:
+                notes.append(
+                    f"Measured logical-error prior {measured_logical_error:.3e} "
+                    f"from run history is within the surface-code model's "
+                    f"aggregate prediction {aggregate_rate:.3e}; "
+                    f"predicted_logical_error_bound uses the model."
+                )
         # Back the analytic certificate with executed gate circuits: run
         # the syndrome-extraction loop on the simulator for every weight-1
         # X error and confirm the code corrects them all.
@@ -792,4 +1339,6 @@ def run_pipeline(
         notes=notes,
         metadata=metadata,
         distributed_compilation=distributed_compilation,
+        measured_logical_error_prior=measured_logical_error,
+        predicted_logical_error_bound=predicted_bound,
     )

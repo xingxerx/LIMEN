@@ -36,7 +36,11 @@ dependencies = []
 [project.optional-dependencies]
 pyqubo = ["pyqubo>=1.4"]
 dwave = ["dwave-ocean-sdk>=6.0"]
-ibm = ["qiskit>=1.0"]
+# qiskit<2.5: qiskit 2.5.0 removed/restructured qiskit.transpiler.preset_passmanagers.common,
+# which qiskit-aer 0.17.2's internal transpile path still imports -- breaks AerSimulator.run()
+# with AttributeError until qiskit-aer catches up. Revisit this cap once a qiskit-aer release
+# is confirmed compatible with qiskit>=2.5.
+ibm = ["qiskit>=1.0,<2.5", "qiskit-aer>=0.14"]
 braket = ["amazon-braket-sdk>=1.70"]
 openquantum = ["openquantum-sdk"]
 cutting = ["qiskit-addon-cutting>=0.9", "qiskit-ibm-runtime>=0.25"]
@@ -45,12 +49,19 @@ distributed = [
   "grpcio-tools>=1.60",
   "protobuf>=4.25",
   "grpcio-health-checking>=1.60",
-  "cryptography>=42",
+  "cryptography>=48",
 ]
+# cryptography>=48: the first version confirmed (locally + in CI) to expose
+# hazmat.primitives.asymmetric.mldsa/mlkem (ML-DSA/ML-KEM, FIPS 204/203),
+# used by limen.security.pqc to sign persisted/exchanged artifacts. Split
+# out as its own extra so post-quantum signing doesn't require the full
+# grpcio/distributed stack.
+pqc = ["cryptography>=48"]
 all = [
   "pyqubo>=1.4",
   "dwave-ocean-sdk>=6.0",
-  "qiskit>=1.0",
+  "qiskit>=1.0,<2.5",
+  "qiskit-aer>=0.14",
   "amazon-braket-sdk>=1.70",
   "openquantum-sdk",
   "qiskit-addon-cutting>=0.9",
@@ -59,7 +70,7 @@ all = [
   "grpcio-tools>=1.60",
   "protobuf>=4.25",
   "grpcio-health-checking>=1.60",
-  "cryptography>=42",
+  "cryptography>=48",
 ]
 
 [project.urls]
@@ -70,6 +81,7 @@ all = [
 [tool.maturin]
 module-name = "limen.limen_core"
 features = ["pyo3/extension-module"]
+python-packages = ["limen"]
 
 [tool.pyright]
 pythonVersion = "3.13"

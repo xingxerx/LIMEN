@@ -282,7 +282,7 @@ def build_certificate(
     validated_count = sum(1 for n in nodes if n["validated"])
 
     return {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         "source": "live_query",
         "nodes": nodes,
         "summary": {
