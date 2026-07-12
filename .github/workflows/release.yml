@@ -56,14 +56,10 @@ jobs:
 
   macos:
     name: Build wheels (macos, ${{ matrix.target }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14
     strategy:
       matrix:
-        include:
-          - target: x86_64
-            runner: macos-13
-          - target: aarch64
-            runner: macos-14
+        target: [aarch64]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
