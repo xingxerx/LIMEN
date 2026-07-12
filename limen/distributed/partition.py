@@ -57,7 +57,7 @@ def _stoer_wagner_bisect(
             edges.append((index[a], index[b], w))
 
     try:
-        from limen_core import stoer_wagner_bisect as _rust_bisect
+        from limen.limen_core import stoer_wagner_bisect as _rust_bisect
     except ImportError:
         _rust_bisect = None
 

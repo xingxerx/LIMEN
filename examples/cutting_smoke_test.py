@@ -69,7 +69,7 @@ def backend_transpile(qc, backend):
 
 
 def _cut_and_reconstruct(circuit: CircuitIR) -> float:
-    import limen_core
+    from limen import limen_core
 
     qc = _unmeasured_copy(to_qiskit_circuit(circuit))
     constraints = DeviceConstraints(qubits_per_subcircuit=2)

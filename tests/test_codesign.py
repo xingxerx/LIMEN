@@ -5,9 +5,9 @@ Skipped cleanly if limen_core Rust extension is not installed.
 
 import pytest
 
-limen_core = pytest.importorskip("limen_core", reason="limen_core Rust extension not installed")
+limen_core = pytest.importorskip("limen.limen_core", reason="limen_core Rust extension not installed")
 
-from limen_core import StackelbergSolver, EquilibriumScore
+from limen.limen_core import StackelbergSolver, EquilibriumScore
 
 from limen import compile_lexicographic, default_hardware_graph, from_qubo_dict
 from limen.codesign.solver import CoDesignResult, run_codesign

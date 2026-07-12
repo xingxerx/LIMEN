@@ -165,7 +165,7 @@ def certify_ising(
             op_norm = 0.0
         else:
             try:
-                from limen_core import exact_ising_norm as _rust_norm
+                from limen.limen_core import exact_ising_norm as _rust_norm
                 op_norm = _rust_norm(
                     list(dh.items()),
                     list(dJ.items()),

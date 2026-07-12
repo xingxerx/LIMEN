@@ -323,7 +323,7 @@ June 9 2026. Benchmark results in benchmarks/RESULTS.md.**
 
 **Rust acceleration layer (v0.8.x):** every enumeration- or sampling-shaped
 hot loop in the library is now Rust-backed via the `limen_core` PyO3
-extension, each behind a `try: from limen_core import ...` fast path with an
+extension, each behind a `try: from limen.limen_core import ...` fast path with an
 equivalent pure-Python fallback: QUBO spectrum enumeration, the validator's
 noisy-run simulation (`simulate_qubo_runs`, rayon-parallel), surface-code
 lookup-table construction and logical-error certification

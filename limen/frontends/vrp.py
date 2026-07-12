@@ -114,7 +114,7 @@ def vrp_qubo(
         penalty_a = penalty_b * max_dist * n * 5
 
     try:
-        from limen_core import vrp_qubo_terms as _rust_terms
+        from limen.limen_core import vrp_qubo_terms as _rust_terms
     except ImportError:
         _rust_terms = None
 

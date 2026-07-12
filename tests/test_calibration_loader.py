@@ -169,6 +169,8 @@ def test_load_live_ibmq_calibration(monkeypatch):
 
 
 def test_run_qiskit_qpu_error_mitigation(monkeypatch):
+    pytest.importorskip("qiskit", reason="qiskit not installed")
+
     class MockJob:
         def job_id(self):
             return "mock_job_id"

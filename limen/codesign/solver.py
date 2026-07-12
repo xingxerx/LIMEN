@@ -22,7 +22,7 @@ from limen.qubo_spectrum import qubo_energy_spectrum
 from limen.validator.validator import validate
 
 try:
-    from limen_core import EquilibriumScore, StackelbergSolver
+    from limen.limen_core import EquilibriumScore, StackelbergSolver
 
     _RUST_AVAILABLE = True
 except ImportError:

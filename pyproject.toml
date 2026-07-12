@@ -26,6 +26,8 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Rust",
   "Topic :: Scientific/Engineering :: Physics",
   "Topic :: Software Development :: Compilers",
 ]
@@ -79,7 +81,7 @@ all = [
 "Documentation" = "https://github.com/xingxerx/LIMEN#readme"
 
 [tool.maturin]
-module-name = "limen_core"
+module-name = "limen.limen_core"
 features = ["pyo3/extension-module"]
 python-packages = ["limen"]
 

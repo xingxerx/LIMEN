@@ -77,7 +77,7 @@ def certify_logical_qubit(
     logical_z_set = set(patch.logical_z)
 
     try:
-        from limen_core import logical_failure_probability as _rust_failure
+        from limen.limen_core import logical_failure_probability as _rust_failure
     except ImportError:
         _rust_failure = None
 

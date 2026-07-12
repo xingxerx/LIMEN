@@ -99,7 +99,7 @@ def statevector(circuit: CircuitIR) -> list[complex]:
     n = circuit.n_qubits
 
     try:
-        from limen_core import run_statevector as _rust_statevector
+        from limen.limen_core import run_statevector as _rust_statevector
 
         pairs = _rust_statevector(
             [(ins.name, ins.qubits, ins.params) for ins in circuit.instructions],
