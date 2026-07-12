@@ -19,6 +19,22 @@ LIMEN's six phases are individually complete, and as of commit `23e1eaa` the fee
 
 `run_route_request()` — QUBO + budget in, certified answer out — is the zero-manual-steps entry point tying all six together. It now handles every `RoutePlan` shape, including oversized problems that require circuit cutting.
 
+| Phase | Module(s) | Status |
+|-------|-----------|--------|
+| 7 — QUBO Auto-Formulation (structured-input tier) | `limen.formulation` | ✅ (Steps 1-2, 4 of the 5-step plan below) |
+
+---
+
+## Shipped: QUBO Auto-Formulation, Structured-Input Tier (Phase 7, Step 1-2 + 4)
+
+`limen.formulation.ConstraintCompiler` closes the "real gap" this roadmap previously only scoped: hand-deriving penalty terms from constraints. A caller declares typed constraints (`Equality`, `Inequality`, `OneHot`, `AtMostK`, `AtLeastK`, `AllDifferent`) over binary variable names, queues them alongside an objective QUBO, and gets back a validated `LogicalGraph` — the same IR `limen.frontends.pyqubo.from_qubo_dict` produces, so it drops straight into the existing compilation pipeline.
+
+- **Step 1 (input contract):** structured typed dataclasses, not free-text — `limen/formulation/constraints.py`. Natural-language input is explicitly deferred (see "Research-Track" section note below on why NL sits *on top of*, not *inside*, the certified pipeline).
+- **Step 2 (constraint compiler):** `limen/formulation/compiler.py`. Two primitives — squared-equality penalty expansion and binary-slack-encoded inequality reduction — implement every constraint type. `AtMostK(k=1)`/`AtLeastK(k=0)` special-case to zero-auxiliary-variable penalties (exact pairwise/empty forms) rather than paying for a slack encoding they don't need.
+- **Step 3 (penalty-weight selection):** `limen/formulation/penalty.py`. This turned out to be a genuinely separate problem from the Stackelberg co-design loop, as suspected — co-design tunes chain-strength/embedding *after* a QUBO exists, against a fixed hardware graph; `default_penalty_weight` picks the penalty *before* the QUBO exists, from the objective's own coefficients, with no hardware dependency. The two don't compose into one search.
+- **Step 4 (validation loop):** `tests/test_formulation.py`, following the same discover-don't-confirm philosophy as `tests/test_physics_validation.py` — every test brute-forces the compiled QUBO and checks the ground state actually satisfies the original constraint, across randomized objectives, rather than asserting one baked-in answer.
+- **Step 5 (NL layer on top):** not started — deliberately deferred per the original scoping, since it changes LIMEN's trust surface (an LLM's interpretation would sit inside vs. outside the certified pipeline). A future NL layer should translate text into the Step 1 typed constraints, not bypass them.
+
 ---
 
 ## Shipped: Cut-Circuit → Certificate Bridge (Phase 4 × Phase 5)
@@ -53,6 +69,14 @@ The return type is `CuttingCertificate` (`limen.cutting.certificate`), not `EndT
 This is **intentionally standalone** rather than wired into `run_route_request()`'s D-Wave dispatch: that path compiles against a complete hardware graph, where `chain_strength` is provably inert. Wiring it into `run_route_request()` would have been a no-op dressed up as a feature. Direct callers with a real sparse hardware graph (e.g. `examples/dwave_codesign_qpu.py`) get the benefit; the fully-connected router path does not need it.
 
 ---
+
+## Blocked (Not an Engineering Task Right Now)
+
+- **Atom Computing hardware access** (`limen/backends/azure_atom.py`) — dormant, blocker re-verified 2026-07-08. Atom Computing is absent from both Azure Quantum's live provider list and AWS Braket's device list (checked directly against current docs, not carried over from a stale earlier finding). The AWS Braket fallback previously queued up for this is **moot** — Atom Computing isn't a Braket provider either, so a `braket_atom.py` twin would be dead code against a nonexistent target. The only remaining path is Atom Computing's own direct enterprise access program (an application/approval step, not code). Revisit only when that access exists or Atom Computing lands on a public marketplace; don't re-litigate the Braket option again without checking whether the provider list changed.
+
+## Research-Track (Not on This Roadmap)
+
+- **General analog universality** (arbitrary non-diagonal, time-dependent Hamiltonians) — open research, not an engineering backlog item. Scoped and tracked separately in `limen/docs/universality_theorem.md`, which proves restricted-class results (Theorems 1–5, diagonal quadratic/Ising forms only) and explicitly flags the general case as open. If this is ever worked further, the actionable slice is a narrow Theorem 6 for one restricted extension (e.g. time-dependent-but-diagonal, or a bounded non-diagonal perturbation class), scoped and proved the way Theorems 1–5 were — a math-first task, kept off this engineering roadmap on purpose so it doesn't rot alongside phase-tracked work.
 
 ## Not Planned
 

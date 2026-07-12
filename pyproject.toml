@@ -3,7 +3,7 @@ requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "limen"
+name = "limen-compiler"
 version = "0.8.3"
 description = "A physics-aware compiler stack for translating classical optimization problems into native quantum and analog substrates."
 readme = "README.md"
@@ -50,10 +50,12 @@ distributed = [
   "cryptography>=48",
 ]
 # cryptography>=48: the first version confirmed (locally + in CI) to expose
-# hazmat.primitives.asymmetric.mldsa/mlkem (ML-DSA/ML-KEM, FIPS 204/203),
-# used by limen.security.pqc to sign persisted/exchanged artifacts. Split
-# out as its own extra so post-quantum signing doesn't require the full
-# grpcio/distributed stack.
+# hazmat.primitives.asymmetric.mldsa (ML-DSA, FIPS 204), used by
+# limen.security.pqc to sign persisted/exchanged artifacts. This version
+# also exposes mlkem (ML-KEM, FIPS 203, key encapsulation) but nothing in
+# limen currently uses it -- signing-at-rest was the stated scope, not
+# encryption/key exchange. Split into its own extra so post-quantum
+# signing doesn't require the full grpcio/distributed stack.
 pqc = ["cryptography>=48"]
 all = [
   "pyqubo>=1.4",

@@ -13,12 +13,36 @@
 # limitations under the License.
 """Atom Computing backend adapter for LIMEN, via Azure Quantum.
 
-STATUS: DORMANT. This adapter has never been exercised against a live
-Azure Quantum workspace — no Atom Computing hardware run has validated
-it, and it is not part of results/fleet_certificate.json or the budget
-router's DEFAULT_FLEET. The code is kept import-clean and unit-testable,
-but treat it as unverified until a real target id and hardware run
-confirm it.
+STATUS: DORMANT, blocker re-verified 2026-07-08. This adapter has never
+been exercised against a live Azure Quantum workspace — no Atom Computing
+hardware run has validated it, and it is not part of
+results/fleet_certificate.json or the budget router's DEFAULT_FLEET.
+
+Atom Computing is absent from Azure Quantum's current provider list
+(https://learn.microsoft.com/en-us/azure/quantum/qc-target-list, doc
+updated 2026-04-23: only IonQ, Pasqal, Quantinuum, Rigetti are live, with
+Quantum Circuits listed "coming soon" — no Atom Computing entry, live or
+upcoming). This is not a stale finding from an earlier session; it was
+re-checked against the live doc as of this comment.
+
+A same-session re-check also ruled out the fallback previously queued up
+for this blocker: routing through AWS Braket instead, since Atom Computing
+is "a Braket provider." That premise was wrong — Braket's current device
+list is AQT, IonQ, IQM, QuEra, and Rigetti; Atom Computing is not on it
+either (see limen/backends/braket.py, which targets QuEra's Aquila, the
+device Braket actually offers on this substrate). Writing a
+`braket_atom.py` twin of this module would be dead code against a target
+that doesn't exist on that marketplace.
+
+The only remaining path to real Atom Computing hardware is their own
+direct enterprise access program (an application/approval step outside
+Azure or AWS, not an engineering task). Until that access exists — or
+until Atom Computing lands on a public marketplace — this file stays
+dormant. Do not point `target=` at a real Azure workspace expecting it to
+resolve; there is currently no Atom Computing target for it to resolve
+to. The code is kept import-clean and unit-testable so it's ready the
+day access opens up, but treat every default in it (target ids
+especially) as placeholders, not verified values.
 
 Atom Computing's machines are *gate-model* neutral-atom devices (nuclear-spin
 qubits in Yb-171 held in optical tweezers), unlike QuEra Aquila's analog

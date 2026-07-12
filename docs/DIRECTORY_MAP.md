@@ -86,7 +86,7 @@ The primary Python package namespace containing compiler layers, adapters, and v
 
 ### 📁 `limen/backends/` — QPU & Gate-Model Execution Adapters
 * **`__init__.py`** — Base hardware interface and driver registrations.
-* **`azure_atom.py`** — Azure Quantum adapter for Atom Computing gate-model neutral-atom devices. **DORMANT**: import-clean and unit-tested, never hardware-validated; excluded from the router's `DEFAULT_FLEET`.
+* **`azure_atom.py`** — Azure Quantum adapter for Atom Computing gate-model neutral-atom devices. **DORMANT**: import-clean and unit-tested, never hardware-validated; excluded from the router's `DEFAULT_FLEET`. Blocked because Atom Computing isn't on Azure Quantum's (or AWS Braket's) provider list — see the module docstring; re-verified 2026-07-08.
 * **`braket.py`** — QuEra Aquila (analog neutral-atom) adapter via the AWS Braket SDK.
 * **`dwave.py`** — Adapter for D-Wave quantum annealers leveraging the Ocean SDK.
 * **`neutral_atom.py`** — Gate-model neutral-atom hardware adapter (distinct from the analog `limen/analog/backends/neutral_atom.py`).
@@ -156,6 +156,13 @@ Runs wider-than-any-backend QAOA circuits on real QPUs via quasi-probability dec
 * **`__init__.py`** — Exports standard problem parses.
 * **`pyqubo.py`** — Parser to convert PyQUBO model definitions into the LogicalGraph IR.
 * **`vrp.py`** — Vehicle Routing Problem frontend: multi-depot-split routing via depot duplication, one-hot QUBO construction (Rust-backed `vrp_qubo_terms`), and route decoding. Use `run_pipeline(backend="dwave")` for VRP-sized instances.
+
+### 📁 `limen/formulation/` — QUBO Auto-Formulation *(new — Phase 7, structured-input tier)*
+* **`__init__.py`** — Exports `ConstraintCompiler`, the typed constraint dataclasses, and `default_penalty_weight`.
+* **`constraints.py`** — Typed constraint contract: `Equality`, `Inequality` (`<=`/`>=`, binary-slack-encoded), `OneHot`, `AtMostK`, `AtLeastK`, and `AllDifferent` (row one-hot + column at-most-one assignment pattern).
+* **`compiler.py`** — `ConstraintCompiler`: merges an objective QUBO with penalty terms expanded from queued constraints into a `LogicalGraph`; `at_most_k=1`/`at_least_k=0` special-case to zero-auxiliary penalties, general-`k` inequalities use a binary-encoded slack variable.
+* **`penalty.py`** — `default_penalty_weight`: auto-selects a penalty coefficient that provably dominates the objective's local pull on the constrained variables, so violating a constraint is never profitable.
+* Natural-language input is deliberately out of scope here (see `docs/ROADMAP.md`) — an NL layer, if built, translates text into these same typed constraints rather than bypassing them, so an LLM's interpretation never enters the certified pipeline directly.
 
 ### 📁 `limen/router/` — Budget Router & Fleet Cost Model *(new — v0.8.3)*
 * **`__init__.py`** — Exports `route`, `Tier`, `RouteRequest`/`RoutePlan`, `DEFAULT_FLEET`, and the history/calibration/job-state helpers.

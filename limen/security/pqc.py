@@ -30,6 +30,15 @@ JSON write path (save_state, fetch_backend_calibration's caller, RoutePlan/
 EndToEndCertificate.to_dict) is unchanged; callers who want tamper-evidence
 opt in by calling sign_json()/verify_json() themselves alongside their
 existing read/write code.
+
+Scope limit: signing-at-rest/in-transit tamper-evidence only. The
+``cryptography`` version this module requires also exposes ML-KEM
+(FIPS 203, post-quantum key encapsulation) via
+``hazmat.primitives.asymmetric.mlkem``, but nothing here uses it --
+there is no PQC encryption or key-exchange capability in this module,
+and none of the classical TLS transport in limen.distributed is
+touched (see that module's docstring for why: gRPC's TLS handshake is
+handled by its C-core, not reachable from these primitives).
 """
 
 from __future__ import annotations
