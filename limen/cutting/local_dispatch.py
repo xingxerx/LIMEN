@@ -23,7 +23,7 @@ from limen.cutting.partition import CutPlan
 
 _INSTALL_MSG = (
     "qiskit-addon-cutting and qiskit-aer are required for local cut-circuit "
-    "dispatch. Install with: pip install limen[cutting] qiskit-aer"
+    "dispatch. Install with: pip install limen-compiler[cutting] qiskit-aer"
 )
 
 

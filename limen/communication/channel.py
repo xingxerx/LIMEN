@@ -21,7 +21,7 @@ from typing import Any, Literal, Optional
 
 _INSTALL_MSG = (
     "The Qiskit SDK is required to use the QuantumChannel. "
-    "Install it with: pip install limen[ibm]  "
+    "Install it with: pip install limen-compiler[ibm]  "
     "(or: pip install qiskit qiskit-aer)"
 )
 
@@ -936,7 +936,9 @@ def run_teleport_qpu(
     job = sampler.run([transpiled], shots=shots)
     job_id = job.job_id()
     pub_result = job.result()[0]
-    counts: dict[str, int] = pub_result.data.c.get_counts()
+    from limen.pipeline import _get_counts_from_pub_result
+
+    counts: dict[str, int] = _get_counts_from_pub_result(pub_result)
 
     result = estimate_fidelity(counts, backend=backend_name, job_id=job_id)
     result.channel_delta = _channel_delta_from_backend(backend)

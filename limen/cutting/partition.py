@@ -19,7 +19,7 @@ from limen.gates.qiskit_exec import to_qiskit_circuit
 
 _INSTALL_MSG = (
     "qiskit-addon-cutting is required for circuit cutting. "
-    "Install it with: pip install limen[cutting]"
+    "Install it with: pip install limen-compiler[cutting]"
 )
 
 

@@ -43,7 +43,7 @@ from limen.core.compiler import PhysicalEncoding
 
 _INSTALL_MSG = (
     "The Open Quantum SDK is required to use the Open Quantum backend. "
-    "Install it with: pip install limen[openquantum]  "
+    "Install it with: pip install limen-compiler[openquantum]  "
     "(or: pip install openquantum-sdk)"
 )
 

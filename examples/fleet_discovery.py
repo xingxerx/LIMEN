@@ -170,7 +170,7 @@ def discover_openquantum_backends(client_id: str, client_secret: str) -> list[di
     except ImportError as exc:
         print(
             "ERROR: openquantum-sdk not installed.\n"
-            "Install with: pip install limen[openquantum]\n"
+            "Install with: pip install limen-compiler[openquantum]\n"
             f"Details: {exc}",
             file=sys.stderr,
         )

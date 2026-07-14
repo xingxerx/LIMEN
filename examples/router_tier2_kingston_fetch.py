@@ -304,7 +304,14 @@ def main() -> int:
 
     job = service.job(job_id)
     pub_result = job.result()[0]
-    counts: dict[str, int] = pub_result.data.c.get_counts()
+    # Register name varies (c, meas, ...): take the first BitArray in the DataBin.
+    _regs = [
+        k for k in dir(pub_result.data) if not k.startswith("_")
+        and hasattr(getattr(pub_result.data, k), "get_counts")
+    ]
+    if not _regs:
+        raise RuntimeError(f"no classical registers in result: {pub_result.data}")
+    counts: dict[str, int] = getattr(pub_result.data, _regs[0]).get_counts()
     metrics = job.metrics()
     timestamps = metrics.get("timestamps") if metrics else None
 

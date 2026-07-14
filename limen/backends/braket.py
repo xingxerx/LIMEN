@@ -43,7 +43,7 @@ from limen.core.compiler import PhysicalEncoding
 
 _INSTALL_MSG = (
     "The Amazon Braket SDK is required to use the QuEra Aquila backend. "
-    "Install it with: pip install limen[braket]  "
+    "Install it with: pip install limen-compiler[braket]  "
     "(or: pip install amazon-braket-sdk)"
 )
 

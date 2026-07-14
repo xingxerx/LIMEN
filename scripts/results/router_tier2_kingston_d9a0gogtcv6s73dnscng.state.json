@@ -1,0 +1,60 @@
+{
+  "job_id": "d9a0gogtcv6s73dnscng",
+  "status": "DONE",
+  "plan": {
+    "tier": 2,
+    "backend": {
+      "name": "ibm_fez",
+      "kind": "ibm",
+      "max_qubits": 156,
+      "cost_per_shot": 0.002,
+      "validated": true,
+      "avg_queue_seconds": null,
+      "measured_logical_error": null
+    },
+    "pipeline_kwargs": {
+      "backend": "qpu",
+      "qpu_backend_name": "ibm_fez",
+      "qpu_shots": 5000,
+      "encode_logical": true,
+      "distance": 3,
+      "physical_error_rate": 0.001
+    },
+    "use_cutting": false,
+    "num_partitions": null,
+    "ecc_distance": 3,
+    "physical_qubit_budget": 153,
+    "patch_assignments": [
+      {
+        "logical_var": 0,
+        "distance": 3,
+        "physical_start": 0,
+        "physical_end": 9
+      },
+      {
+        "logical_var": 1,
+        "distance": 3,
+        "physical_start": 9,
+        "physical_end": 18
+      },
+      {
+        "logical_var": 2,
+        "distance": 3,
+        "physical_start": 18,
+        "physical_end": 27
+      }
+    ],
+    "n_vars": 3,
+    "shots": 5000,
+    "criticality_spread": 1.0,
+    "notes": [
+      "criticality spread 1.000 (threshold 2.0) -> tier 2 (forced)",
+      "backend ibm_fez (ibm, 156q, validated=True), 5000 shots",
+      "ECC: distance 3, 153 physical qubits budgeted, 3 of 3 variables patched"
+    ],
+    "server_addresses": null
+  },
+  "submitted_at": "2026-07-12 21:34:27 UTC",
+  "last_polled_at": "2026-07-12T23:00:53+00:00",
+  "error": null
+}

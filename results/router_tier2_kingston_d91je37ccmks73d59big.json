@@ -1,0 +1,176 @@
+{
+  "generated_at": "2026-07-12 23:04:22 UTC",
+  "job_id": "d91je37ccmks73d59big",
+  "plan": {
+    "tier": 2,
+    "backend": {
+      "name": "ibm_kingston",
+      "kind": "ibm",
+      "max_qubits": 156,
+      "cost_per_shot": 0.021755569219589235,
+      "validated": true,
+      "avg_queue_seconds": 31940.056865,
+      "measured_logical_error": 0.034849307077846114
+    },
+    "pipeline_kwargs": {
+      "backend": "qpu",
+      "qpu_backend_name": "ibm_kingston",
+      "qpu_shots": 100,
+      "encode_logical": true,
+      "distance": 3,
+      "physical_error_rate": 0.025862911798496722,
+      "measured_logical_error": 0.034849307077846114
+    },
+    "use_cutting": false,
+    "num_partitions": null,
+    "ecc_distance": 3,
+    "physical_qubit_budget": 151,
+    "patch_assignments": [
+      {
+        "logical_var": 0,
+        "distance": 3,
+        "physical_start": 0,
+        "physical_end": 9
+      },
+      {
+        "logical_var": 1,
+        "distance": 3,
+        "physical_start": 9,
+        "physical_end": 18
+      },
+      {
+        "logical_var": 2,
+        "distance": 3,
+        "physical_start": 18,
+        "physical_end": 27
+      },
+      {
+        "logical_var": 3,
+        "distance": 3,
+        "physical_start": 27,
+        "physical_end": 36
+      },
+      {
+        "logical_var": 4,
+        "distance": 3,
+        "physical_start": 36,
+        "physical_end": 45
+      }
+    ],
+    "n_vars": 5,
+    "shots": 100,
+    "criticality_spread": 2.5,
+    "notes": [
+      "criticality spread 2.500 (threshold 2.0) -> tier 2",
+      "backend ibm_kingston (ibm, 156q, validated=True), 100 shots",
+      "ECC: distance 3, 151 physical qubits budgeted, 5 of 5 variables patched",
+      "physical_error_rate 2.586e-02 from ibm_kingston calibration (overrides the 1.000e-03 request default)",
+      "measured_logical_error 3.485e-02 from ibm_kingston run history (forwarded to the certificate as a max-bound prior, not blended into the surface-code model's prediction)"
+    ],
+    "server_addresses": null
+  },
+  "baseline_certificate": {
+    "solution": {
+      "hub": 1,
+      "leaf0": 0,
+      "leaf1": 0,
+      "leaf2": 0,
+      "leaf3": 0
+    },
+    "energy": -4.0,
+    "classical_energy": -4.0,
+    "is_optimal": true,
+    "success_probability": 0.5683493070778461,
+    "qaoa_layers": 1,
+    "qaoa_params": {
+      "gamma": 1.5707963267948966,
+      "beta": 1.0471975511965976
+    },
+    "logical_error_rate": 0.01087323845082862,
+    "aggregate_logical_error_rate": 0.053196704511360604,
+    "physical_error_rate": 0.025862911798496722,
+    "distance": 3,
+    "n_logical_qubits": 5,
+    "measured_logical_error_prior": 0.034849307077846114,
+    "predicted_logical_error_bound": 0.053196704511360604,
+    "notes": [
+      "Measured logical-error prior 3.485e-02 from run history is within the surface-code model's aggregate prediction 5.320e-02; predicted_logical_error_bound uses the model.",
+      "Logical-qubit budget: distance-3 surface code at physical error rate 0.025862911798496722 gives per-qubit logical error 1.087e-02 (5 logical qubits).",
+      "Gate-executed round-trip corrects all weight-1 X errors.",
+      "QAOA most-likely outcome matches the classical optimum."
+    ],
+    "metadata": {
+      "variable_order": [
+        "hub",
+        "leaf0",
+        "leaf1",
+        "leaf2",
+        "leaf3"
+      ],
+      "seed": 42,
+      "roundtrip_corrects_all_weight1": true,
+      "execution_backend": "statevector"
+    },
+    "distributed_compilation": null
+  },
+  "hardware_certificate": {
+    "solution": {
+      "hub": 1,
+      "leaf0": 1,
+      "leaf1": 1,
+      "leaf2": 1,
+      "leaf3": 1
+    },
+    "energy": 0.0,
+    "classical_energy": -4.0,
+    "is_optimal": false,
+    "success_probability": 0.062,
+    "qaoa_layers": 1,
+    "qaoa_params": {
+      "gamma": 1.5707963267948966,
+      "beta": 1.0471975511965976
+    },
+    "logical_error_rate": 0.01087323845082862,
+    "aggregate_logical_error_rate": 0.053196704511360604,
+    "physical_error_rate": 0.025862911798496722,
+    "distance": 3,
+    "n_logical_qubits": 5,
+    "measured_logical_error_prior": 0.034849307077846114,
+    "predicted_logical_error_bound": 0.053196704511360604,
+    "notes": [
+      "Measured logical-error prior 3.485e-02 from run history is within the surface-code model's aggregate prediction 5.320e-02; predicted_logical_error_bound uses the model.",
+      "Logical-qubit budget: distance-3 surface code at physical error rate 0.025862911798496722 gives per-qubit logical error 1.087e-02 (5 logical qubits).",
+      "Gate-executed round-trip corrects all weight-1 X errors.",
+      "QAOA most-likely outcome is sub-optimal; raise qaoa_layers/grid_size.",
+      "Executed on backend 'qpu' (backend_name='ibm_kingston', shots=100)."
+    ],
+    "metadata": {
+      "variable_order": [
+        "hub",
+        "leaf0",
+        "leaf1",
+        "leaf2",
+        "leaf3"
+      ],
+      "seed": 42,
+      "roundtrip_corrects_all_weight1": true,
+      "execution_backend": "qpu"
+    },
+    "distributed_compilation": null
+  },
+  "predicted_aggregate_logical_error_rate": 0.053196704511360604,
+  "predicted_logical_error_bound": 0.053196704511360604,
+  "measured_logical_error_prior": 0.034849307077846114,
+  "physical_error_rate": 0.025862911798496722,
+  "measured_success_deficit": 0.5063493070778462,
+  "two_sigma_sampling_noise": 0.04823111029200965,
+  "measured_within_prediction": false,
+  "delta_measured_vs_physical_error_rate": 0.4804863952793495,
+  "delta_measured_vs_predicted_aggregate": 0.4531526025664856,
+  "delta_measured_vs_predicted_bound": 0.4531526025664856,
+  "timestamps": {
+    "created": "2026-06-30T03:25:00.775933Z",
+    "finished": "2026-06-30T03:25:24.859513Z",
+    "running": "2026-06-30T03:25:01.851177Z"
+  }
+}

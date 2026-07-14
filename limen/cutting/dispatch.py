@@ -18,7 +18,7 @@ from limen.cutting.partition import CutPlan
 
 _INSTALL_MSG = (
     "qiskit-addon-cutting and qiskit-ibm-runtime are required to dispatch "
-    "cut circuits. Install with: pip install limen[cutting]"
+    "cut circuits. Install with: pip install limen-compiler[cutting]"
 )
 
 

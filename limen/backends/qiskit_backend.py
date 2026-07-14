@@ -25,7 +25,7 @@ from limen.qubo_spectrum import qubo_energy_spectrum
 
 _INSTALL_MSG = (
     "The Qiskit SDK is required to use the Qiskit backend. "
-    "Install it with: pip install limen[ibm]  "
+    "Install it with: pip install limen-compiler[ibm]  "
     "(or: pip install qiskit qiskit-aer qiskit-algorithms)"
 )
 

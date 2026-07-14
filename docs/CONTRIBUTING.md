@@ -33,10 +33,10 @@ python -c "import limen; from limen_core import StackelbergSolver; print(limen._
 Optional SDK installs for hardware backend tests:
 
 ```bash
-pip install limen[dwave]        # D-Wave Ocean SDK
-pip install limen[ibm]          # Qiskit + Qiskit Aer
-pip install limen[pyqubo]       # PyQUBO frontend
-pip install limen[distributed]  # grpcio, for limen.distributed (multi-node coordination)
+pip install limen-compiler[dwave]        # D-Wave Ocean SDK
+pip install limen-compiler[ibm]          # Qiskit + Qiskit Aer
+pip install limen-compiler[pyqubo]       # PyQUBO frontend
+pip install limen-compiler[distributed]  # grpcio, for limen.distributed (multi-node coordination)
 ```
 
 ## Running Tests

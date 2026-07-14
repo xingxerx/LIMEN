@@ -21,7 +21,7 @@ from limen.core.compiler import PhysicalEncoding
 
 _INSTALL_MSG = (
     "The D-Wave Ocean SDK is required to use the D-Wave backend. "
-    "Install it with: pip install limen[dwave]  "
+    "Install it with: pip install limen-compiler[dwave]  "
     "(or: pip install dwave-ocean-sdk)"
 )
 

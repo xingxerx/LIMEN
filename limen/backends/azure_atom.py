@@ -78,7 +78,7 @@ from limen.core.compiler import PhysicalEncoding
 
 _INSTALL_MSG = (
     "The Azure Quantum SDK is required to use the Atom Computing backend. "
-    "Install it with: pip install limen[azure]  "
+    "Install it with: pip install limen-compiler[azure]  "
     "(or: pip install 'azure-quantum[qiskit]')"
 )
 

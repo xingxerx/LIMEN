@@ -197,7 +197,7 @@ def _aer_probabilities(
     except ImportError as exc:
         raise ImportError(
             "The 'aer' backend requires qiskit and qiskit-aer. "
-            "Install with: pip install limen[ibm]"
+            "Install with: pip install limen-compiler[ibm]"
         ) from exc
 
     result = run_circuit(circuit, backend_name=backend_name, shots=shots)
@@ -234,7 +234,7 @@ def _transpile_and_submit_qpu_job(
     except ImportError as exc:
         raise ImportError(
             "The 'qpu' backend requires qiskit and qiskit-ibm-runtime. "
-            "Install with: pip install limen[ibm]"
+            "Install with: pip install limen-compiler[ibm]"
         ) from exc
 
     qc = to_qiskit_circuit(circuit)
@@ -249,6 +249,24 @@ def _transpile_and_submit_qpu_job(
 
     sampler = SamplerV2(mode=backend)
     return sampler.run([transpiled], shots=shots)
+
+
+def _get_counts_from_pub_result(pub_result: Any) -> dict[str, int]:
+    """Pull the counts BitArray out of a SamplerV2 pub result.
+
+    The classical register name varies with how the circuit was built
+    (``c``, ``meas``, ...), so take whichever register is actually present
+    instead of assuming a fixed name.
+    """
+    regs = [
+        name
+        for name in dir(pub_result.data)
+        if not name.startswith("_")
+        and hasattr(getattr(pub_result.data, name), "get_counts")
+    ]
+    if not regs:
+        raise RuntimeError(f"no classical registers in result: {pub_result.data}")
+    return getattr(pub_result.data, regs[0]).get_counts()
 
 
 def _qpu_probabilities(
@@ -273,7 +291,7 @@ def _qpu_probabilities(
         f"[limen] Track at https://quantum.ibm.com/workloads/{job.job_id()}"
     )
     pub_result = job.result()[0]
-    counts: dict[str, int] = pub_result.data.c.get_counts()
+    counts: dict[str, int] = _get_counts_from_pub_result(pub_result)
 
     total = sum(counts.values())
     if total == 0:
@@ -702,7 +720,7 @@ def _poll_qpu_counts(
             save_state(results_dir, state)
 
         if mapped is JobStatus.DONE:
-            return job.result()[0].data.c.get_counts()
+            return _get_counts_from_pub_result(job.result()[0])
         if mapped is not None:
             raise RuntimeError(
                 f"QPU job {job_id} ended with status {raw_status}; not "
@@ -985,20 +1003,20 @@ def run_pipeline(
             - ``"statevector"`` *(default)* — pure-Python statevector
               simulator; no external dependencies; deterministic.
             - ``"aer"`` — Qiskit Aer simulator (shot-based); requires
-              ``pip install limen[ibm]``.  Use *qpu_backend_name* to
+              ``pip install limen-compiler[ibm]``.  Use *qpu_backend_name* to
               select the Aer method (e.g. ``"aer_simulator"``).
             - ``"qpu"`` — real IBM Quantum hardware via Qiskit Runtime;
               requires *qpu_token*, *qpu_instance*, and
-              ``pip install limen[ibm]``.
+              ``pip install limen-compiler[ibm]``.
             - ``"dwave"`` — direct QUBO annealing on a D-Wave sampler
               (simulated annealer by default, or a real D-Wave QPU via
-              *dwave_use_qpu*); requires ``pip install limen[dwave]``.
+              *dwave_use_qpu*); requires ``pip install limen-compiler[dwave]``.
               This path skips the QAOA grid-search and circuit execution
               entirely, since D-Wave samples the QUBO directly.
             - ``"braket"`` — analog Hamiltonian simulation on QuEra's
               Aquila neutral-atom device via Amazon Braket (its local
               simulator by default, or the real QPU via *braket_use_qpu*);
-              requires ``pip install limen[braket]``. Like ``"dwave"``,
+              requires ``pip install limen-compiler[braket]``. Like ``"dwave"``,
               this path skips the QAOA grid-search entirely. See
               limen/backends/braket.py for the QUBO-to-Rydberg-array
               approximation and its limitations.
