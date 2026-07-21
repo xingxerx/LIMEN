@@ -48,8 +48,20 @@ import json
 import pathlib
 from typing import Any
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric import mldsa
+_INSTALL_MSG = (
+    "cryptography>=48 (the first version exposing ML-DSA / FIPS 204) is "
+    "required to use limen.security.pqc. "
+    "Install it with: pip install limen-compiler[pqc]  "
+    "(or: pip install 'cryptography>=48')"
+)
+
+try:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric import mldsa
+except ImportError as exc:
+    # Either cryptography is absent entirely (ModuleNotFoundError) or it is
+    # an older version without the mldsa module (plain ImportError).
+    raise ImportError(_INSTALL_MSG) from exc
 
 PrivateKey = mldsa.MLDSA65PrivateKey
 PublicKey = mldsa.MLDSA65PublicKey

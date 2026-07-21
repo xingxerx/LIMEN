@@ -16,7 +16,11 @@ from limen.router.calibration import (
     sign_calibration_record,
     verify_calibration_record,
 )
-from limen.security.pqc import generate_signing_key
+try:
+    from limen.security.pqc import generate_signing_key
+    _PQC_AVAILABLE = True
+except ImportError:
+    _PQC_AVAILABLE = False
 
 
 def _write_snapshot(tmp_path: pathlib.Path, backend: str, rate: float, when: str) -> None:
@@ -108,6 +112,7 @@ class TestRoutePrefersCalibration(unittest.TestCase):
         self.assertTrue(any("calibration" in note for note in plan.notes))
 
 
+@unittest.skipUnless(_PQC_AVAILABLE, "cryptography>=48 (ML-DSA / FIPS 204) not installed")
 class TestPqcSigning(unittest.TestCase):
     """sign_calibration_record/verify_calibration_record are purely
     additive -- fetch_backend_calibration/scan_calibration/apply_calibration

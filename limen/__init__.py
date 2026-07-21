@@ -11,7 +11,7 @@ from limen.frontends.pyqubo import from_pyqubo, from_qubo_dict
 from limen.frontends.vrp import decode_routes, distance_matrix, from_vrp, vrp_qubo
 from limen.validator.validator import ValidationResult, validate
 
-__version__ = "0.8.3"
+__version__ = "0.8.4"
 
 __all__ = [
     "Variable",

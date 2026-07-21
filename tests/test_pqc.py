@@ -8,6 +8,13 @@ import pathlib
 import tempfile
 import unittest
 
+import pytest
+
+pytest.importorskip(
+    "limen.security.pqc",
+    reason="cryptography>=48 (ML-DSA / FIPS 204) not installed",
+)
+
 from limen.security.pqc import (
     canonical_json_bytes,
     generate_signing_key,

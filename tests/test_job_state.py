@@ -16,7 +16,11 @@ from limen.router.job_state import (
     state_path,
     verify_state,
 )
-from limen.security.pqc import generate_signing_key
+try:
+    from limen.security.pqc import generate_signing_key
+    _PQC_AVAILABLE = True
+except ImportError:
+    _PQC_AVAILABLE = False
 
 
 class TestJobStateRoundTrip(unittest.TestCase):
@@ -78,6 +82,7 @@ class TestJobStateRoundTrip(unittest.TestCase):
             self.assertEqual(loaded.error, "polling ceiling exceeded")
 
 
+@unittest.skipUnless(_PQC_AVAILABLE, "cryptography>=48 (ML-DSA / FIPS 204) not installed")
 class TestPqcSigning(unittest.TestCase):
     """sign_state/verify_state are purely additive -- save_state/load_state
     behavior (tested above) is unaffected whether or not a caller signs."""

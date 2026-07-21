@@ -3,7 +3,28 @@
 All notable changes to LIMEN are documented in this file. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.8.4] - 2026-07-21
+
+- Guarded ML-DSA import in `limen.security.pqc`: importing the module
+  without `cryptography>=48` installed now raises an `ImportError` with
+  the install hint (`pip install limen-compiler[pqc]`) instead of a raw
+  `ModuleNotFoundError`/`ImportError` from deep inside `cryptography`.
+  `tests/test_pqc.py` skips cleanly when the dependency is absent,
+  matching every other optional-extra test module.
+- Read the classical register by name instead of assuming `"c"`
+  (`limen.pipeline._get_counts_from_pub_result`): QPU/Aer results no
+  longer fail when the circuit's classical register is named e.g.
+  `"meas"`; reused from `limen/communication/channel.py` and the Tier 2
+  Kingston example.
+- Renamed all `pip install limen[...]` references (README, docs, error
+  messages) to `pip install limen-compiler[...]` to match the published
+  PyPI package name.
+- Tier 2 QPU-path integration smoke test for `run_route_request()`.
+
+## [0.8.3] - 2026-07-07
+
+Note: the entries below sat under "Unreleased" when v0.8.3 was tagged,
+but the tagged code contained all of them — they shipped in 0.8.3.
 
 - `informed_fleet()` (`limen.router`): one call that folds run history
   (`apply_history`/`scan_results`) and calibration snapshots
@@ -74,9 +95,6 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Second calibrated Tier 2 hardware run submitted on ibm_kingston (job
   `d96mijgtcv6s73djv5a0`), the first routed with a calibration-seeded
   `physical_error_rate` (2.586e-2 vs the prior run's 1e-3 guess).
-
-## [0.8.3] - 2026-07-07
-
 - Budget router (`limen.router`): deterministic fidelity-tier planning for
   QUBO runs — picks a tier, backend, cutting strategy, ECC allocation, and
   shot count against an explicit credit budget before anything is submitted
