@@ -34,11 +34,29 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   before returning instead of leaving it for GC; pass a long-lived
   `RouterMemory` instance for high-frequency looped calls to avoid the
   ~1ms/call reconnect cost entirely.
-- Known gap, not yet fixed: `RouterMemory`'s certificate ledger has no
-  retention/compaction policy — it is append-only by design (see
-  `limen/router/memory.py` module docstring) and grows on disk without
-  bound. Fine at current volume; needs a decision before production
-  scale.
+- `RouterMemory.archive_and_compact()`: the retention policy for the
+  certificate ledger, closing the gap flagged above. Moves all but the
+  most recent N entries into an on-disk JSONL archive file and replaces
+  them in the live table with one checkpoint row, so the hot table stops
+  growing without bound while nothing is actually lost — the archived
+  entries are recoverable verbatim, and `verify_ledger(deep=True)` walks
+  through checkpoints into their archive files to re-verify the full
+  chain back to genesis (default `verify_ledger()` trusts a checkpoint's
+  claimed chain value without re-reading its archive, the same
+  trust-the-checkpoint posture as a pruned blockchain node). The live
+  table's UPDATE/DELETE triggers stay enforced for ordinary use; this
+  method is the one deliberate, audited exception, and it always
+  replaces what it removes with a verifiable pointer. Not run
+  automatically — callers with production-scale traffic should schedule
+  it periodically.
+- Built and installed the `limen_core` Rust extension (`maturin develop
+  --release`) in the dev environment used for this work. Fixes the 3
+  tests that were failing on `ImportError: cannot import name
+  'limen_core'` (cutting reconstruction, decode/energy brute force) and
+  gives `limen.gates.simulator.probabilities` its ~10x-faster Rust
+  statevector path instead of the pure-Python fallback — not a code
+  change, a build-environment fix; `limen_core` still needs to be built
+  wherever this repo is checked out (it's not committed as a binary).
 
 ## [0.8.4] - 2026-07-21
 

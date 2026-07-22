@@ -173,15 +173,20 @@ class TestVrpThroughPipeline(unittest.TestCase):
         # grid_size is cut from run_pipeline's default of 12 (144 angle
         # points) to 4 (16 points): this test only needs the pipeline
         # wiring exercised end-to-end with a non-degenerate circuit, not
-        # a converged QAOA optimum. On the pure-Python fallback simulator
-        # (limen/gates/simulator.py, used whenever limen_core isn't
-        # built) each grid point is a real cost -- 16 variables measured
-        # ~3.5s/point, so grid_size=12 ran ~8.5 minutes here (confirmed
-        # via faulthandler.dump_traceback_later, not a hang) versus ~35s
-        # at grid_size=4. grid_size<4 was tried and rejected: it lands on
-        # the degenerate all-zero-angle point and reports energy 0.0,
-        # which would pass the isfinite assertion below without actually
-        # exercising a real QAOA circuit.
+        # a converged QAOA optimum. limen.gates.simulator.probabilities
+        # (which each grid point calls) uses the limen_core Rust
+        # extension when it's built, falling back to a pure-Python
+        # statevector walk otherwise -- and that fallback is what this
+        # test originally hit: 16 variables measured ~3.5s/point there,
+        # so grid_size=12 ran ~8.5 minutes (confirmed via
+        # faulthandler.dump_traceback_later, not a hang). Even with
+        # limen_core built (~300ms/point measured), grid_size=12 still
+        # costs ~44s, so the smaller grid stays the default here rather
+        # than assuming every dev/CI environment has run `maturin
+        # develop` -- this test has no importorskip guard for it.
+        # grid_size<4 was tried and rejected: it lands on the degenerate
+        # all-zero-angle point and reports energy 0.0, which would pass
+        # the isfinite assertion below without exercising a real circuit.
         num_vehicles = 2
         qubo, customer_ids = vrp_qubo(self.PIPELINE_COORDS, num_vehicles=num_vehicles)
         n_customers = len(customer_ids)

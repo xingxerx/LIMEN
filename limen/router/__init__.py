@@ -19,6 +19,7 @@ from limen.router.calibration import (
 from limen.router.history import BackendHistory, apply_history, scan_results
 from limen.router.job_state import JobState, JobStatus, retry_transient
 from limen.router.memory import (
+    CompactionSummary,
     LedgerEntry,
     MetricStats,
     RouterMemory,
@@ -85,5 +86,6 @@ __all__ = [
     "RouterMemory",
     "MetricStats",
     "LedgerEntry",
+    "CompactionSummary",
     "transpile_cache_key",
 ]

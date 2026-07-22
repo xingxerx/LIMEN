@@ -357,5 +357,106 @@ class TestCertificateLedger(MemoryTestCase):
         )
 
 
+class TestLedgerCompaction(MemoryTestCase):
+    """archive_and_compact(): the retention policy flagged as a known gap
+    when the ledger was first written. Archiving must never lose data
+    (everything moved out of the live table lands verbatim in a JSONL
+    file) and must never break the chain (subsequent verify_ledger calls,
+    shallow or deep, keep working across the compaction boundary)."""
+
+    def _append_n(self, n: int, start: int = 0) -> None:
+        for i in range(start, start + n):
+            self.memory.append_certificate({"energy": -float(i)}, backend="ibm_fez")
+
+    def test_noop_when_under_keep_recent(self):
+        self._append_n(5)
+        self.assertIsNone(self.memory.archive_and_compact(self.dir / "archive", keep_recent=10))
+        self.assertEqual(len(list(self.memory.certificates())), 5)
+
+    def test_archives_older_entries_and_leaves_recent_ones_live(self):
+        self._append_n(10)
+        summary = self.memory.archive_and_compact(self.dir / "archive", keep_recent=3)
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary.archived_count, 7)
+        self.assertEqual(summary.archived_seq_range, (1, 7))
+        self.assertTrue(summary.archive_path.exists())
+
+        remaining = list(self.memory.certificates())
+        # 1 checkpoint + 3 kept-recent.
+        self.assertEqual(len(remaining), 4)
+        self.assertEqual(remaining[0].payload["type"], "limen-ledger-checkpoint")
+        self.assertEqual(
+            [e.payload["energy"] for e in remaining[1:]], [-7.0, -8.0, -9.0]
+        )
+
+    def test_archive_file_reconstructs_the_exact_archived_entries(self):
+        self._append_n(6)
+        original = list(self.memory.certificates())[:4]
+        summary = self.memory.archive_and_compact(self.dir / "archive", keep_recent=2)
+        lines = summary.archive_path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 4)
+        for line, orig in zip(lines, original):
+            row = json.loads(line)
+            self.assertEqual(row["payload"], orig.payload)
+            self.assertEqual(row["chain_sha256"], orig.chain_sha256)
+            self.assertEqual(row["payload_sha256"], orig.payload_sha256)
+
+    def test_shallow_and_deep_verify_pass_after_compaction(self):
+        self._append_n(8)
+        self.memory.archive_and_compact(self.dir / "archive", keep_recent=2)
+        self.assertTrue(self.memory.verify_ledger())
+        self.assertTrue(self.memory.verify_ledger(deep=True))
+
+    def test_appending_after_compaction_chains_onto_the_checkpoint(self):
+        self._append_n(5)
+        self.memory.archive_and_compact(self.dir / "archive", keep_recent=1)
+        self.memory.append_certificate({"energy": -99.0}, backend="ibm_fez")
+        self.assertTrue(self.memory.verify_ledger(deep=True))
+        self.assertEqual(
+            [e.payload.get("energy") for e in self.memory.certificates()][-1], -99.0
+        )
+
+    def test_deep_verify_catches_tampered_archive_file(self):
+        self._append_n(6)
+        summary = self.memory.archive_and_compact(self.dir / "archive", keep_recent=2)
+        # Shallow verify trusts the checkpoint and can't see this.
+        self.assertTrue(self.memory.verify_ledger())
+        summary.archive_path.write_text(
+            summary.archive_path.read_text(encoding="utf-8").replace("-1.0", "-999.0"),
+            encoding="utf-8",
+        )
+        self.assertFalse(self.memory.verify_ledger(deep=True))
+
+    def test_deep_verify_catches_missing_archive_file(self):
+        self._append_n(6)
+        summary = self.memory.archive_and_compact(self.dir / "archive", keep_recent=2)
+        summary.archive_path.unlink()
+        self.assertFalse(self.memory.verify_ledger(deep=True))
+
+    def test_live_table_still_blocks_direct_delete_after_compaction(self):
+        self._append_n(5)
+        self.memory.archive_and_compact(self.dir / "archive", keep_recent=1)
+        raw = sqlite3.connect(self.memory.path)
+        self.addCleanup(raw.close)
+        with self.assertRaises(sqlite3.IntegrityError):
+            raw.execute("DELETE FROM certificate_ledger WHERE seq = 5")
+
+    def test_backend_filter_still_works_across_a_checkpoint(self):
+        self.memory.append_certificate({"energy": -1.0}, backend="ibm_fez")
+        self.memory.append_certificate({"energy": -2.0}, backend="ibm_kingston")
+        self.memory.append_certificate({"energy": -3.0}, backend="ibm_fez")
+        self.memory.archive_and_compact(self.dir / "archive", keep_recent=1)
+        only_fez = list(self.memory.certificates(backend="ibm_fez"))
+        # The archived ibm_fez entry moved into the archive file, not the
+        # live table, so only the kept-recent ibm_fez entry remains
+        # visible through certificates(backend=...); the checkpoint row
+        # itself has backend=None and is excluded by the filter.
+        self.assertEqual([e.payload["energy"] for e in only_fez], [-3.0])
+
+    def test_rejects_negative_keep_recent(self):
+        with self.assertRaises(ValueError):
+            self.memory.archive_and_compact(self.dir / "archive", keep_recent=-1)
+
+
 if __name__ == "__main__":
     unittest.main()

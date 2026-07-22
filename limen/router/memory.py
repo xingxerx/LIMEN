@@ -47,21 +47,23 @@ All timestamps are Unix epoch seconds, UTC. The store is a single SQLite
 file in WAL mode (crash-safe, same "persist before you dispatch" posture
 as limen.router.job_state); the schema is created on first open.
 
-Known gap -- no retention policy: the certificate ledger is deliberately
-append-only (UPDATE/DELETE blocked by trigger, see above), which is the
-right call for auditability but means the underlying file grows on disk
-without bound as long as the store is in use. Nothing in this module
-prunes, archives, or compacts old entries. Fine at development volume;
-before this sees production-scale traffic, decide a retention rule (e.g.
-archive-and-rehash older chain segments into a summary entry, or document
-that operators are responsible for rotating the file) rather than letting
-it grow unchecked.
+Retention: the certificate ledger is deliberately append-only
+(UPDATE/DELETE blocked by trigger, see above), which is the right call
+for auditability but means it grows on disk without bound left to itself.
+:meth:`RouterMemory.archive_and_compact` is the retention mechanism --
+it moves older entries to an on-disk JSONL archive and replaces them in
+the live table with one checkpoint row, preserving full history
+(re-verifiable via ``verify_ledger(deep=True)``) without keeping every
+row in the hot table forever. Not run automatically; callers with
+production-scale traffic should schedule it (e.g. after each
+``ingest_results`` on a long-lived store).
 """
 
 from __future__ import annotations
 
 import dataclasses
 import hashlib
+import itertools
 import json
 import pathlib
 import sqlite3
@@ -95,6 +97,12 @@ _SECONDS_PER_DAY = 86_400.0
 # first payload's own hash) so an empty ledger and a one-entry ledger are
 # distinguishable, and so verify_ledger has a fixed starting point.
 _GENESIS = hashlib.sha256(b"limen-certificate-ledger-genesis").hexdigest()
+
+# Payload "type" tag identifying a checkpoint row inserted by
+# archive_and_compact(). A checkpoint replaces a contiguous run of
+# archived entries in the live table (see that method's docstring for
+# why its chain_sha256 is copied rather than recomputed).
+_CHECKPOINT_TYPE = "limen-ledger-checkpoint"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS backend_samples (
@@ -235,6 +243,17 @@ class LedgerEntry:
             "payload_sha256": self.payload_sha256,
             "chain_sha256": self.chain_sha256,
         }
+
+
+@dataclasses.dataclass(frozen=True)
+class CompactionSummary:
+    """What :meth:`RouterMemory.archive_and_compact` did in one call."""
+
+    archived_count: int
+    archived_seq_range: tuple[int, int]
+    archive_path: pathlib.Path
+    archive_sha256: str
+    checkpoint_seq: int
 
 
 class RouterMemory:
@@ -623,10 +642,29 @@ class RouterMemory:
                 signature=sig,
             )
 
-    def verify_ledger(self) -> bool:
-        """Recompute the whole hash chain from genesis. False means some
-        stored payload or chain value no longer matches what was appended
-        (tampering, corruption, or truncation-and-regrowth)."""
+    def verify_ledger(self, *, deep: bool = False) -> bool:
+        """Recompute the hash chain across everything still in the live
+        table. False means some stored payload or chain value no longer
+        matches what was appended (tampering, corruption, or
+        truncation-and-regrowth).
+
+        A checkpoint row from :meth:`archive_and_compact` is verified for
+        self-consistency (its own payload still hashes to its stored
+        payload_sha256) but, by default, its chain_sha256 is *trusted* as
+        the new starting point rather than recomputed -- the entries that
+        produced it honestly were moved to its archive file, not deleted
+        without a trace. This is the same "trust the checkpoint, verify
+        from there" posture as a pruned blockchain node.
+
+        With *deep=True*, each checkpoint's claim is itself checked: its
+        archive file's bytes are re-hashed against the stored
+        archive_sha256 (catches a tampered or corrupted archive), and the
+        archived entries are replayed through the same chain formula
+        entries below use, confirming they honestly reconstruct the
+        checkpoint's chain_sha256. This walks the full history back to
+        genesis (or an earlier checkpoint's archive, recursively) at the
+        cost of reading every archive file referenced along the way.
+        """
         prev_chain = _GENESIS
         for entry in self.certificates():
             expected_payload_hash = _sha256_hex(
@@ -634,12 +672,163 @@ class RouterMemory:
             )
             if entry.payload_sha256 != expected_payload_hash:
                 return False
+            if isinstance(entry.payload, dict) and entry.payload.get("type") == _CHECKPOINT_TYPE:
+                if deep and not self._verify_checkpoint_archive(entry, prev_chain):
+                    return False
+                prev_chain = entry.chain_sha256
+                continue
             if entry.chain_sha256 != _sha256_hex(
                 (prev_chain + entry.payload_sha256).encode("ascii")
             ):
                 return False
             prev_chain = entry.chain_sha256
         return True
+
+    def _verify_checkpoint_archive(self, checkpoint: LedgerEntry, prior_chain: str) -> bool:
+        """Deep-verify one checkpoint: re-hash its archive file and replay
+        the archived segment's own chain, confirming it honestly produces
+        *checkpoint*.chain_sha256 starting from *prior_chain* (the chain
+        value in force immediately before the archived segment began)."""
+        archive_path = pathlib.Path(checkpoint.payload["archive_path"])
+        try:
+            raw = archive_path.read_bytes()
+        except OSError:
+            return False
+        if _sha256_hex(raw) != checkpoint.payload["archive_sha256"]:
+            return False
+
+        chain = prior_chain
+        count = 0
+        for line in raw.decode("utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            expected_payload_hash = _sha256_hex(
+                _canonical_json(row["payload"]).encode("utf-8")
+            )
+            if row["payload_sha256"] != expected_payload_hash:
+                return False
+            if row["chain_sha256"] != _sha256_hex((chain + row["payload_sha256"]).encode("ascii")):
+                return False
+            chain = row["chain_sha256"]
+            count += 1
+        return chain == checkpoint.chain_sha256 and count == checkpoint.payload["archived_count"]
+
+    def archive_and_compact(
+        self,
+        archive_dir: pathlib.Path | str,
+        *,
+        keep_recent: int = 1000,
+    ) -> CompactionSummary | None:
+        """Move all but the most recent *keep_recent* ledger entries into an
+        on-disk archive file, replacing them in the live table with one
+        checkpoint row -- the retention policy flagged as a known gap when
+        this module was first written (see the module docstring).
+
+        Nothing is silently lost: the archived entries are written
+        verbatim (full LedgerEntry fields, one JSON object per line) to
+        *archive_dir*/ledger_archive_<first_seq>-<last_seq>.jsonl before
+        anything is removed from the live table, and the checkpoint's
+        payload records that file's path and sha256 so
+        :meth:`verify_ledger` (with ``deep=True``) can still walk the full
+        history back through it. The live table's own append-only
+        guarantee (UPDATE/DELETE blocked by trigger) is preserved for
+        ordinary use -- this method is the one deliberate, audited
+        exception, and it always replaces what it removes with a
+        verifiable pointer rather than deleting outright.
+
+        Returns None (a no-op) when there are at most *keep_recent*
+        entries, since there is nothing to archive yet.
+        """
+        if keep_recent < 0:
+            raise ValueError("keep_recent must be non-negative")
+        total = self._conn.execute(
+            "SELECT COUNT(*) FROM certificate_ledger"
+        ).fetchone()[0]
+        if total <= keep_recent:
+            return None
+
+        to_archive = list(itertools.islice(self.certificates(), total - keep_recent))
+        first_seq, last_seq = to_archive[0].seq, to_archive[-1].seq
+
+        archive_dir = pathlib.Path(archive_dir)
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = archive_dir / f"ledger_archive_{first_seq}-{last_seq}.jsonl"
+        lines = [
+            json.dumps(
+                {
+                    "seq": e.seq,
+                    "recorded_at": e.recorded_at,
+                    "backend": e.backend,
+                    "payload": e.payload,
+                    "payload_sha256": e.payload_sha256,
+                    "chain_sha256": e.chain_sha256,
+                    "signature": e.signature,
+                },
+                sort_keys=True,
+            )
+            for e in to_archive
+        ]
+        archive_text = "\n".join(lines) + "\n"
+        archive_bytes = archive_text.encode("utf-8")
+        # write_bytes, not write_text: write_text applies platform newline
+        # translation (\n -> \r\n on Windows), which would make the bytes
+        # on disk not match the ones just hashed below.
+        archive_path.write_bytes(archive_bytes)
+        archive_sha256 = _sha256_hex(archive_bytes)
+
+        checkpoint_payload = {
+            "type": _CHECKPOINT_TYPE,
+            "archived_seq_range": [first_seq, last_seq],
+            "archived_count": len(to_archive),
+            "archive_path": str(archive_path),
+            "archive_sha256": archive_sha256,
+        }
+        checkpoint_text = _canonical_json(checkpoint_payload)
+        checkpoint_payload_hash = _sha256_hex(checkpoint_text.encode("utf-8"))
+        # The checkpoint takes over the *last archived entry's* slot in
+        # the chain, copying its chain_sha256 verbatim (not recomputing
+        # sha256(prev + payload_hash) against the checkpoint's own
+        # payload) -- this is what lets every already-stored chain_sha256
+        # in the kept-recent tail keep verifying unmodified, since none of
+        # them ever referenced the checkpoint's payload, only this chain
+        # value.
+        checkpoint_chain = to_archive[-1].chain_sha256
+
+        with self._conn:
+            self._conn.execute("DROP TRIGGER IF EXISTS certificate_ledger_no_delete")
+            self._conn.execute(
+                "DELETE FROM certificate_ledger WHERE seq BETWEEN ? AND ?",
+                (first_seq, last_seq),
+            )
+            self._conn.execute(
+                "INSERT INTO certificate_ledger"
+                " (seq, recorded_at, backend, payload, payload_sha256,"
+                " chain_sha256, signature)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    last_seq,
+                    time.time(),
+                    None,
+                    checkpoint_text,
+                    checkpoint_payload_hash,
+                    checkpoint_chain,
+                    None,
+                ),
+            )
+            self._conn.execute(
+                "CREATE TRIGGER IF NOT EXISTS certificate_ledger_no_delete"
+                " BEFORE DELETE ON certificate_ledger"
+                " BEGIN SELECT RAISE(ABORT, 'certificate ledger is append-only'); END"
+            )
+
+        return CompactionSummary(
+            archived_count=len(to_archive),
+            archived_seq_range=(first_seq, last_seq),
+            archive_path=archive_path,
+            archive_sha256=archive_sha256,
+            checkpoint_seq=last_seq,
+        )
 
     def verify_certificate_signature(self, entry: LedgerEntry, public_key: Any) -> bool:
         """Verify an entry's ML-DSA-65 signature over its chain head.
