@@ -75,6 +75,9 @@ all = [
   "cryptography>=48",
 ]
 
+[project.scripts]
+limend = "limen.limend.__main__:main"
+
 [project.urls]
 "Homepage" = "https://github.com/xingxerx/LIMEN"
 "Bug Tracker" = "https://github.com/xingxerx/LIMEN/issues"

@@ -1,0 +1,34 @@
+# Copyright (C) 2026 xingxerx / CGX
+#
+# Licensed under the Elastic License 2.0 (ELv2); you may not use this file
+# except in compliance with the License. See the LICENSE file in the
+# repository root for the full terms.
+#
+# systemd unit for limend, the daemonized LIMEN routing loop (see
+# limen/limend/). Restart-on-crash via Restart=always; the daemon also
+# exits cleanly on its own once RSS crosses --memory-ceiling-mb, which
+# systemd then turns into a preemptive restart the same way.
+#
+# Install:
+#   sudo cp scripts/limend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now limend
+#
+# Edit WorkingDirectory/ExecStart below to match your checkout path, and
+# set LIMEN_QPU_TOKEN / LIMEN_QPU_INSTANCE via an EnvironmentFile rather
+# than inline Environment= lines so credentials never land in the unit
+# file itself (which systemctl cat / journalctl can both surface).
+
+[Unit]
+Description=limend -- LIMEN daemonized routing loop
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/limen
+ExecStart=/opt/limen/.venv/bin/limend /opt/limen/spool --results-dir /opt/limen/results --memory /opt/limen/spool/router_memory.sqlite3 --memory-ceiling-mb 1024
+EnvironmentFile=-/etc/limend/env
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
