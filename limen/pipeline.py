@@ -537,6 +537,36 @@ def _resolve_router_memory(memory: Any, results_dir: Any) -> Any:
     return RouterMemory(memory)
 
 
+def _record_route_outcome(mem: Any, plan: Any, cert: "EndToEndCertificate") -> None:
+    """Write a just-completed run's outcome into *mem*, if memory is in use.
+
+    ``run_route_request`` reads memory (history/calibration/ledger
+    estimates) at the *start* of a call via ``informed_fleet``, but until
+    now nothing recorded the outcome of *this* call back into the ledger
+    -- the next process to open the same store would have to rescan
+    ``results_dir`` from scratch to see it. This closes that loop: the
+    backend this plan actually dispatched to gets a fresh sample the
+    moment the certificate lands, and the certificate itself is
+    hash-chained into the append-only ledger so the run is witnessed,
+    not just logged. Best-effort and silent on failure (a memory-write
+    problem must never fail a certified run that already succeeded).
+    """
+    if mem is None:
+        return
+    backend = getattr(getattr(plan, "backend", None), "name", None) or getattr(
+        plan, "backend", None
+    )
+    try:
+        mem.record_route_outcome(
+            str(backend) if backend is not None else "unknown",
+            logical_error=cert.aggregate_logical_error_rate,
+            physical_error_rate=cert.physical_error_rate,
+        )
+        mem.append_certificate(cert.to_dict(), backend=str(backend) if backend else None)
+    except Exception:
+        pass
+
+
 def run_route_request(
     request: Any,
     *,
@@ -583,8 +613,10 @@ def run_route_request(
             RouterMemory instance is used as-is; a path (str or Path) to
             a SQLite file opens or creates a RouterMemory there; and True
             auto-places router_memory.sqlite3 inside results_dir (which
-            must then not be None). Ignored when fleet is given, since
-            that skips informed_fleet entirely.
+            must then not be None). When *fleet* is given, informed_fleet
+            is skipped so memory no longer influences the routing
+            decision, but the completed run's outcome is still recorded
+            into it -- pass memory=None explicitly to opt out entirely.
         qpu_token: IBM Quantum Platform API token; falls back to the
             IBM_QUANTUM_TOKEN environment variable. Only consulted for
             IBM QPU plans.
@@ -637,8 +669,8 @@ def run_route_request(
     if server_addresses is None:
         server_addresses = _known_peers_from_env()
 
+    mem = _resolve_router_memory(memory, results_dir)
     if fleet is None:
-        mem = _resolve_router_memory(memory, results_dir)
         fleet = (
             informed_fleet(results_dir, memory=mem)
             if results_dir is not None
@@ -649,12 +681,14 @@ def run_route_request(
         plan = dataclasses.replace(plan, server_addresses=tuple(server_addresses))
 
     if plan.pipeline_kwargs.get("backend") != "qpu":
-        return run_pipeline(
+        cert = run_pipeline(
             request.qubo,
             **plan.pipeline_kwargs,
             server_addresses=server_addresses,
             num_partitions=num_partitions,
         )
+        _record_route_outcome(mem, plan, cert)
+        return cert
 
     token = qpu_token or os.environ.get("IBM_QUANTUM_TOKEN")
     instance = qpu_instance or os.environ.get("IBM_QUANTUM_CRN")
@@ -666,7 +700,9 @@ def run_route_request(
         )
 
     if plan.use_cutting:
-        return run_cut_route_request(request.qubo, plan, token=token, crn=instance)
+        cert = run_cut_route_request(request.qubo, plan, token=token, crn=instance)
+        _record_route_outcome(mem, plan, cert)
+        return cert
 
     job_id = submit_qpu_job(
         request.qubo,
@@ -685,13 +721,15 @@ def run_route_request(
         poll_backoff_cap_seconds=poll_backoff_cap_seconds,
         poll_ceiling_seconds=poll_ceiling_seconds,
     )
-    return run_pipeline(
+    cert = run_pipeline(
         request.qubo,
         **plan.pipeline_kwargs,
         qpu_counts=counts,
         server_addresses=server_addresses,
         num_partitions=num_partitions,
     )
+    _record_route_outcome(mem, plan, cert)
+    return cert
 
 
 def _poll_qpu_counts(

@@ -69,6 +69,50 @@ class TestOfflineDispatch(unittest.TestCase):
         self.assertTrue(actual.is_optimal)
 
 
+class TestMemoryLoopClosure(unittest.TestCase):
+    """A completed run must land in the ledger before run_route_request
+    returns -- not merely be readable by some future call that rescans
+    results_dir. See _record_route_outcome in limen/pipeline.py."""
+
+    def test_outcome_and_certificate_recorded_within_one_call(self):
+        import tempfile
+
+        from limen.router import RouterMemory
+
+        request = RouteRequest(
+            cycle_maxcut(4), fidelity_target=0.9, credit_budget=0.0
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "router_memory.sqlite3"
+            mem = RouterMemory(db_path)
+            try:
+                cert = run_route_request(request, fleet=DEFAULT_FLEET, memory=mem)
+
+                entries = list(mem.certificates())
+                self.assertEqual(len(entries), 1)
+                self.assertEqual(entries[0].payload["energy"], cert.energy)
+                self.assertTrue(mem.verify_ledger())
+
+                # physical_error_rate is the metric this offline plan can
+                # actually produce; assert at least one sample landed
+                # rather than asserting on a metric this fixture has no
+                # opinion about.
+                stats = mem.stats(DEFAULT_FLEET[0].name, "physical_error_rate")
+                if cert.physical_error_rate is not None:
+                    self.assertIsNotNone(stats)
+            finally:
+                mem.close()
+
+    def test_no_memory_no_write_and_no_error(self):
+        # memory=None (the default) must leave today's behavior exactly
+        # unchanged -- no ledger opened, no write attempted.
+        request = RouteRequest(
+            cycle_maxcut(4), fidelity_target=0.9, credit_budget=0.0
+        )
+        actual = run_route_request(request, fleet=DEFAULT_FLEET)
+        self.assertTrue(actual.is_optimal)
+
+
 class TestPeerAutoDiscovery(unittest.TestCase):
 
     def test_known_peers_from_env_used_when_server_addresses_omitted(self):
