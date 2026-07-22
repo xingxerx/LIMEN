@@ -516,11 +516,33 @@ def run_cut_route_request(
     )
 
 
+def _resolve_router_memory(memory: Any, results_dir: Any) -> Any:
+    """Normalize the four accepted *memory* shapes into ``None`` or a
+    :class:`~limen.router.RouterMemory`.
+
+    Kept separate from :func:`run_route_request` so each shape is
+    independently testable without going through the whole routing path.
+    """
+    from limen.router import RouterMemory
+
+    if memory is None or isinstance(memory, RouterMemory):
+        return memory
+    if memory is True:
+        if results_dir is None:
+            raise ValueError(
+                "memory=True requires results_dir to know where to place "
+                "router_memory.sqlite3."
+            )
+        return RouterMemory.in_results_dir(results_dir)
+    return RouterMemory(memory)
+
+
 def run_route_request(
     request: Any,
     *,
     results_dir: Any = None,
     fleet: Any = None,
+    memory: Any = None,
     qpu_token: str | None = None,
     qpu_instance: str | None = None,
     poll_initial_seconds: float = 30.0,
@@ -553,6 +575,16 @@ def run_route_request(
             the DEFAULT_FLEET static profiles are used and no state is
             persisted.
         fleet: Explicit fleet override; skips informed_fleet entirely.
+        memory: Persistent router memory (see limen.router.RouterMemory),
+            folded into the informed fleet after history/calibration so
+            its ledger estimates take priority where samples exist.
+            Accepts four shapes: None (default) leaves today's behavior
+            exactly unchanged — no ledger is opened or consulted; a
+            RouterMemory instance is used as-is; a path (str or Path) to
+            a SQLite file opens or creates a RouterMemory there; and True
+            auto-places router_memory.sqlite3 inside results_dir (which
+            must then not be None). Ignored when fleet is given, since
+            that skips informed_fleet entirely.
         qpu_token: IBM Quantum Platform API token; falls back to the
             IBM_QUANTUM_TOKEN environment variable. Only consulted for
             IBM QPU plans.
@@ -606,8 +638,11 @@ def run_route_request(
         server_addresses = _known_peers_from_env()
 
     if fleet is None:
+        mem = _resolve_router_memory(memory, results_dir)
         fleet = (
-            informed_fleet(results_dir) if results_dir is not None else DEFAULT_FLEET
+            informed_fleet(results_dir, memory=mem)
+            if results_dir is not None
+            else DEFAULT_FLEET
         )
     plan = route(request, fleet=fleet)
     if server_addresses:
