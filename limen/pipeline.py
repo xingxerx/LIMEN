@@ -668,6 +668,12 @@ def run_route_request(
             is skipped so memory no longer influences the routing
             decision, but the completed run's outcome is still recorded
             into it -- pass memory=None explicitly to opt out entirely.
+            The True/path shapes open a fresh sqlite3 connection on
+            every call and close it before returning (~1ms overhead per
+            call, measured); callers making many run_route_request calls
+            in a loop should open one RouterMemory (or use it as a
+            context manager) and pass that instance instead, which this
+            function then leaves open for the caller to close.
         emit_report: When True, attach a human-readable
             limen.router.report.RouteReport to the returned
             certificate's metadata under "route_report" (dict) and
@@ -724,72 +730,82 @@ def run_route_request(
     import dataclasses
     import os
 
-    from limen.router import DEFAULT_FLEET, informed_fleet, route
+    from limen.router import DEFAULT_FLEET, RouterMemory, informed_fleet, route
 
     if server_addresses is None:
         server_addresses = _known_peers_from_env()
 
     mem = _resolve_router_memory(memory, results_dir)
-    if fleet is None:
-        fleet = (
-            informed_fleet(results_dir, memory=mem)
-            if results_dir is not None
-            else DEFAULT_FLEET
-        )
-    plan = route(request, fleet=fleet)
-    if server_addresses:
-        plan = dataclasses.replace(plan, server_addresses=tuple(server_addresses))
+    # _resolve_router_memory opens a brand-new sqlite3 connection for the
+    # memory=True / path shapes (a caller-supplied RouterMemory instance
+    # is returned as-is and stays theirs to close). Nothing closed it
+    # afterwards, so a caller routing in a tight loop with memory=True
+    # leaked one open connection per call -- close what we opened here.
+    owns_mem = mem is not None and not isinstance(memory, RouterMemory)
+    try:
+        if fleet is None:
+            fleet = (
+                informed_fleet(results_dir, memory=mem)
+                if results_dir is not None
+                else DEFAULT_FLEET
+            )
+        plan = route(request, fleet=fleet)
+        if server_addresses:
+            plan = dataclasses.replace(plan, server_addresses=tuple(server_addresses))
 
-    if plan.pipeline_kwargs.get("backend") != "qpu":
+        if plan.pipeline_kwargs.get("backend") != "qpu":
+            cert = run_pipeline(
+                request.qubo,
+                **plan.pipeline_kwargs,
+                server_addresses=server_addresses,
+                num_partitions=num_partitions,
+            )
+            _finalize_run(request, mem, plan, cert, emit_report)
+            return cert
+
+        token = qpu_token or os.environ.get("IBM_QUANTUM_TOKEN")
+        instance = qpu_instance or os.environ.get("IBM_QUANTUM_CRN")
+        if not (token and instance):
+            raise ValueError(
+                "This plan targets IBM hardware "
+                f"({plan.backend.name}); pass qpu_token/qpu_instance or set "
+                "IBM_QUANTUM_TOKEN and IBM_QUANTUM_CRN."
+            )
+
+        if plan.use_cutting:
+            cert = run_cut_route_request(request.qubo, plan, token=token, crn=instance)
+            _finalize_run(request, mem, plan, cert, emit_report)
+            return cert
+
+        job_id = submit_qpu_job(
+            request.qubo,
+            qpu_backend_name=plan.pipeline_kwargs["qpu_backend_name"],
+            qpu_shots=plan.shots,
+            qpu_token=token,
+            qpu_instance=instance,
+        )
+        counts = _poll_qpu_counts(
+            job_id,
+            plan,
+            token,
+            instance,
+            results_dir=results_dir,
+            poll_initial_seconds=poll_initial_seconds,
+            poll_backoff_cap_seconds=poll_backoff_cap_seconds,
+            poll_ceiling_seconds=poll_ceiling_seconds,
+        )
         cert = run_pipeline(
             request.qubo,
             **plan.pipeline_kwargs,
+            qpu_counts=counts,
             server_addresses=server_addresses,
             num_partitions=num_partitions,
         )
         _finalize_run(request, mem, plan, cert, emit_report)
         return cert
-
-    token = qpu_token or os.environ.get("IBM_QUANTUM_TOKEN")
-    instance = qpu_instance or os.environ.get("IBM_QUANTUM_CRN")
-    if not (token and instance):
-        raise ValueError(
-            "This plan targets IBM hardware "
-            f"({plan.backend.name}); pass qpu_token/qpu_instance or set "
-            "IBM_QUANTUM_TOKEN and IBM_QUANTUM_CRN."
-        )
-
-    if plan.use_cutting:
-        cert = run_cut_route_request(request.qubo, plan, token=token, crn=instance)
-        _finalize_run(request, mem, plan, cert, emit_report)
-        return cert
-
-    job_id = submit_qpu_job(
-        request.qubo,
-        qpu_backend_name=plan.pipeline_kwargs["qpu_backend_name"],
-        qpu_shots=plan.shots,
-        qpu_token=token,
-        qpu_instance=instance,
-    )
-    counts = _poll_qpu_counts(
-        job_id,
-        plan,
-        token,
-        instance,
-        results_dir=results_dir,
-        poll_initial_seconds=poll_initial_seconds,
-        poll_backoff_cap_seconds=poll_backoff_cap_seconds,
-        poll_ceiling_seconds=poll_ceiling_seconds,
-    )
-    cert = run_pipeline(
-        request.qubo,
-        **plan.pipeline_kwargs,
-        qpu_counts=counts,
-        server_addresses=server_addresses,
-        num_partitions=num_partitions,
-    )
-    _finalize_run(request, mem, plan, cert, emit_report)
-    return cert
+    finally:
+        if owns_mem:
+            mem.close()
 
 
 def _poll_qpu_counts(

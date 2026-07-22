@@ -13,6 +13,7 @@ import pytest
 pytest.importorskip(
     "limen.security.pqc",
     reason="cryptography>=48 (ML-DSA / FIPS 204) not installed",
+    exc_type=ImportError,
 )
 
 from limen.security.pqc import (

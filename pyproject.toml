@@ -80,6 +80,12 @@ all = [
 "Bug Tracker" = "https://github.com/xingxerx/LIMEN/issues"
 "Documentation" = "https://github.com/xingxerx/LIMEN#readme"
 
+[tool.pytest.ini_options]
+markers = [
+    "network: requires live network access (distributed transport tests)",
+    "slow: known slow, not part of the default fast gate",
+]
+
 [tool.maturin]
 module-name = "limen.limen_core"
 features = ["pyo3/extension-module"]

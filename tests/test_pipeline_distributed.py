@@ -17,6 +17,8 @@ from limen.distributed.registry import NodeRegistry
 from limen.distributed.server import serve
 from limen.pipeline import run_pipeline
 
+pytestmark = pytest.mark.network
+
 # A separable 4-variable QUBO: optimum is x0=x1? No coupling forces splits,
 # so each pair {x0,x1} and {x2,x3} prefers exactly one of the two ON.
 _QUBO = {

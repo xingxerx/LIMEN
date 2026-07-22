@@ -46,6 +46,16 @@ model" that budget_router's docstring promised):
 All timestamps are Unix epoch seconds, UTC. The store is a single SQLite
 file in WAL mode (crash-safe, same "persist before you dispatch" posture
 as limen.router.job_state); the schema is created on first open.
+
+Known gap -- no retention policy: the certificate ledger is deliberately
+append-only (UPDATE/DELETE blocked by trigger, see above), which is the
+right call for auditability but means the underlying file grows on disk
+without bound as long as the store is in use. Nothing in this module
+prunes, archives, or compacts old entries. Fine at development volume;
+before this sees production-scale traffic, decide a retention rule (e.g.
+archive-and-rehash older chain segments into a summary entry, or document
+that operators are responsible for rotating the file) rather than letting
+it grow unchecked.
 """
 
 from __future__ import annotations

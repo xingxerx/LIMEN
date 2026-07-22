@@ -5,6 +5,8 @@ import itertools
 import math
 import unittest
 
+import pytest
+
 from limen.core.ir import LogicalGraph
 from limen.frontends.vrp import (
     _augmented_distance_matrix,
@@ -161,16 +163,30 @@ class TestVrpThroughPipeline(unittest.TestCase):
                 best_assignment = assignment
         return best_energy, best_assignment
 
+    @pytest.mark.slow
     def test_pipeline_runs_and_qubo_ground_state_decodes_feasibly(self):
         # run_pipeline accepts vrp_qubo's output directly: the wiring works
         # end-to-end. QAOA is a heuristic, though, and a single shallow
         # layer is not guaranteed to land on the ground state every run -
         # so we don't assert cert.solution itself is optimal/feasible here.
+        #
+        # grid_size is cut from run_pipeline's default of 12 (144 angle
+        # points) to 4 (16 points): this test only needs the pipeline
+        # wiring exercised end-to-end with a non-degenerate circuit, not
+        # a converged QAOA optimum. On the pure-Python fallback simulator
+        # (limen/gates/simulator.py, used whenever limen_core isn't
+        # built) each grid point is a real cost -- 16 variables measured
+        # ~3.5s/point, so grid_size=12 ran ~8.5 minutes here (confirmed
+        # via faulthandler.dump_traceback_later, not a hang) versus ~35s
+        # at grid_size=4. grid_size<4 was tried and rejected: it lands on
+        # the degenerate all-zero-angle point and reports energy 0.0,
+        # which would pass the isfinite assertion below without actually
+        # exercising a real QAOA circuit.
         num_vehicles = 2
         qubo, customer_ids = vrp_qubo(self.PIPELINE_COORDS, num_vehicles=num_vehicles)
         n_customers = len(customer_ids)
 
-        cert = run_pipeline(qubo, encode_logical=False)
+        cert = run_pipeline(qubo, encode_logical=False, grid_size=4)
         self.assertTrue(math.isfinite(cert.energy))
 
         # What must hold regardless of QAOA's heuristic quality: the QUBO's

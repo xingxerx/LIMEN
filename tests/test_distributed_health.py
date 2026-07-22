@@ -25,6 +25,8 @@ from limen.distributed.config import NodeConfig
 from limen.distributed.registry import NodeRegistry
 from limen.distributed.server import serve
 
+pytestmark = pytest.mark.network
+
 
 class TestHealthService(unittest.TestCase):
     def setUp(self):

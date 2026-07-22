@@ -131,7 +131,7 @@ class TestLoopback(unittest.TestCase):
 
     def test_each_tier_plan_runs_and_certifies_optimal(self):
         for tier in Tier:
-            with self.subTest(tier=tier):
+            with self.subTest(tier=tier.name):
                 plan = route(self._request(tier))
                 self.assertEqual(plan.tier, tier)
                 self.assertEqual(plan.pipeline_kwargs["backend"], "statevector")

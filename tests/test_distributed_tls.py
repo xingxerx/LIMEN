@@ -34,6 +34,8 @@ from limen.distributed.config import NodeConfig
 from limen.distributed.registry import NodeRegistry
 from limen.distributed.server import serve
 
+pytestmark = pytest.mark.network
+
 
 def _generate_self_signed_cert(common_name: str = "127.0.0.1") -> tuple[bytes, bytes]:
     """Generate a short-lived self-signed cert/key pair (PEM), for tests only."""

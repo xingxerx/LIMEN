@@ -17,6 +17,8 @@ from limen.distributed.partition import namespaced_hardware_graph
 from limen.distributed.registry import NodeRegistry
 from limen.distributed.server import serve
 
+pytestmark = pytest.mark.network
+
 
 class TestCoordinationServer(unittest.TestCase):
 

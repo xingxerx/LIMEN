@@ -31,6 +31,8 @@ from limen.distributed.server import (
     serve,
 )
 
+pytestmark = pytest.mark.network
+
 
 class _FlakyThenOkClient:
     """Fails register() on the first N *instances* with grpc.RpcError, then succeeds.

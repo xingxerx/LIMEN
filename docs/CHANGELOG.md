@@ -24,6 +24,21 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (mtime-deduplicated), and `informed_fleet()` gained an optional
   `memory=` argument that applies the ledger's estimates last, after the
   flat history/calibration scans.
+- Router/pipeline hot-path cleanup: `informed_fleet()` no longer runs the
+  legacy flat `scan_results`/`scan_calibration` rescan when a `memory=`
+  ledger is supplied (that rescan is a strict subset of what
+  `RouterMemory.ingest_results` already covers, so it was pure redundant
+  I/O once the ledger is warm — ~45% of the call's cost on a 500-cert
+  results_dir in local profiling). `run_route_request()`'s
+  `memory=True`/path shapes now close the sqlite3 connection they open
+  before returning instead of leaving it for GC; pass a long-lived
+  `RouterMemory` instance for high-frequency looped calls to avoid the
+  ~1ms/call reconnect cost entirely.
+- Known gap, not yet fixed: `RouterMemory`'s certificate ledger has no
+  retention/compaction policy — it is append-only by design (see
+  `limen/router/memory.py` module docstring) and grows on disk without
+  bound. Fine at current volume; needs a decision before production
+  scale.
 
 ## [0.8.4] - 2026-07-21
 
