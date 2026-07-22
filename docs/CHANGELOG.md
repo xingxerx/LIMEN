@@ -5,6 +5,49 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Persistent router memory (`limen.router.memory`): a SQLite ledger
+  (`RouterMemory`) that makes the budget router stateful across runs.
+  Three parts: (1) a backend sample ledger with trend-aware stats —
+  recency-weighted (exponential half-life) estimates plus a
+  least-squares drift slope, folded into a fleet by `apply_memory()`
+  under the conservative-envelope rule (a rising/worsening trend bumps
+  the estimate up to its projection at now; an improving trend is never
+  extrapolated); (2) a content-addressed transpile cache
+  (`transpile_cache_key`/`_get`/`_put`, LRU-evicted, payloads are opaque
+  bytes — no qiskit dependency); (3) an append-only certificate ledger:
+  each entry hash-chained to its predecessor, UPDATE/DELETE blocked by
+  SQL triggers, the whole chain re-verifiable via `verify_ledger()`, and
+  optionally ML-DSA-65-signed over the chain head (binding each
+  signature to the entire prior history — `limen.security.pqc`, opt-in
+  as ever). `ingest_results()` backfills the sample ledger from existing
+  `results/` certs and calibration snapshots incrementally
+  (mtime-deduplicated), and `informed_fleet()` gained an optional
+  `memory=` argument that applies the ledger's estimates last, after the
+  flat history/calibration scans.
+
+## [0.8.4] - 2026-07-21
+
+- Guarded ML-DSA import in `limen.security.pqc`: importing the module
+  without `cryptography>=48` installed now raises an `ImportError` with
+  the install hint (`pip install limen-compiler[pqc]`) instead of a raw
+  `ModuleNotFoundError`/`ImportError` from deep inside `cryptography`.
+  `tests/test_pqc.py` skips cleanly when the dependency is absent,
+  matching every other optional-extra test module.
+- Read the classical register by name instead of assuming `"c"`
+  (`limen.pipeline._get_counts_from_pub_result`): QPU/Aer results no
+  longer fail when the circuit's classical register is named e.g.
+  `"meas"`; reused from `limen/communication/channel.py` and the Tier 2
+  Kingston example.
+- Renamed all `pip install limen[...]` references (README, docs, error
+  messages) to `pip install limen-compiler[...]` to match the published
+  PyPI package name.
+- Tier 2 QPU-path integration smoke test for `run_route_request()`.
+
+## [0.8.3] - 2026-07-07
+
+Note: the entries below sat under "Unreleased" when v0.8.3 was tagged,
+but the tagged code contained all of them — they shipped in 0.8.3.
+
 - `informed_fleet()` (`limen.router`): one call that folds run history
   (`apply_history`/`scan_results`) and calibration snapshots
   (`apply_calibration`/`scan_calibration`) into a fleet, replacing the
@@ -74,9 +117,6 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Second calibrated Tier 2 hardware run submitted on ibm_kingston (job
   `d96mijgtcv6s73djv5a0`), the first routed with a calibration-seeded
   `physical_error_rate` (2.586e-2 vs the prior run's 1e-3 guess).
-
-## [0.8.3] - 2026-07-07
-
 - Budget router (`limen.router`): deterministic fidelity-tier planning for
   QUBO runs — picks a tier, backend, cutting strategy, ECC allocation, and
   shot count against an explicit credit budget before anything is submitted

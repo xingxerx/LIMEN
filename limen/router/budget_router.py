@@ -22,8 +22,10 @@ Tiers:
 
 Routing is deterministic — a pure function of the request and the fleet.
 The same QUBO with the same request always yields an identical plan;
-there is no learned model or randomness here (a run-history cost model
-is the planned successor, per docs/architecture.md).
+there is no learned model or randomness here. Statefulness lives one
+layer up: limen.router.memory folds recency-weighted, trend-aware run
+history into the *fleet* before route() is called, so the function stays
+pure while the inputs get smarter.
 
 The fidelity signal between Tier 1 and Tier 2 is the criticality spread
 max/mean over :func:`limen.ecc.budget.rank_criticality`: a flat spectrum
