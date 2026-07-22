@@ -537,7 +537,7 @@ def _resolve_router_memory(memory: Any, results_dir: Any) -> Any:
     return RouterMemory(memory)
 
 
-def _record_route_outcome(mem: Any, plan: Any, cert: "EndToEndCertificate") -> None:
+def _record_route_outcome(mem: Any, plan: Any, cert: "EndToEndCertificate") -> str | None:
     """Write a just-completed run's outcome into *mem*, if memory is in use.
 
     ``run_route_request`` reads memory (history/calibration/ledger
@@ -550,9 +550,13 @@ def _record_route_outcome(mem: Any, plan: Any, cert: "EndToEndCertificate") -> N
     hash-chained into the append-only ledger so the run is witnessed,
     not just logged. Best-effort and silent on failure (a memory-write
     problem must never fail a certified run that already succeeded).
+
+    Returns the appended ledger entry's payload hash (for callers that
+    want to reference the exact witnessed record, e.g. a route report),
+    or None when memory isn't in use or the write failed.
     """
     if mem is None:
-        return
+        return None
     backend = getattr(getattr(plan, "backend", None), "name", None) or getattr(
         plan, "backend", None
     )
@@ -562,9 +566,55 @@ def _record_route_outcome(mem: Any, plan: Any, cert: "EndToEndCertificate") -> N
             logical_error=cert.aggregate_logical_error_rate,
             physical_error_rate=cert.physical_error_rate,
         )
-        mem.append_certificate(cert.to_dict(), backend=str(backend) if backend else None)
+        entry = mem.append_certificate(
+            cert.to_dict(), backend=str(backend) if backend else None
+        )
+        return entry.payload_sha256
     except Exception:
-        pass
+        return None
+
+
+def _finalize_run(
+    request: Any, mem: Any, plan: Any, cert: "EndToEndCertificate", emit_report: bool
+) -> None:
+    """Report, then record -- in that order, deliberately.
+
+    A route report's ledger comparison is supposed to explain the
+    decision that was *already made* using memory as it stood at
+    routing time. Recording this run's own outcome first and then
+    building the report from the same (now-updated) memory would make
+    every report see its own sample already counted, so "what history
+    changed" would trivially always include this run and never show a
+    real before/after. Building the report first captures the ledger
+    state that actually informed the decision; the write (Milestone 1)
+    happens after, so it still lands before the caller gets the
+    certificate back, and the resulting certificate hash is patched
+    into the already-built report. Both halves remain best-effort and
+    independent: a broken report never blocks the ledger write, and a
+    broken write still leaves a valid report (just without a
+    certificate_sha256).
+    """
+    report = None
+    if emit_report:
+        try:
+            from limen.router.report import build_route_report
+
+            report = build_route_report(request, plan, cert, mem=mem)
+        except Exception:
+            report = None
+
+    cert_sha256 = _record_route_outcome(mem, plan, cert)
+
+    if report is not None:
+        try:
+            import dataclasses as _dataclasses
+
+            if cert_sha256 is not None:
+                report = _dataclasses.replace(report, certificate_sha256=cert_sha256)
+            cert.metadata["route_report"] = report.to_dict()
+            cert.metadata["route_report_markdown"] = report.to_markdown()
+        except Exception:
+            pass
 
 
 def run_route_request(
@@ -573,6 +623,7 @@ def run_route_request(
     results_dir: Any = None,
     fleet: Any = None,
     memory: Any = None,
+    emit_report: bool = False,
     qpu_token: str | None = None,
     qpu_instance: str | None = None,
     poll_initial_seconds: float = 30.0,
@@ -617,6 +668,15 @@ def run_route_request(
             is skipped so memory no longer influences the routing
             decision, but the completed run's outcome is still recorded
             into it -- pass memory=None explicitly to opt out entirely.
+        emit_report: When True, attach a human-readable
+            limen.router.report.RouteReport to the returned
+            certificate's metadata under "route_report" (dict) and
+            "route_report_markdown" (str) -- what backend was chosen,
+            why (from the plan's own routing notes), and how the
+            decision compares to *memory*'s ledger, if any. Default
+            False leaves today's certificate.metadata exactly
+            unchanged. Best-effort: a report-building failure never
+            fails an already-certified run.
         qpu_token: IBM Quantum Platform API token; falls back to the
             IBM_QUANTUM_TOKEN environment variable. Only consulted for
             IBM QPU plans.
@@ -687,7 +747,7 @@ def run_route_request(
             server_addresses=server_addresses,
             num_partitions=num_partitions,
         )
-        _record_route_outcome(mem, plan, cert)
+        _finalize_run(request, mem, plan, cert, emit_report)
         return cert
 
     token = qpu_token or os.environ.get("IBM_QUANTUM_TOKEN")
@@ -701,7 +761,7 @@ def run_route_request(
 
     if plan.use_cutting:
         cert = run_cut_route_request(request.qubo, plan, token=token, crn=instance)
-        _record_route_outcome(mem, plan, cert)
+        _finalize_run(request, mem, plan, cert, emit_report)
         return cert
 
     job_id = submit_qpu_job(
@@ -728,7 +788,7 @@ def run_route_request(
         server_addresses=server_addresses,
         num_partitions=num_partitions,
     )
-    _record_route_outcome(mem, plan, cert)
+    _finalize_run(request, mem, plan, cert, emit_report)
     return cert
 
 

@@ -113,6 +113,103 @@ class TestMemoryLoopClosure(unittest.TestCase):
         self.assertTrue(actual.is_optimal)
 
 
+class TestRouteReport(unittest.TestCase):
+    """emit_report=True must attach a human-readable report to the
+    certificate's metadata -- and emit_report=False (the default) must
+    leave metadata exactly as it is today."""
+
+    def test_report_absent_by_default(self):
+        request = RouteRequest(
+            cycle_maxcut(4), fidelity_target=0.9, credit_budget=0.0
+        )
+        cert = run_route_request(request, fleet=DEFAULT_FLEET)
+        self.assertNotIn("route_report", cert.metadata)
+        self.assertNotIn("route_report_markdown", cert.metadata)
+
+    def test_report_attached_without_memory(self):
+        request = RouteRequest(
+            cycle_maxcut(4), fidelity_target=0.9, credit_budget=0.0
+        )
+        cert = run_route_request(request, fleet=DEFAULT_FLEET, emit_report=True)
+
+        report = cert.metadata["route_report"]
+        self.assertEqual(report["backend"], DEFAULT_FLEET[0].name)
+        self.assertEqual(report["energy"], cert.energy)
+        self.assertEqual(report["ledger_comparisons"], [])
+
+        md = cert.metadata["route_report_markdown"]
+        self.assertIn(DEFAULT_FLEET[0].name, md)
+        self.assertIn("## Why this backend", md)
+
+    def test_report_includes_ledger_comparison_with_memory(self):
+        import tempfile
+
+        from limen.router import RouterMemory
+
+        # Tier 0 (the cycle_maxcut/no-budget fixture used elsewhere in
+        # this file) never populates physical_error_rate or
+        # aggregate_logical_error_rate, so a ledger comparison would
+        # trivially show zero samples forever. star_maxcut at a real
+        # budget with offline=True forces Tier 2 planning (so the
+        # certificate carries real error-rate numbers) while still
+        # executing on the local simulator (so this stays a fast,
+        # credential-free offline test).
+        request = RouteRequest(
+            star_maxcut(4), fidelity_target=0.9, credit_budget=10.0, offline=True
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "router_memory.sqlite3"
+            mem = RouterMemory(db_path)
+            try:
+                # First call: no samples yet, so any comparison present
+                # must show zero samples and no movement.
+                cert1 = run_route_request(
+                    request, fleet=DEFAULT_FLEET, memory=mem, emit_report=True
+                )
+                report1 = cert1.metadata["route_report"]
+                self.assertTrue(
+                    all(c["sample_count"] == 0 for c in report1["ledger_comparisons"])
+                )
+                self.assertIsNotNone(report1["certificate_sha256"])
+
+                # Second call: the first run's outcome is now in the
+                # ledger (Milestone 1), so at least one comparison must
+                # show a nonzero sample count.
+                cert2 = run_route_request(
+                    request, fleet=DEFAULT_FLEET, memory=mem, emit_report=True
+                )
+                report2 = cert2.metadata["route_report"]
+                self.assertTrue(
+                    any(c["sample_count"] > 0 for c in report2["ledger_comparisons"])
+                )
+            finally:
+                mem.close()
+
+    def test_report_failure_never_fails_the_run(self):
+        # A RouterMemory whose methods explode must not prevent
+        # run_route_request from returning a valid certificate --
+        # report attachment is best-effort by design.
+        import tempfile
+
+        from limen.router import RouterMemory
+
+        request = RouteRequest(
+            cycle_maxcut(4), fidelity_target=0.9, credit_budget=0.0
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = pathlib.Path(tmp) / "router_memory.sqlite3"
+            mem = RouterMemory(db_path)
+            try:
+                mem.stats = lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("boom"))
+                cert = run_route_request(
+                    request, fleet=DEFAULT_FLEET, memory=mem, emit_report=True
+                )
+                self.assertTrue(cert.is_optimal)
+                self.assertNotIn("route_report", cert.metadata)
+            finally:
+                mem.close()
+
+
 class TestPeerAutoDiscovery(unittest.TestCase):
 
     def test_known_peers_from_env_used_when_server_addresses_omitted(self):
