@@ -3,6 +3,28 @@
 All notable changes to LIMEN are documented in this file. Format loosely
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+- Persistent router memory (`limen.router.memory`): a SQLite ledger
+  (`RouterMemory`) that makes the budget router stateful across runs.
+  Three parts: (1) a backend sample ledger with trend-aware stats —
+  recency-weighted (exponential half-life) estimates plus a
+  least-squares drift slope, folded into a fleet by `apply_memory()`
+  under the conservative-envelope rule (a rising/worsening trend bumps
+  the estimate up to its projection at now; an improving trend is never
+  extrapolated); (2) a content-addressed transpile cache
+  (`transpile_cache_key`/`_get`/`_put`, LRU-evicted, payloads are opaque
+  bytes — no qiskit dependency); (3) an append-only certificate ledger:
+  each entry hash-chained to its predecessor, UPDATE/DELETE blocked by
+  SQL triggers, the whole chain re-verifiable via `verify_ledger()`, and
+  optionally ML-DSA-65-signed over the chain head (binding each
+  signature to the entire prior history — `limen.security.pqc`, opt-in
+  as ever). `ingest_results()` backfills the sample ledger from existing
+  `results/` certs and calibration snapshots incrementally
+  (mtime-deduplicated), and `informed_fleet()` gained an optional
+  `memory=` argument that applies the ledger's estimates last, after the
+  flat history/calibration scans.
+
 ## [0.8.4] - 2026-07-21
 
 - Guarded ML-DSA import in `limen.security.pqc`: importing the module
