@@ -4,6 +4,11 @@
 
 **LIMEN** is a physics aware compiler stack for translating classical optimization problems into native quantum and analog substrates. It sits at the threshold between human readable problem specifications and the physical hardware that computes them  providing a deterministic, reproducible compilation pipeline with measurable confidence in every result.
 
+Governance: ownership map, hard invariants, and build order for this
+repo and its siblings (DUCTEI, Qallow, VEYN) live in
+[ATRIUM](https://github.com/xingxerx/ATRIUM) — read `AGENTS.md` there
+first.
+
 ---
 
 ## The Problem
