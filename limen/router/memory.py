@@ -149,6 +149,25 @@ CREATE TRIGGER IF NOT EXISTS certificate_ledger_no_delete
 BEGIN
     SELECT RAISE(ABORT, 'certificate ledger is append-only');
 END;
+
+CREATE TABLE IF NOT EXISTS policy_proposals (
+    seq            INTEGER PRIMARY KEY AUTOINCREMENT,
+    recorded_at    REAL NOT NULL,
+    proposal_id    TEXT NOT NULL,
+    policy_name    TEXT NOT NULL,
+    accepted       INTEGER NOT NULL,
+    verdict        TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS policy_proposals_no_update
+    BEFORE UPDATE ON policy_proposals
+BEGIN
+    SELECT RAISE(ABORT, 'policy proposal ledger is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS policy_proposals_no_delete
+    BEFORE DELETE ON policy_proposals
+BEGIN
+    SELECT RAISE(ABORT, 'policy proposal ledger is append-only');
+END;
 """
 
 
@@ -829,6 +848,54 @@ class RouterMemory:
             archive_sha256=archive_sha256,
             checkpoint_seq=last_seq,
         )
+
+    # ------------------------------------------------------------------
+    # Self-improvement loop: append-only routing-policy proposal ledger
+    # (harness-roadmap/03). Kept separate from certificate_ledger -- a
+    # proposal is a decision about *policy*, never itself a run result --
+    # but the same append-only, never-punished posture applies: rejected
+    # proposals are recorded here exactly like accepted ones, never
+    # deleted (ATRIUM AGENTS.md section 4, "no punishment realms").
+    # ------------------------------------------------------------------
+
+    def record_proposal(
+        self,
+        proposal_id: str,
+        policy_name: str,
+        accepted: bool,
+        verdict: dict[str, Any],
+        *,
+        recorded_at: float | None = None,
+    ) -> int:
+        """Append one proposal verdict. *verdict* is the full plain-English
+        verdict record (e.g. ``Verdict.to_dict()`` from
+        ``limen.router.proposal``) stored verbatim as JSON, so the whole
+        baseline/proposed comparison stays inspectable, not just the
+        accept/reject bit. Returns the assigned sequence number."""
+        recorded_at = time.time() if recorded_at is None else recorded_at
+        with self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO policy_proposals"
+                " (recorded_at, proposal_id, policy_name, accepted, verdict)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (recorded_at, proposal_id, policy_name, int(accepted), _canonical_json(verdict)),
+            )
+        return int(cursor.lastrowid or 0)
+
+    def proposals(self) -> Iterator[dict[str, Any]]:
+        """Iterate every recorded proposal verdict in append order."""
+        for seq, recorded_at, proposal_id, policy_name, accepted, verdict in self._conn.execute(
+            "SELECT seq, recorded_at, proposal_id, policy_name, accepted, verdict"
+            " FROM policy_proposals ORDER BY seq"
+        ):
+            yield {
+                "seq": seq,
+                "recorded_at": recorded_at,
+                "proposal_id": proposal_id,
+                "policy_name": policy_name,
+                "accepted": bool(accepted),
+                "verdict": json.loads(verdict),
+            }
 
     def verify_certificate_signature(self, entry: LedgerEntry, public_key: Any) -> bool:
         """Verify an entry's ML-DSA-65 signature over its chain head.

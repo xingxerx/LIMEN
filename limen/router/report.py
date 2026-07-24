@@ -166,6 +166,59 @@ class RouteReport:
         return "\n".join(lines)
 
 
+def build_proposal_report(verdict: Any) -> str:
+    """Plain-English report for one self-improvement-loop verdict
+    (harness-roadmap/03, ATRIUM AGENTS.md section 4, witness requirement).
+
+    *verdict* is a :class:`limen.router.proposal.Verdict`. Extends this
+    module's existing report format rather than inventing a new one:
+    same "what/why, then evidence" shape as :meth:`RouteReport.to_markdown`.
+    Every accepted or rejected proposal gets one of these -- rejection is
+    witnessed and archived, never silently dropped (CANON: "no punishment
+    realms").
+    """
+    p = verdict.proposal
+    lines: list[str] = []
+    lines.append(f"# Routing-policy proposal: {p.title}")
+    lines.append("")
+    lines.append(f"- **Proposal id:** `{p.id}`")
+    lines.append(f"- **Policy:** `{p.policy_name}` -> {p.proposed_value!r}")
+    lines.append(f"- **Verdict:** {'ACCEPTED' if verdict.accepted else 'REJECTED'} -- {verdict.reason}")
+    lines.append("")
+
+    lines.append("## What this changes")
+    lines.append(f"- {p.what_changes}")
+    lines.append("")
+    lines.append("## What it unlocks")
+    lines.append(f"- {p.what_it_unlocks}")
+    lines.append("")
+    lines.append("## What it does not unlock")
+    lines.append(f"- {p.what_it_does_not_unlock}")
+    lines.append("")
+
+    lines.append("## Ledger-backed replay")
+    lines.append(
+        f"- **Baseline** total estimated cost: {verdict.baseline.total_estimated_cost:.4g} credits, "
+        f"physical-error exposure: {verdict.baseline.total_physical_error_exposure:.4g}"
+    )
+    lines.append(
+        f"- **Proposed** total estimated cost: {verdict.proposed.total_estimated_cost:.4g} credits, "
+        f"physical-error exposure: {verdict.proposed.total_physical_error_exposure:.4g}"
+    )
+    lines.append("")
+    lines.append("| scenario | baseline tier/backend | proposed tier/backend | changed |")
+    lines.append("|---|---|---|---|")
+    for base_o, new_o in zip(verdict.baseline.outcomes, verdict.proposed.outcomes):
+        changed = "yes" if (base_o.tier, base_o.backend) != (new_o.tier, new_o.backend) else "no"
+        lines.append(
+            f"| {base_o.scenario_name} | T{base_o.tier}/{base_o.backend} "
+            f"| T{new_o.tier}/{new_o.backend} | {changed} |"
+        )
+    lines.append("")
+
+    return "\n".join(lines)
+
+
 def _static_profile_for(backend_name: str) -> Any:
     """The un-adjusted BackendProfile for *backend_name* from the static
     default fleet, or None if it isn't one of the known defaults (e.g. a

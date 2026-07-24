@@ -35,3 +35,36 @@ jobs:
         run: pip install pytest
       - name: Run test suite
         run: pytest tests/ -q
+
+  # Self-improvement loop verdict (harness-roadmap/03, ATRIUM AGENTS.md
+  # section 5: "agents propose, the harness disposes"). Any claim file
+  # under policy_proposals/pending/ must replay as a non-regression
+  # against the ledger built from results/ before it can land -- this
+  # job is the CI verdict step; make it a required status check on main
+  # once branch protection is configured (owner action, see BUILD.md
+  # GAP 0 / GAP 5 for the same pattern already applied to e2e-smoke).
+  policy-proposal-verdict:
+    name: routing-policy proposal verdict
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package (simulator path only)
+        run: pip install .
+      - name: Evaluate every pending proposal
+        run: |
+          shopt -s nullglob
+          claims=(policy_proposals/pending/*.json)
+          if [ ${#claims[@]} -eq 0 ]; then
+            echo "no pending routing-policy proposals"
+            exit 0
+          fi
+          status=0
+          for claim in "${claims[@]}"; do
+            echo "::group::$claim"
+            python scripts/run_proposal.py "$claim" || status=1
+            echo "::endgroup::"
+          done
+          exit $status

@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-24-raise-criticality-threshold",
+  "title": "Raise the Tier1/Tier2 criticality-spread threshold from 2.0 to 8.0",
+  "what_changes": "budget_router.CRITICALITY_SPREAD_THRESHOLD, the max/mean criticality spread at or above which route() selects Tier 2 (HW_CERTIFIED) over Tier 1 (HW_STANDARD), moves from 2.0 to 8.0.",
+  "what_it_unlocks": "Problems with a moderately skewed criticality spectrum (roughly 2.0-8.0) that do not need surface-code ECC protection stop paying the Tier 2 pipeline path (ECC distance selection, patch-budget allocation) for no measured benefit against the current ledger.",
+  "what_it_does_not_unlock": "Does not change backend selection, shot counts, or any other routing constant. Does not touch problems with spread below 2.0 (already Tier 1) or above 8.0 (still routed to Tier 2). Does not widen the set of gated policies beyond CRITICALITY_SPREAD_THRESHOLD.",
+  "policy_name": "CRITICALITY_SPREAD_THRESHOLD",
+  "proposed_value": 8.0
+}
