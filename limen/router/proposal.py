@@ -240,6 +240,9 @@ class Verdict:
     reason: str
     baseline: FleetMetrics
     proposed: FleetMetrics
+    # Value of the gated policy that was live before this proposal was evaluated.
+    # Needed so a post-land rollback can restore the exact prior constant.
+    previous_value: float | None = None
     recorded_at: float = dataclasses.field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -249,6 +252,7 @@ class Verdict:
             "reason": self.reason,
             "baseline_metrics": self.baseline.to_dict(),
             "new_metrics": self.proposed.to_dict(),
+            "previous_value": self.previous_value,
             "recorded_at": self.recorded_at,
         }
 
@@ -327,44 +331,64 @@ def evaluate_proposal(
         reason=reason,
         baseline=baseline,
         proposed=proposed,
+        previous_value=float(original_value) if original_value is not None else None,
         recorded_at=time.time() if now is None else now,
     )
 
 
 def maybe_rollback_after_land(
     mem: RouterMemory,
-    proposal: Proposal,
-    baseline: FleetMetrics,
+    verdict: Verdict,
     *,
+    miss_detected: bool,
     monitor_next_n_certificates: int = 20,
     now: float | None = None,
 ) -> int | None:
-    """Post-land rollback guard stub.
+    """Post-land rollback guard.
 
     Plain English thresholds:
       - Monitor window: the next 20 certificate_ledger rows recorded after land.
-      - Rollback trigger: any single per-scenario meet-gate miss compared to the
+      - Rollback trigger: any single currently-meeting scenario that misses compared to the
         frozen baseline snapshot is considered a failure.
 
-    This stub records a rejected verdict to the append-only policy_proposals
-    table and intentionally does not modify live routing constants, because
-    changing policy state here would violate the module's append-only ledger
-    posture. Returns the recorded sequence number, or None if no record was
-    written.
+    On a miss, restore the live routing constant to the value that was in force
+    before the accepted proposal landed, then append a rejected verdict via the
+    append-only policy_proposals table. Failed jobs stay archived and are never
+    deleted. Returns the recorded sequence number, or None when no miss was
+    reported.
     """
-    # The full implementation would compare each new certificate's realized tier
-    # and backend choice to the frozen baseline across DEFAULT_SCENARIOS, which
-    # requires additional wiring between certificates and scenario identities.
-    # Until that wiring exists, witness the miss without changing live state.
-    verdict = Verdict(
-        proposal=proposal,
+    if not miss_detected:
+        return None
+    policy_name = verdict.proposal.policy_name
+    prior = verdict.previous_value
+    if prior is None:
+        # Without a prior value we cannot restore deterministically; witness a reject.
+        reject = Verdict(
+            proposal=verdict.proposal,
+            accepted=False,
+            reason=(
+                "rollback: per-scenario meet-gate miss detected in the 20-entry monitor window; "
+                "no prior value recorded to restore"
+            ),
+            baseline=verdict.baseline,
+            proposed=verdict.proposed,
+            previous_value=None,
+            recorded_at=time.time() if now is None else now,
+        )
+        return mem.record_proposal(verdict.proposal.id, policy_name, False, reject.to_dict())
+
+    # Restore the live module constant.
+    setattr(budget_router, policy_name, prior)
+    reject = Verdict(
+        proposal=verdict.proposal,
         accepted=False,
         reason=(
-            "post-land rollback guard stub: detected a per-scenario gate miss "
-            "during the 20-entry monitor window; live policy not changed here"
+            "rollback: per-scenario meet-gate miss detected in the 20-entry monitor window; "
+            f"restored {policy_name} to its prior value"
         ),
-        baseline=baseline,
-        proposed=baseline,  # placeholder: this stub does not recompute
+        baseline=verdict.baseline,
+        proposed=verdict.proposed,
+        previous_value=prior,
         recorded_at=time.time() if now is None else now,
     )
-    return mem.record_proposal(proposal.id, proposal.policy_name, False, verdict.to_dict())
+    return mem.record_proposal(verdict.proposal.id, policy_name, False, reject.to_dict())

@@ -176,20 +176,29 @@ class ProposalReplayTests(unittest.TestCase):
             verdict.proposed.total_estimated_cost, verdict.baseline.total_estimated_cost
         )
 
-    def test_rollback_stub_records_without_state_change(self):
+    def test_rollback_restores_previous_value_and_records_rejected_verdict(self):
         from limen.router import budget_router
-        baseline = baseline_snapshot(self.mem, now=_NOW)
-        prop = Proposal(
-            id="rollback-stub", title="x", what_changes="x", what_it_unlocks="x",
+        original = budget_router.CRITICALITY_SPREAD_THRESHOLD
+        new_value = 2.0
+        proposal = Proposal(
+            id="land-and-rollback", title="x", what_changes="x", what_it_unlocks="x",
             what_it_does_not_unlock="x", policy_name="CRITICALITY_SPREAD_THRESHOLD",
-            proposed_value=budget_router.CRITICALITY_SPREAD_THRESHOLD,
+            proposed_value=new_value,
         )
-        seq = maybe_rollback_after_land(self.mem, prop, baseline, now=_NOW)
+        verdict = evaluate_proposal(proposal, self.mem, now=_NOW)
+        # Simulate land: set the live constant to the proposed value.
+        setattr(budget_router, proposal.policy_name, new_value)
+        # Trigger rollback on a miss in the monitor window.
+        seq = maybe_rollback_after_land(self.mem, verdict, miss_detected=True, now=_NOW)
         self.assertIsInstance(seq, int)
+        # The live constant must be restored to the pre-land value.
+        self.assertEqual(getattr(budget_router, proposal.policy_name), original)
+        # A rejected verdict is appended to the proposals ledger.
         rows = list(self.mem.proposals())
-        self.assertEqual(len(rows), 1)
-        self.assertFalse(rows[0]["accepted"])
-        self.assertIn("rollback guard stub", rows[0]["verdict"]["reason"])
+        self.assertGreaterEqual(len(rows), 1)
+        self.assertFalse(rows[-1]["accepted"])
+        # Must not leave the proposed value live.
+        self.assertNotEqual(getattr(budget_router, proposal.policy_name), new_value)
 
 
 class BaselineSnapshotTests(unittest.TestCase):
