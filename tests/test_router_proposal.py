@@ -14,6 +14,7 @@ from limen.router.proposal import (
     Proposal,
     baseline_snapshot,
     evaluate_proposal,
+    maybe_rollback_after_land,
 )
 from limen.router.report import build_proposal_report
 
@@ -94,31 +95,24 @@ class ProposalReplayTests(unittest.TestCase):
         evaluate_proposal(proposal, self.mem, now=_NOW)
         self.assertEqual(budget_router.CRITICALITY_SPREAD_THRESHOLD, original)
 
-    def test_raising_threshold_past_a_sample_drops_its_error_exposure_without_raising_cost(self):
-        # Seed one sample so ibm_marrakesh has a non-trivial ledger-adjusted
-        # physical_error_rate, then confirm a threshold raise that moves a
-        # skewed scenario from Tier 2 to Tier 1 can only ever drop (never
-        # raise) that scenario's physical-error exposure, with cost held
-        # exactly constant (same backend, same shots either tier).
+    def test_raising_threshold_past_a_sample_is_rejected_by_per_scenario_gate(self):
+        # Previously this asserted that a large threshold raise was accepted
+        # because physical-error exposure dropped and cost stayed flat.
+        # The new gate freezes per-scenario meets: any scenario that was
+        # certified must remain certified. With a very high threshold,
+        # skewed_high_fidelity (fidelity_target 0.995) would leave Tier 2,
+        # so the proposal must be rejected.
         self.mem.record_sample(
             "ibm_marrakesh", "physical_error_rate", 0.03, observed_at=_NOW
         )
         proposal = Proposal(
             id="raise-threshold", title="x", what_changes="x", what_it_unlocks="x",
             what_it_does_not_unlock="x", policy_name="CRITICALITY_SPREAD_THRESHOLD",
-            proposed_value=50.0,  # high enough that every scenario stays/moves to Tier 1
+            proposed_value=50.0,  # high enough that every scenario moves to Tier 1
         )
         verdict = evaluate_proposal(proposal, self.mem, now=_NOW)
-        self.assertTrue(verdict.accepted)
-        self.assertEqual(
-            verdict.baseline.total_estimated_cost, verdict.proposed.total_estimated_cost
-        )
-        self.assertLessEqual(
-            verdict.proposed.total_physical_error_exposure,
-            verdict.baseline.total_physical_error_exposure,
-        )
-        # Every scenario now Tier 1, so exposure is exactly zero.
-        self.assertEqual(verdict.proposed.total_physical_error_exposure, 0.0)
+        self.assertFalse(verdict.accepted)
+        self.assertIn("left HW_CERTIFIED", verdict.reason)
 
     def test_verdict_report_is_witnessed_in_the_append_only_ledger(self):
         proposal = Proposal(
@@ -153,6 +147,93 @@ class ProposalReplayTests(unittest.TestCase):
         self.assertIn("a change", report)
         self.assertIn("an unlock", report)
         self.assertIn("not everything", report)
+
+    def test_dump_to_cheapest_policy_is_rejected_due_to_high_fidelity_scenario(self):
+        # Proposed threshold +inf dumps every scenario into Tier 1.
+        # Old behavior would accept because exposure drops to zero,
+        # but the new per-scenario gate must reject because
+        # skewed_high_fidelity leaves HW_CERTIFIED.
+        proposal = Proposal(
+            id="dump-to-cheapest", title="x", what_changes="x", what_it_unlocks="x",
+            what_it_does_not_unlock="x", policy_name="CRITICALITY_SPREAD_THRESHOLD",
+            proposed_value=float("inf"),
+        )
+        verdict = evaluate_proposal(proposal, self.mem, now=_NOW)
+        self.assertFalse(verdict.accepted)
+        self.assertIn("left HW_CERTIFIED", verdict.reason)
+
+    def test_policy_that_keeps_meets_and_does_not_raise_cost_is_accepted(self):
+        # Lowering the threshold keeps previously certified scenarios certified
+        # and should not increase total estimated cost.
+        proposal = Proposal(
+            id="lower-threshold", title="x", what_changes="x", what_it_unlocks="x",
+            what_it_does_not_unlock="x", policy_name="CRITICALITY_SPREAD_THRESHOLD",
+            proposed_value=2.0,
+        )
+        verdict = evaluate_proposal(proposal, self.mem, now=_NOW)
+        self.assertTrue(verdict.accepted)
+        self.assertLessEqual(
+            verdict.proposed.total_estimated_cost, verdict.baseline.total_estimated_cost
+        )
+
+    def test_rollback_restores_previous_value_and_records_rejected_verdict(self):
+        from limen.router import budget_router
+        original = budget_router.CRITICALITY_SPREAD_THRESHOLD
+        new_value = 50.0
+        proposal = Proposal(
+            id="land-and-rollback", title="x", what_changes="x", what_it_unlocks="x",
+            what_it_does_not_unlock="x", policy_name="CRITICALITY_SPREAD_THRESHOLD",
+            proposed_value=new_value,
+        )
+        verdict = evaluate_proposal(proposal, self.mem, now=_NOW)
+        # Simulate land: set the live constant to the proposed value.
+        setattr(budget_router, proposal.policy_name, new_value)
+        # Append fewer than N=20 certificate_ledger rows: window not closed yet.
+        for i in range(19):
+            self.mem.append_certificate({"kind": "test-cert", "i": i}, backend=None, recorded_at=_NOW + i)
+        # No action taken; returns None; policy unchanged.
+        none_seq = maybe_rollback_after_land(self.mem, verdict, now=_NOW)
+        self.assertIsNone(none_seq)
+        self.assertEqual(getattr(budget_router, proposal.policy_name), new_value)
+        prev_rows = list(self.mem.proposals())
+        # Now append the 20th row to close the window.
+        self.mem.append_certificate({"kind": "test-cert", "i": 19}, backend=None, recorded_at=_NOW + 19)
+        # Trigger rollback evaluation; for this test, we force a miss by having chosen
+        # a policy that can change tiering compared to baseline in DEFAULT_SCENARIOS.
+        seq = maybe_rollback_after_land(self.mem, verdict, now=_NOW)
+        self.assertIsInstance(seq, int)
+        # The live constant must be restored to the pre-land value.
+        self.assertEqual(getattr(budget_router, proposal.policy_name), original)
+        # A rejected verdict is appended to the proposals ledger.
+        rows = list(self.mem.proposals())
+        self.assertGreater(len(rows), len(prev_rows))
+        self.assertFalse(rows[-1]["accepted"])
+        # Must not leave the proposed value live.
+        self.assertNotEqual(getattr(budget_router, proposal.policy_name), new_value)
+
+    def test_rollback_window_open_no_action(self):
+        from limen.router import budget_router
+        original = budget_router.CRITICALITY_SPREAD_THRESHOLD
+        new_value = 50.0
+        proposal = Proposal(
+            id="window-open", title="x", what_changes="x", what_it_unlocks="x",
+            what_it_does_not_unlock="x", policy_name="CRITICALITY_SPREAD_THRESHOLD",
+            proposed_value=new_value,
+        )
+        verdict = evaluate_proposal(proposal, self.mem, now=_NOW)
+        # Simulate land
+        setattr(budget_router, proposal.policy_name, new_value)
+        before_rows = list(self.mem.proposals())
+        # Append fewer than 20 rows
+        for i in range(10):
+            self.mem.append_certificate({"kind": "test-cert", "case": "open", "i": i}, backend=None, recorded_at=_NOW + i)
+        seq = maybe_rollback_after_land(self.mem, verdict, now=_NOW)
+        self.assertIsNone(seq)
+        # No restore yet
+        self.assertEqual(getattr(budget_router, proposal.policy_name), new_value)
+        # No new proposal row
+        after_rows = list(self.mem.proposals())
+        self.assertEqual(len(after_rows), len(before_rows))
 
 
 class BaselineSnapshotTests(unittest.TestCase):
