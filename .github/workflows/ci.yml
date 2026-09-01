@@ -56,7 +56,7 @@ jobs:
       - name: Evaluate every pending proposal
         run: |
           shopt -s nullglob
-          claims=(policy_proposals/pending/*.json)
+          claims=(policy_proposals/pending/*.claim.json)
           if [ ${#claims[@]} -eq 0 ]; then
             echo "no pending routing-policy proposals"
             exit 0
