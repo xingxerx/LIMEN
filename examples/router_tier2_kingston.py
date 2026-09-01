@@ -89,6 +89,12 @@ def main() -> int:
         qubo,
         fidelity_target=0.9,  # -> distance 3
         credit_budget=SHOTS * 0.002,  # kingston cost estimate -> 1000 shots
+        # This script exists to validate the Tier-2 path specifically, so
+        # pin the tier. (The accepted routing policy
+        # 2026-07-24-raise-criticality-threshold raised the criticality
+        # spread Tier1/Tier2 cutoff to 8.0; a 4-leaf star's spread of 2.5
+        # no longer auto-selects HW_CERTIFIED on its own.)
+        force_tier=Tier.HW_CERTIFIED,
     )
     # Pin the fleet to kingston (plus the sims) so the router can't pick a
     # sibling 156q device on the name tiebreak. Fold in run history and

@@ -206,13 +206,21 @@ def build_proposal_report(verdict: Any) -> str:
         f"physical-error exposure: {verdict.proposed.total_physical_error_exposure:.4g}"
     )
     lines.append("")
-    lines.append("| scenario | baseline tier/backend | proposed tier/backend | changed |")
-    lines.append("|---|---|---|---|")
+    lines.append(
+        "| scenario | fidelity_target | baseline tier/backend | proposed tier/backend | "
+        "baseline cost | proposed cost | meets? |"
+    )
+    lines.append("|---|---:|---|---|---:|---:|---|")
     for base_o, new_o in zip(verdict.baseline.outcomes, verdict.proposed.outcomes):
-        changed = "yes" if (base_o.tier, base_o.backend) != (new_o.tier, new_o.backend) else "no"
+        changed = (base_o.tier, base_o.backend) != (new_o.tier, new_o.backend)
+        was_certified = int(base_o.tier) == 2
+        now_certified = int(new_o.tier) == 2
+        meets = "yes" if (not was_certified or now_certified) else "no"
         lines.append(
-            f"| {base_o.scenario_name} | T{base_o.tier}/{base_o.backend} "
-            f"| T{new_o.tier}/{new_o.backend} | {changed} |"
+            f"| {base_o.scenario_name} | {getattr(base_o, 'fidelity_target', None)!s} "
+            f"| T{base_o.tier}/{base_o.backend} | T{new_o.tier}/{new_o.backend} "
+            f"| {base_o.estimated_cost:.4g} | {new_o.estimated_cost:.4g} "
+            f"| {meets} |"
         )
     lines.append("")
 

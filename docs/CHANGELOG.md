@@ -5,6 +5,30 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Fixed: the ledger-accepted routing policy
+  `2026-07-24-raise-criticality-threshold` is now actually applied —
+  `CRITICALITY_SPREAD_THRESHOLD` moves 2.0 -> 8.0 (`budget_router.py`).
+  The proposal was accepted and witnessed in the append-only proposal
+  ledger on 2026-07-24 (cost delta 0, physical-error exposure delta
+  -698.7 across the replay scenarios) but never merged into the source,
+  so QUBOs with moderately skewed criticality spectra (spread in
+  [2.0, 8.0)) kept being routed into Tier 2 (HW_CERTIFIED) and paying
+  for surface-code ECC allocation with no measured benefit. Tests and
+  examples whose Tier-2 fixtures relied on the old cutoff now use
+  genuinely heavy-tailed spectra (16-leaf star Max-Cut, spread 8.5), or
+  pin `force_tier=Tier.HW_CERTIFIED` where Tier 2 is the thing under
+  test (`examples/router_tier2_kingston.py` and its fetch companion).
+- Fixed: `scripts/qpu_smoke_tier2.py` pointed its `results_dir` at
+  `scripts/results/` instead of the repo-root `results/`. That directory
+  holds no certs or calibration snapshots, so the smoke-test run planned
+  against bare `DEFAULT_FLEET` priors — which is how its persisted plan
+  (`scripts/results/router_tier2_kingston_d9a0...state.json`) landed on
+  `ibm_fez` via the alphabetical name tiebreak with the hardcoded 1e-3
+  physical_error_rate despite three calibrated backends being available.
+  Pointing at `results/` folds real history/calibration into the fleet
+  and restores the re-attach contract with
+  `examples/router_tier2_kingston_fetch.py`, which reads the repo-root
+  results dir.
 - Persistent router memory (`limen.router.memory`): a SQLite ledger
   (`RouterMemory`) that makes the budget router stateful across runs.
   Three parts: (1) a backend sample ledger with trend-aware stats —

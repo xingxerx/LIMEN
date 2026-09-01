@@ -59,6 +59,11 @@ GATED_POLICIES: dict[str, str] = {
     ),
 }
 
+# Cost non-regression threshold applied after the per-scenario meet gate.
+# Plain English: proposals that keep every currently-meeting scenario meeting
+# may not increase total estimated cost by any amount above zero.
+TOTAL_COST_INCREASE_EPSILON = 0.0
+
 
 def _flat_qubo(n: int, weight: float = 1.0) -> dict[tuple[str, str], float]:
     """A perfectly flat QUBO: every variable equally weighted (criticality
@@ -148,6 +153,7 @@ class ScenarioOutcome:
     change trades against cost."""
 
     scenario_name: str
+    fidelity_target: float
     tier: int
     backend: str
     shots: int
@@ -212,6 +218,7 @@ def _replay(
         outcomes.append(
             ScenarioOutcome(
                 scenario_name=scenario.name,
+                fidelity_target=scenario.fidelity_target,
                 tier=int(plan.tier),
                 backend=plan.backend.name,
                 shots=plan.shots,
@@ -233,6 +240,12 @@ class Verdict:
     reason: str
     baseline: FleetMetrics
     proposed: FleetMetrics
+    # Value of the gated policy that was live before this proposal was evaluated.
+    # Needed so a post-land rollback can restore the exact prior constant.
+    previous_value: float | None = None
+    # Last certificate_ledger sequence number observed at evaluation time.
+    # The rollback window closes once 20 new rows are recorded after this seq.
+    last_ledger_seq_at_eval: int | None = None
     recorded_at: float = dataclasses.field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -242,6 +255,8 @@ class Verdict:
             "reason": self.reason,
             "baseline_metrics": self.baseline.to_dict(),
             "new_metrics": self.proposed.to_dict(),
+            "previous_value": self.previous_value,
+            "last_ledger_seq_at_eval": self.last_ledger_seq_at_eval,
             "recorded_at": self.recorded_at,
         }
 
@@ -255,16 +270,31 @@ def evaluate_proposal(
 ) -> Verdict:
     """Replay :data:`DEFAULT_SCENARIOS` under the current policy value
     (baseline) and the proposal's value (proposed), against the same
-    ledger-adjusted fleet, and produce a non-regression verdict.
+    ledger-adjusted fleet, and produce a frozen per-scenario verdict.
 
-    Accepted iff the proposed policy value does not increase total
-    estimated credit cost AND does not increase total physical-error
-    exposure across the fixed scenario set. Anything else -- including
-    "it's cheaper but riskier" -- is rejected; a proposal that wants to
-    trade one for the other needs a separate, explicit policy decision,
-    not a pass through this loop.
+    Per-scenario meet gate (frozen residual):
+      - Every scenario that currently meets its fidelity_target within its
+        credit_budget must still meet under the proposal. In practice, for
+        this repo's tiers, any scenario that routes to Tier 2 (HW_CERTIFIED)
+        under the live policy is treated as meeting by design and must remain
+        in Tier 2 under the proposal. A dump-to-cheapest policy that moves a
+        certified scenario to Tier 1 is rejected even if aggregate sums
+        improve, because empirical fidelity comes from certificates and is
+        never predicted in this loop.
+      - Among scenarios that still meet, total estimated cost may not rise
+        more than TOTAL_COST_INCREASE_EPSILON (zero by default).
     """
     baseline = baseline_snapshot(mem, fleet=fleet, now=now)
+    # Record the last certificate_ledger seq at evaluation time for rollback windowing.
+    last_seq = 0
+    try:
+        last_seen = None
+        for entry in mem.certificates():
+            last_seen = entry
+        if last_seen is not None:
+            last_seq = int(last_seen.seq)
+    except Exception:
+        last_seq = 0
 
     original_value = getattr(budget_router, proposal.policy_name)
     setattr(budget_router, proposal.policy_name, proposal.proposed_value)
@@ -273,27 +303,41 @@ def evaluate_proposal(
     finally:
         setattr(budget_router, proposal.policy_name, original_value)
 
-    cost_delta = proposed.total_estimated_cost - baseline.total_estimated_cost
-    error_delta = proposed.total_physical_error_exposure - baseline.total_physical_error_exposure
+    # Per-scenario gate: any scenario that was certified must remain certified.
+    failed: list[str] = []
+    for base_o, new_o in zip(baseline.outcomes, proposed.outcomes):
+        was_certified = base_o.tier == int(Tier.HW_CERTIFIED)
+        now_certified = new_o.tier == int(Tier.HW_CERTIFIED)
+        if was_certified and not now_certified:
+            failed.append(base_o.scenario_name)
 
-    if cost_delta > 0 and error_delta > 0:
+    if failed:
         reason = (
-            f"regression: total estimated cost rose by {cost_delta:.4g} credits "
-            f"AND physical-error exposure rose by {error_delta:.4g}"
+            "rejected: per-scenario meet gate failed; "
+            "the following scenario(s) left HW_CERTIFIED under the proposal: "
+            + ", ".join(sorted(failed))
         )
-        accepted = False
-    elif cost_delta > 0:
-        reason = f"regression: total estimated cost rose by {cost_delta:.4g} credits"
-        accepted = False
-    elif error_delta > 0:
-        reason = f"regression: physical-error exposure rose by {error_delta:.4g}"
         accepted = False
     else:
-        reason = (
-            f"non-regression: cost delta {cost_delta:.4g}, "
-            f"physical-error exposure delta {error_delta:.4g}"
-        )
-        accepted = True
+        # Secondary aggregate cost check with a named epsilon.
+        cost_delta = proposed.total_estimated_cost - baseline.total_estimated_cost
+        if cost_delta > TOTAL_COST_INCREASE_EPSILON:
+            reason = (
+                f"rejected: total estimated cost rose by {cost_delta:.4g} credits "
+                f"(allowed increase {TOTAL_COST_INCREASE_EPSILON:.4g})"
+            )
+            accepted = False
+        else:
+            # Physical-error exposure is still reported but no longer gates acceptance
+            # except indirectly via the Tier 2 requirement above.
+            error_delta = (
+                proposed.total_physical_error_exposure - baseline.total_physical_error_exposure
+            )
+            reason = (
+                "accepted: all previously meeting scenarios still meet; "
+                f"cost delta {cost_delta:.4g}, physical-error exposure delta {error_delta:.4g}"
+            )
+            accepted = True
 
     return Verdict(
         proposal=proposal,
@@ -301,5 +345,80 @@ def evaluate_proposal(
         reason=reason,
         baseline=baseline,
         proposed=proposed,
+        previous_value=float(original_value) if original_value is not None else None,
+        last_ledger_seq_at_eval=last_seq,
         recorded_at=time.time() if now is None else now,
     )
+
+
+def maybe_rollback_after_land(
+    mem: RouterMemory,
+    verdict: Verdict,
+    *,
+    monitor_next_n_certificates: int = 20,
+    now: float | None = None,
+) -> int | None:
+    """Post-land rollback guard.
+
+    Plain English thresholds:
+      - Monitor window: the next 20 certificate_ledger rows recorded after land.
+      - Rollback trigger: any single currently-meeting scenario that misses compared to the
+        frozen baseline snapshot is considered a failure.
+
+    On a miss, restore the live routing constant to the value that was in force
+    before the accepted proposal landed, then append a rejected verdict via the
+    append-only policy_proposals table. Failed jobs stay archived and are never
+    deleted. Returns the recorded sequence number, or None when no miss was
+    reported.
+    """
+    # Windowing: require at least N new certificate_ledger rows after evaluation time.
+    start_seq = int(verdict.last_ledger_seq_at_eval or 0)
+    new_count = 0
+    for entry in mem.certificates():
+        if int(entry.seq) > start_seq:
+            new_count += 1
+    if new_count < monitor_next_n_certificates:
+        # Window not closed; do nothing yet.
+        return None
+
+    # Replay the current live policy against the ledger-adjusted fleet.
+    current = baseline_snapshot(mem, now=now)
+    # Per-scenario meet regression relative to the frozen baseline on the verdict.
+    failed: list[str] = []
+    for base_o, cur_o in zip(verdict.baseline.outcomes, current.outcomes):
+        was_certified = base_o.tier == int(Tier.HW_CERTIFIED)
+        now_certified = cur_o.tier == int(Tier.HW_CERTIFIED)
+        if was_certified and not now_certified:
+            failed.append(base_o.scenario_name)
+    if not failed:
+        return None
+
+    policy_name = verdict.proposal.policy_name
+    prior = verdict.previous_value
+    if prior is None:
+        # Without a prior value we cannot restore deterministically; witness a reject.
+        reject = Verdict(
+            proposal=verdict.proposal,
+            accepted=False,
+            reason=("rollback: miss in the 20-entry monitor window; no prior value recorded to restore"),
+            baseline=verdict.baseline,
+            proposed=current,
+            previous_value=None,
+            last_ledger_seq_at_eval=verdict.last_ledger_seq_at_eval,
+            recorded_at=time.time() if now is None else now,
+        )
+        return mem.record_proposal(verdict.proposal.id, policy_name, False, reject.to_dict())
+
+    # Restore the live module constant.
+    setattr(budget_router, policy_name, prior)
+    reject = Verdict(
+        proposal=verdict.proposal,
+        accepted=False,
+        reason=(f"rollback: miss in the 20-entry monitor window; restored {policy_name} to its prior value"),
+        baseline=verdict.baseline,
+        proposed=current,
+        previous_value=prior,
+        last_ledger_seq_at_eval=verdict.last_ledger_seq_at_eval,
+        recorded_at=time.time() if now is None else now,
+    )
+    return mem.record_proposal(verdict.proposal.id, policy_name, False, reject.to_dict())

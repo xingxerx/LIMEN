@@ -59,7 +59,13 @@ MIN_HW_FIDELITY_TARGET = 0.5
 # heavy-tailed: a few variables dominate error sensitivity and Tier 2's
 # targeted surface-code patches pay off. A perfectly flat spectrum has
 # spread exactly 1.0.
-CRITICALITY_SPREAD_THRESHOLD = 2.0
+#
+# Value 8.0 per ledger-accepted routing-policy proposal
+# 2026-07-24-raise-criticality-threshold (policy_proposals/accepted/,
+# verdict witnessed in the append-only proposal ledger: cost delta 0,
+# physical-error exposure delta -698.7). Spectra in [2.0, 8.0) are
+# moderately skewed, not heavy-tailed, and belong in Tier 1.
+CRITICALITY_SPREAD_THRESHOLD = 8.0
 
 # Fidelity target at or above which the surface code steps up from
 # distance 3 to distance 5.

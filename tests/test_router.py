@@ -4,6 +4,7 @@ import unittest
 
 from limen.pipeline import EndToEndCertificate, run_pipeline
 from limen.router import DEFAULT_FLEET, BackendProfile, RouteRequest, Tier, route
+from limen.router.budget_router import CRITICALITY_SPREAD_THRESHOLD
 
 
 def cycle_maxcut(n: int) -> dict[tuple[str, str], float]:
@@ -56,19 +57,26 @@ class TestRoutingDecisions(unittest.TestCase):
         self.assertFalse(plan.patch_assignments)
 
     def test_heavy_tailed_spectrum_routes_to_tier2(self):
-        plan = route(RouteRequest(star_maxcut(5), fidelity_target=0.9, credit_budget=10.0))
-        self.assertGreaterEqual(plan.criticality_spread, 2.0)
+        # star(n)'s spread is (n+1)/2; 16 leaves -> 8.5, above the 8.0
+        # cutoff set by accepted policy 2026-07-24-raise-criticality-
+        # threshold. Smaller stars are only moderately skewed now and
+        # belong in Tier 1.
+        plan = route(RouteRequest(star_maxcut(16), fidelity_target=0.9, credit_budget=10.0))
+        self.assertGreaterEqual(plan.criticality_spread, CRITICALITY_SPREAD_THRESHOLD)
         self.assertEqual(plan.tier, Tier.HW_CERTIFIED)
         self.assertTrue(plan.backend.validated)
         self.assertEqual(plan.ecc_distance, 3)
         self.assertTrue(plan.patch_assignments)
         # The hub is the most critical variable and must be patched first.
-        order = sorted({v for pair in star_maxcut(5) for v in pair})
+        order = sorted({v for pair in star_maxcut(16) for v in pair})
         self.assertEqual(order[plan.patch_assignments[0].logical_var], "hub")
 
     def test_distance_scales_with_fidelity_target(self):
+        # star(16) routes to Tier 2 on its own (spread 8.5 >= the 8.0
+        # accepted-policy cutoff); a d=5 surface code is selected at
+        # fidelity targets >= 0.99.
         req = RouteRequest(
-            star_maxcut(5), fidelity_target=0.99, credit_budget=10.0
+            star_maxcut(16), fidelity_target=0.99, credit_budget=10.0
         )
         self.assertEqual(route(req).ecc_distance, 5)
 
