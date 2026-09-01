@@ -25,7 +25,13 @@ import time
 from limen.pipeline import run_route_request
 from limen.router import RouteRequest, Tier
 
-RESULTS_DIR = pathlib.Path(__file__).resolve().parent / "results"
+# Repo-root results/, not scripts/results/: this directory is what
+# informed_fleet() scans for run history and calibration snapshots (with
+# the old scripts/results path the router planned against bare
+# DEFAULT_FLEET priors — hardcoded 1e-3 physical_error_rate and the
+# alphabetical name tiebreak), and where
+# examples/router_tier2_kingston_fetch.py looks to re-attach by job id.
+RESULTS_DIR = pathlib.Path(__file__).resolve().parent.parent / "results"
 
 # 0. Preflight: credentials present?
 for var in ("IBM_QUANTUM_TOKEN", "IBM_QUANTUM_CRN"):

@@ -149,13 +149,23 @@ class TestRouteReport(unittest.TestCase):
         # Tier 0 (the cycle_maxcut/no-budget fixture used elsewhere in
         # this file) never populates physical_error_rate or
         # aggregate_logical_error_rate, so a ledger comparison would
-        # trivially show zero samples forever. star_maxcut at a real
-        # budget with offline=True forces Tier 2 planning (so the
-        # certificate carries real error-rate numbers) while still
-        # executing on the local simulator (so this stays a fast,
-        # credential-free offline test).
+        # trivially show zero samples forever. star_maxcut(4) with
+        # force_tier=Tier.HW_CERTIFIED plans a real Tier-2 run — so the
+        # certificate carries real error-rate numbers and the ledger gets
+        # error samples to compare — while offline=True still executes on
+        # the local simulator (so this stays a fast, credential-free
+        # offline test). The tier is pinned rather than left to the
+        # criticality signal because a 4-leaf star's spread (2.5) sits
+        # below the accepted-policy cutoff of 8.0 (see
+        # budget_router.CRITICALITY_SPREAD_THRESHOLD); growing the star
+        # big enough to clear it would make the offline ECC execution
+        # needlessly slow.
         request = RouteRequest(
-            star_maxcut(4), fidelity_target=0.9, credit_budget=10.0, offline=True
+            star_maxcut(4),
+            fidelity_target=0.9,
+            credit_budget=10.0,
+            force_tier=Tier.HW_CERTIFIED,
+            offline=True,
         )
         with tempfile.TemporaryDirectory() as tmp:
             db_path = pathlib.Path(tmp) / "router_memory.sqlite3"

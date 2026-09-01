@@ -100,7 +100,16 @@ def _rebuild_plan() -> tuple[dict, RoutePlan]:
     tracking existed).
     """
     qubo = star_maxcut(4)
-    request = RouteRequest(qubo, fidelity_target=0.9, credit_budget=1000 * 0.002)
+    # Mirror examples/router_tier2_kingston.py: that script pins Tier 2
+    # (see its request comment re: accepted proposal
+    # 2026-07-24-raise-criticality-threshold), so the rebuild must too or
+    # route() would no longer reproduce the persisted plan.
+    request = RouteRequest(
+        qubo,
+        fidelity_target=0.9,
+        credit_budget=1000 * 0.002,
+        force_tier=Tier.HW_CERTIFIED,
+    )
     fleet = tuple(
         p
         for p in informed_fleet(RESULTS_DIR, DEFAULT_FLEET)
