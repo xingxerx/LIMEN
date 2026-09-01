@@ -179,7 +179,7 @@ class ProposalReplayTests(unittest.TestCase):
     def test_rollback_restores_previous_value_and_records_rejected_verdict(self):
         from limen.router import budget_router
         original = budget_router.CRITICALITY_SPREAD_THRESHOLD
-        new_value = 2.0
+        new_value = 50.0
         proposal = Proposal(
             id="land-and-rollback", title="x", what_changes="x", what_it_unlocks="x",
             what_it_does_not_unlock="x", policy_name="CRITICALITY_SPREAD_THRESHOLD",
@@ -188,17 +188,52 @@ class ProposalReplayTests(unittest.TestCase):
         verdict = evaluate_proposal(proposal, self.mem, now=_NOW)
         # Simulate land: set the live constant to the proposed value.
         setattr(budget_router, proposal.policy_name, new_value)
-        # Trigger rollback on a miss in the monitor window.
-        seq = maybe_rollback_after_land(self.mem, verdict, miss_detected=True, now=_NOW)
+        # Append fewer than N=20 certificate_ledger rows: window not closed yet.
+        for i in range(19):
+            self.mem.append_certificate({"kind": "test-cert", "i": i}, backend=None, recorded_at=_NOW + i)
+        # No action taken; returns None; policy unchanged.
+        none_seq = maybe_rollback_after_land(self.mem, verdict, now=_NOW)
+        self.assertIsNone(none_seq)
+        self.assertEqual(getattr(budget_router, proposal.policy_name), new_value)
+        prev_rows = list(self.mem.proposals())
+        # Now append the 20th row to close the window.
+        self.mem.append_certificate({"kind": "test-cert", "i": 19}, backend=None, recorded_at=_NOW + 19)
+        # Trigger rollback evaluation; for this test, we force a miss by having chosen
+        # a policy that can change tiering compared to baseline in DEFAULT_SCENARIOS.
+        seq = maybe_rollback_after_land(self.mem, verdict, now=_NOW)
         self.assertIsInstance(seq, int)
         # The live constant must be restored to the pre-land value.
         self.assertEqual(getattr(budget_router, proposal.policy_name), original)
         # A rejected verdict is appended to the proposals ledger.
         rows = list(self.mem.proposals())
-        self.assertGreaterEqual(len(rows), 1)
+        self.assertGreater(len(rows), len(prev_rows))
         self.assertFalse(rows[-1]["accepted"])
         # Must not leave the proposed value live.
         self.assertNotEqual(getattr(budget_router, proposal.policy_name), new_value)
+
+    def test_rollback_window_open_no_action(self):
+        from limen.router import budget_router
+        original = budget_router.CRITICALITY_SPREAD_THRESHOLD
+        new_value = 50.0
+        proposal = Proposal(
+            id="window-open", title="x", what_changes="x", what_it_unlocks="x",
+            what_it_does_not_unlock="x", policy_name="CRITICALITY_SPREAD_THRESHOLD",
+            proposed_value=new_value,
+        )
+        verdict = evaluate_proposal(proposal, self.mem, now=_NOW)
+        # Simulate land
+        setattr(budget_router, proposal.policy_name, new_value)
+        before_rows = list(self.mem.proposals())
+        # Append fewer than 20 rows
+        for i in range(10):
+            self.mem.append_certificate({"kind": "test-cert", "case": "open", "i": i}, backend=None, recorded_at=_NOW + i)
+        seq = maybe_rollback_after_land(self.mem, verdict, now=_NOW)
+        self.assertIsNone(seq)
+        # No restore yet
+        self.assertEqual(getattr(budget_router, proposal.policy_name), new_value)
+        # No new proposal row
+        after_rows = list(self.mem.proposals())
+        self.assertEqual(len(after_rows), len(before_rows))
 
 
 class BaselineSnapshotTests(unittest.TestCase):

@@ -243,6 +243,9 @@ class Verdict:
     # Value of the gated policy that was live before this proposal was evaluated.
     # Needed so a post-land rollback can restore the exact prior constant.
     previous_value: float | None = None
+    # Last certificate_ledger sequence number observed at evaluation time.
+    # The rollback window closes once 20 new rows are recorded after this seq.
+    last_ledger_seq_at_eval: int | None = None
     recorded_at: float = dataclasses.field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -253,6 +256,7 @@ class Verdict:
             "baseline_metrics": self.baseline.to_dict(),
             "new_metrics": self.proposed.to_dict(),
             "previous_value": self.previous_value,
+            "last_ledger_seq_at_eval": self.last_ledger_seq_at_eval,
             "recorded_at": self.recorded_at,
         }
 
@@ -281,6 +285,16 @@ def evaluate_proposal(
         more than TOTAL_COST_INCREASE_EPSILON (zero by default).
     """
     baseline = baseline_snapshot(mem, fleet=fleet, now=now)
+    # Record the last certificate_ledger seq at evaluation time for rollback windowing.
+    last_seq = 0
+    try:
+        last_seen = None
+        for entry in mem.certificates():
+            last_seen = entry
+        if last_seen is not None:
+            last_seq = int(last_seen.seq)
+    except Exception:
+        last_seq = 0
 
     original_value = getattr(budget_router, proposal.policy_name)
     setattr(budget_router, proposal.policy_name, proposal.proposed_value)
@@ -332,6 +346,7 @@ def evaluate_proposal(
         baseline=baseline,
         proposed=proposed,
         previous_value=float(original_value) if original_value is not None else None,
+        last_ledger_seq_at_eval=last_seq,
         recorded_at=time.time() if now is None else now,
     )
 
@@ -340,7 +355,6 @@ def maybe_rollback_after_land(
     mem: RouterMemory,
     verdict: Verdict,
     *,
-    miss_detected: bool,
     monitor_next_n_certificates: int = 20,
     now: float | None = None,
 ) -> int | None:
@@ -357,8 +371,28 @@ def maybe_rollback_after_land(
     deleted. Returns the recorded sequence number, or None when no miss was
     reported.
     """
-    if not miss_detected:
+    # Windowing: require at least N new certificate_ledger rows after evaluation time.
+    start_seq = int(verdict.last_ledger_seq_at_eval or 0)
+    new_count = 0
+    for entry in mem.certificates():
+        if int(entry.seq) > start_seq:
+            new_count += 1
+    if new_count < monitor_next_n_certificates:
+        # Window not closed; do nothing yet.
         return None
+
+    # Replay the current live policy against the ledger-adjusted fleet.
+    current = baseline_snapshot(mem, now=now)
+    # Per-scenario meet regression relative to the frozen baseline on the verdict.
+    failed: list[str] = []
+    for base_o, cur_o in zip(verdict.baseline.outcomes, current.outcomes):
+        was_certified = base_o.tier == int(Tier.HW_CERTIFIED)
+        now_certified = cur_o.tier == int(Tier.HW_CERTIFIED)
+        if was_certified and not now_certified:
+            failed.append(base_o.scenario_name)
+    if not failed:
+        return None
+
     policy_name = verdict.proposal.policy_name
     prior = verdict.previous_value
     if prior is None:
@@ -366,13 +400,11 @@ def maybe_rollback_after_land(
         reject = Verdict(
             proposal=verdict.proposal,
             accepted=False,
-            reason=(
-                "rollback: per-scenario meet-gate miss detected in the 20-entry monitor window; "
-                "no prior value recorded to restore"
-            ),
+            reason=("rollback: miss in the 20-entry monitor window; no prior value recorded to restore"),
             baseline=verdict.baseline,
-            proposed=verdict.proposed,
+            proposed=current,
             previous_value=None,
+            last_ledger_seq_at_eval=verdict.last_ledger_seq_at_eval,
             recorded_at=time.time() if now is None else now,
         )
         return mem.record_proposal(verdict.proposal.id, policy_name, False, reject.to_dict())
@@ -382,13 +414,11 @@ def maybe_rollback_after_land(
     reject = Verdict(
         proposal=verdict.proposal,
         accepted=False,
-        reason=(
-            "rollback: per-scenario meet-gate miss detected in the 20-entry monitor window; "
-            f"restored {policy_name} to its prior value"
-        ),
+        reason=(f"rollback: miss in the 20-entry monitor window; restored {policy_name} to its prior value"),
         baseline=verdict.baseline,
-        proposed=verdict.proposed,
+        proposed=current,
         previous_value=prior,
+        last_ledger_seq_at_eval=verdict.last_ledger_seq_at_eval,
         recorded_at=time.time() if now is None else now,
     )
     return mem.record_proposal(verdict.proposal.id, policy_name, False, reject.to_dict())
