@@ -128,9 +128,9 @@ class TestRouterTier2Shape(unittest.TestCase):
             )
             qubo: dict[tuple[str, str], float] = {}
             hub = "hub"
-            # 16 leaves -> criticality spread 8.5, above the accepted-policy
-            # Tier1/Tier2 cutoff of 8.0, so this routes to Tier 2 on its own.
-            for i in range(16):
+            # 20 leaves -> criticality spread 10.5, above the accepted-policy
+            # Tier1/Tier2 cutoff of 10.25, so this routes to Tier 2 on its own.
+            for i in range(20):
                 leaf = f"leaf{i}"
                 qubo[(hub, leaf)] = 2.0
                 qubo[(hub, hub)] = qubo.get((hub, hub), 0.0) - 1.0
