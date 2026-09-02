@@ -55,17 +55,17 @@ from limen.router.problem_profile import ProblemProfile, compute_problem_profile
 # free exact simulator answers it; no reason to spend hardware credits.
 MIN_HW_FIDELITY_TARGET = 0.5
 
-# max/mean criticality at or above which the spectrum counts as
-# heavy-tailed: a few variables dominate error sensitivity and Tier 2's
+# max/mean criticality at or above which the spectrum is considered
+# heavy-tailed (a few variables dominate error sensitivity) and Tier 2's
 # targeted surface-code patches pay off. A perfectly flat spectrum has
 # spread exactly 1.0.
 #
-# Value 8.0 per ledger-accepted routing-policy proposal
-# 2026-07-24-raise-criticality-threshold (policy_proposals/accepted/,
-# verdict witnessed in the append-only proposal ledger: cost delta 0,
-# physical-error exposure delta -698.7). Spectra in [2.0, 8.0) are
-# moderately skewed, not heavy-tailed, and belong in Tier 1.
-CRITICALITY_SPREAD_THRESHOLD = 8.0
+# Live threshold: 10.25 (ten point two five), per accepted routing-policy
+# proposal 2026-09-01-raise-criticality-threshold-10p25 (moved to
+# policy_proposals/accepted/; verdict recorded in the append-only ledger:
+# cost delta 0, all DEFAULT_SCENARIOS rows still met). Spectra in [2.0, 10.25)
+# are moderately skewed, not heavy-tailed, and belong in Tier 1.
+CRITICALITY_SPREAD_THRESHOLD = 10.25
 
 # Fidelity target at or above which the surface code steps up from
 # distance 3 to distance 5.

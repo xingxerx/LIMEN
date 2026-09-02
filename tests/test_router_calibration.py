@@ -89,7 +89,7 @@ class TestRoutePrefersCalibration(unittest.TestCase):
 
     def test_uncalibrated_fleet_uses_request_default(self):
         plan = route(
-            RouteRequest(self._star_qubo(16), fidelity_target=0.9, credit_budget=10.0)
+            RouteRequest(self._star_qubo(20), fidelity_target=0.9, credit_budget=10.0)
         )
         self.assertEqual(plan.tier, Tier.HW_CERTIFIED)
         self.assertEqual(plan.pipeline_kwargs["physical_error_rate"], 1e-3)
@@ -103,7 +103,7 @@ class TestRoutePrefersCalibration(unittest.TestCase):
             if p.kind == "sim" or p.name == "ibm_kingston"
         )
         plan = route(
-            RouteRequest(self._star_qubo(16), fidelity_target=0.9, credit_budget=10.0),
+            RouteRequest(self._star_qubo(20), fidelity_target=0.9, credit_budget=10.0),
             fleet=fleet,
         )
         self.assertEqual(plan.tier, Tier.HW_CERTIFIED)

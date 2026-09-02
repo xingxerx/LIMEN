@@ -99,10 +99,10 @@ class TestRouteForwardsPrior(unittest.TestCase):
             if p.kind == "sim" or p.name == "ibm_kingston"
         )
         plan = route(
-            # star(16)'s spread is 8.5, above the accepted-policy cutoff of
-            # 8.0, so this routes to Tier 2 on its own (a 4-leaf star at
+            # star(20)'s spread is 10.5, above the accepted-policy cutoff of
+            # 10.25, so this routes to Tier 2 on its own (a 4-leaf star at
             # spread 2.5 no longer does).
-            RouteRequest(star_maxcut(16), fidelity_target=0.9, credit_budget=10.0),
+            RouteRequest(star_maxcut(20), fidelity_target=0.9, credit_budget=10.0),
             fleet=fleet,
         )
         self.assertEqual(plan.tier, Tier.HW_CERTIFIED)
@@ -112,7 +112,7 @@ class TestRouteForwardsPrior(unittest.TestCase):
 
     def test_no_history_no_kwarg(self):
         plan = route(
-            RouteRequest(star_maxcut(16), fidelity_target=0.9, credit_budget=10.0)
+            RouteRequest(star_maxcut(20), fidelity_target=0.9, credit_budget=10.0)
         )
         self.assertEqual(plan.tier, Tier.HW_CERTIFIED)
         self.assertNotIn("measured_logical_error", plan.pipeline_kwargs)
