@@ -1,0 +1,12 @@
+{
+  "backend": "ibm_fez",
+  "generated_at": "2026-09-02T03:44:33.801515+00:00",
+  "avg_two_qubit_gate_error": 0.03601771519498506,
+  "avg_readout_error": 0.020543807592147436,
+  "avg_two_qubit_gate_length": 6.863636363636364e-08,
+  "avg_t1": 0.0001435882707317246,
+  "avg_t2": 0.00010050715653835807,
+  "expected_two_qubit_depth": 1,
+  "decoherence_prob": 0.00047789392218167137,
+  "physical_error_rate": 0.019013138903104725
+}

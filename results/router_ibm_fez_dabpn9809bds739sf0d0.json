@@ -1,0 +1,59 @@
+{
+  "generated_at": "2026-09-02T03:45:15.182614+00:00",
+  "job_id": "dabpn9809bds739sf0d0",
+  "source": "limen.route + run_qiskit_qpu",
+  "fidelity_target": 0.9,
+  "credit_budget": 50.0,
+  "plan": {
+    "tier": "HW_STANDARD",
+    "backend": {
+      "name": "ibm_fez",
+      "kind": "ibm",
+      "max_qubits": 156,
+      "cost_per_shot": 0.002,
+      "validated": true,
+      "avg_queue_seconds": null,
+      "physical_error_rate": 0.019013138903104725
+    },
+    "shots": 25000,
+    "n_vars": 2,
+    "criticality_spread": 1.0,
+    "use_cutting": false,
+    "ecc_distance": null,
+    "notes": [
+      "criticality spread 1.000 (threshold 2.0) -> tier 1",
+      "backend ibm_fez (ibm, 156q, validated=True), 25000 shots",
+      "threshold 2.0 is what the installed limen-compiler 0.8.4 runner used; live main is 10.25. This file records the run as it happened."
+    ]
+  },
+  "calibration_rates": {
+    "ibm_kingston": 0.01787310088191117,
+    "ibm_fez": 0.019013138903104725,
+    "ibm_marrakesh": 0.027977503798603212
+  },
+  "best_assignment": {"q0": 0, "q1": 1},
+  "best_energy": -1.0,
+  "circuit_depth": 18,
+  "metadata": {
+    "algorithm": "qaoa",
+    "reps": 1,
+    "num_shots": 25000,
+    "backend": "ibm_fez",
+    "cost_scale": 1.0,
+    "params": [0.1, 0.1],
+    "counts": {"00": 6815, "10": 6280, "11": 6414, "01": 5491},
+    "ideal_distribution": {
+      "00": 0.2597192409044042,
+      "01": 0.24028075909559585,
+      "10": 0.24028075909559585,
+      "11": 0.2597192409044042
+    },
+    "job_id": "dabpn9809bds739sf0d0"
+  },
+  "measured_success_rate": 0.47084,
+  "ideal_success_rate": 0.4805615181911917,
+  "measured_success_deficit": 0.0097215181911917,
+  "optimal_energy": -1.0,
+  "optimal_count": 11771,
+  "shots": 25000
+}

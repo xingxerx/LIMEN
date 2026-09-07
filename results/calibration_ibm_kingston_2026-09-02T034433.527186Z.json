@@ -1,0 +1,12 @@
+{
+  "backend": "ibm_kingston",
+  "generated_at": "2026-09-02T03:44:33.527186+00:00",
+  "avg_two_qubit_gate_error": 0.033107113580889594,
+  "avg_readout_error": 0.020213591746794872,
+  "avg_two_qubit_gate_length": 6.843181818181818e-08,
+  "avg_t1": 0.00022914338729376047,
+  "avg_t2": 0.00016128445589799002,
+  "expected_two_qubit_depth": 1,
+  "decoherence_prob": 0.0002985973180490431,
+  "physical_error_rate": 0.01787310088191117
+}
