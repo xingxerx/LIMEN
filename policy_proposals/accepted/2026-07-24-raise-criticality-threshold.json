@@ -5,6 +5,7 @@
       {
         "backend": "ibm_marrakesh",
         "estimated_cost": 50.0,
+        "fidelity_target": 0.9,
         "physical_error_exposure": 0.0,
         "scenario_name": "flat_small",
         "shots": 25000,
@@ -13,6 +14,7 @@
       {
         "backend": "ibm_marrakesh",
         "estimated_cost": 200.0,
+        "fidelity_target": 0.95,
         "physical_error_exposure": 0.0,
         "scenario_name": "flat_large",
         "shots": 100000,
@@ -21,15 +23,17 @@
       {
         "backend": "ibm_marrakesh",
         "estimated_cost": 50.0,
-        "physical_error_exposure": 698.7317432669491,
+        "fidelity_target": 0.9,
+        "physical_error_exposure": 0.0,
         "scenario_name": "skewed_small",
         "shots": 25000,
-        "tier": 2
+        "tier": 1
       },
       {
         "backend": "ibm_marrakesh",
         "estimated_cost": 200.0,
-        "physical_error_exposure": 2794.9269730677966,
+        "fidelity_target": 0.97,
+        "physical_error_exposure": 2798.100259799113,
         "scenario_name": "skewed_large",
         "shots": 100000,
         "tier": 2
@@ -37,20 +41,23 @@
       {
         "backend": "ibm_marrakesh",
         "estimated_cost": 200.0,
-        "physical_error_exposure": 2794.9269730677966,
+        "fidelity_target": 0.995,
+        "physical_error_exposure": 2798.100259799113,
         "scenario_name": "skewed_high_fidelity",
         "shots": 100000,
         "tier": 2
       }
     ],
     "total_estimated_cost": 700.0,
-    "total_physical_error_exposure": 6288.585689402542
+    "total_physical_error_exposure": 5596.200519598226
   },
+  "last_ledger_seq_at_eval": 2,
   "new_metrics": {
     "scenarios": [
       {
         "backend": "ibm_marrakesh",
         "estimated_cost": 50.0,
+        "fidelity_target": 0.9,
         "physical_error_exposure": 0.0,
         "scenario_name": "flat_small",
         "shots": 25000,
@@ -59,6 +66,7 @@
       {
         "backend": "ibm_marrakesh",
         "estimated_cost": 200.0,
+        "fidelity_target": 0.95,
         "physical_error_exposure": 0.0,
         "scenario_name": "flat_large",
         "shots": 100000,
@@ -67,6 +75,7 @@
       {
         "backend": "ibm_marrakesh",
         "estimated_cost": 50.0,
+        "fidelity_target": 0.9,
         "physical_error_exposure": 0.0,
         "scenario_name": "skewed_small",
         "shots": 25000,
@@ -75,7 +84,8 @@
       {
         "backend": "ibm_marrakesh",
         "estimated_cost": 200.0,
-        "physical_error_exposure": 2794.9269730677966,
+        "fidelity_target": 0.97,
+        "physical_error_exposure": 2798.10025980048,
         "scenario_name": "skewed_large",
         "shots": 100000,
         "tier": 2
@@ -83,17 +93,19 @@
       {
         "backend": "ibm_marrakesh",
         "estimated_cost": 200.0,
-        "physical_error_exposure": 2794.9269730677966,
+        "fidelity_target": 0.995,
+        "physical_error_exposure": 2798.10025980048,
         "scenario_name": "skewed_high_fidelity",
         "shots": 100000,
         "tier": 2
       }
     ],
     "total_estimated_cost": 700.0,
-    "total_physical_error_exposure": 5589.853946135593
+    "total_physical_error_exposure": 5596.20051960096
   },
+  "previous_value": 10.25,
   "proposal": {
-    "created_at": 1784873942.9299011,
+    "created_at": 1788921180.472495,
     "id": "2026-07-24-raise-criticality-threshold",
     "policy_name": "CRITICALITY_SPREAD_THRESHOLD",
     "proposed_value": 8.0,
@@ -102,6 +114,6 @@
     "what_it_does_not_unlock": "Does not change backend selection, shot counts, or any other routing constant. Does not touch problems with spread below 2.0 (already Tier 1) or above 8.0 (still routed to Tier 2). Does not widen the set of gated policies beyond CRITICALITY_SPREAD_THRESHOLD.",
     "what_it_unlocks": "Problems with a moderately skewed criticality spectrum (roughly 2.0-8.0) that do not need surface-code ECC protection stop paying the Tier 2 pipeline path (ECC distance selection, patch-budget allocation) for no measured benefit against the current ledger."
   },
-  "reason": "non-regression: cost delta 0, physical-error exposure delta -698.7",
-  "recorded_at": 1784873943.0201833
+  "reason": "accepted: all previously meeting scenarios still meet; cost delta 0, physical-error exposure delta 2.735e-09",
+  "recorded_at": 1788921180.5131047
 }

@@ -2,7 +2,7 @@
 
 - **Proposal id:** `2026-07-24-raise-criticality-threshold`
 - **Policy:** `CRITICALITY_SPREAD_THRESHOLD` -> 8.0
-- **Verdict:** ACCEPTED -- non-regression: cost delta 0, physical-error exposure delta -698.7
+- **Verdict:** ACCEPTED -- accepted: all previously meeting scenarios still meet; cost delta 0, physical-error exposure delta 2.735e-09
 
 ## What this changes
 - budget_router.CRITICALITY_SPREAD_THRESHOLD, the max/mean criticality spread at or above which route() selects Tier 2 (HW_CERTIFIED) over Tier 1 (HW_STANDARD), moves from 2.0 to 8.0.
@@ -14,13 +14,13 @@
 - Does not change backend selection, shot counts, or any other routing constant. Does not touch problems with spread below 2.0 (already Tier 1) or above 8.0 (still routed to Tier 2). Does not widen the set of gated policies beyond CRITICALITY_SPREAD_THRESHOLD.
 
 ## Ledger-backed replay
-- **Baseline** total estimated cost: 700 credits, physical-error exposure: 6289
-- **Proposed** total estimated cost: 700 credits, physical-error exposure: 5590
+- **Baseline** total estimated cost: 700 credits, physical-error exposure: 5596
+- **Proposed** total estimated cost: 700 credits, physical-error exposure: 5596
 
-| scenario | baseline tier/backend | proposed tier/backend | changed |
-|---|---|---|---|
-| flat_small | T1/ibm_marrakesh | T1/ibm_marrakesh | no |
-| flat_large | T1/ibm_marrakesh | T1/ibm_marrakesh | no |
-| skewed_small | T2/ibm_marrakesh | T1/ibm_marrakesh | yes |
-| skewed_large | T2/ibm_marrakesh | T2/ibm_marrakesh | no |
-| skewed_high_fidelity | T2/ibm_marrakesh | T2/ibm_marrakesh | no |
+| scenario | fidelity_target | baseline tier/backend | proposed tier/backend | baseline cost | proposed cost | meets? |
+|---|---:|---|---|---:|---:|---|
+| flat_small | 0.9 | T1/ibm_marrakesh | T1/ibm_marrakesh | 50 | 50 | yes |
+| flat_large | 0.95 | T1/ibm_marrakesh | T1/ibm_marrakesh | 200 | 200 | yes |
+| skewed_small | 0.9 | T1/ibm_marrakesh | T1/ibm_marrakesh | 50 | 50 | yes |
+| skewed_large | 0.97 | T2/ibm_marrakesh | T2/ibm_marrakesh | 200 | 200 | yes |
+| skewed_high_fidelity | 0.995 | T2/ibm_marrakesh | T2/ibm_marrakesh | 200 | 200 | yes |
