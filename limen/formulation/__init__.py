@@ -14,6 +14,10 @@ objective. Natural-language input is deliberately not in scope here — an
 NL layer would sit on top of this module, translating text into the same
 typed constraints, so its ambiguity never enters the certified pipeline
 below this layer.
+
+Discovery Loop P1 adds :class:`~limen.formulation.problem.Problem` as the
+typed container (id/class, variables, constraints, objective,
+known_optimum) that encoders fill before ``RouteRequest``.
 """
 
 from limen.formulation.compiler import ConstraintCompiler, expand_equality_penalty
@@ -27,6 +31,7 @@ from limen.formulation.constraints import (
     OneHot,
 )
 from limen.formulation.penalty import default_penalty_weight
+from limen.formulation.problem import Problem
 
 __all__ = [
     "ConstraintCompiler",
@@ -39,4 +44,5 @@ __all__ = [
     "AtMostK",
     "AtLeastK",
     "AllDifferent",
+    "Problem",
 ]
