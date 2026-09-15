@@ -516,15 +516,38 @@ def run_cut_route_request(
     )
 
 
+# Sentinel default for run_route_request.memory: auto-open
+# RouterMemory.in_results_dir(results_dir) when results_dir is set; skip
+# the ledger entirely when results_dir is None. Distinct from None
+# (explicit opt-out) and from True (explicit auto-place that still
+# requires results_dir).
+MEMORY_AUTO: Any = object()
+
+
 def _resolve_router_memory(memory: Any, results_dir: Any) -> Any:
-    """Normalize the four accepted *memory* shapes into ``None`` or a
+    """Normalize the accepted *memory* shapes into ``None`` or a
     :class:`~limen.router.RouterMemory`.
 
     Kept separate from :func:`run_route_request` so each shape is
     independently testable without going through the whole routing path.
+
+    Shapes:
+      - ``MEMORY_AUTO`` (the run_route_request default): open
+        ``RouterMemory.in_results_dir(results_dir)`` when *results_dir*
+        is set; otherwise return None (no ledger).
+      - ``None``: explicit opt-out -- no ledger opened or written.
+      - ``RouterMemory`` instance: used as-is.
+      - ``True``: same auto-place as MEMORY_AUTO, but raises if
+        *results_dir* is None (caller asked for auto-place without a
+        place to put it).
+      - path (str / Path): open or create a RouterMemory there.
     """
     from limen.router import RouterMemory
 
+    if memory is MEMORY_AUTO:
+        if results_dir is None:
+            return None
+        return RouterMemory.in_results_dir(results_dir)
     if memory is None or isinstance(memory, RouterMemory):
         return memory
     if memory is True:
@@ -622,7 +645,7 @@ def run_route_request(
     *,
     results_dir: Any = None,
     fleet: Any = None,
-    memory: Any = None,
+    memory: Any = MEMORY_AUTO,
     emit_report: bool = False,
     qpu_token: str | None = None,
     qpu_instance: str | None = None,
@@ -659,19 +682,21 @@ def run_route_request(
         memory: Persistent router memory (see limen.router.RouterMemory),
             folded into the informed fleet after history/calibration so
             its ledger estimates take priority where samples exist.
-            Accepts four shapes: None (default) leaves today's behavior
-            exactly unchanged — no ledger is opened or consulted; a
-            RouterMemory instance is used as-is; a path (str or Path) to
-            a SQLite file opens or creates a RouterMemory there; and True
-            auto-places router_memory.sqlite3 inside results_dir (which
-            must then not be None). When *fleet* is given, informed_fleet
-            is skipped so memory no longer influences the routing
-            decision, but the completed run's outcome is still recorded
-            into it -- pass memory=None explicitly to opt out entirely.
-            The True/path shapes open a fresh sqlite3 connection on
-            every call and close it before returning (~1ms overhead per
-            call, measured); callers making many run_route_request calls
-            in a loop should open one RouterMemory (or use it as a
+            Default is MEMORY_AUTO: when *results_dir* is set, open
+            ``RouterMemory.in_results_dir(results_dir)`` and record the
+            outcome (Discovery Loop P0); when *results_dir* is None, skip
+            the ledger. Pass ``memory=None`` to opt out explicitly even
+            when *results_dir* is set. Other accepted shapes: a
+            RouterMemory instance (used as-is); a path (str or Path) to a
+            SQLite file (opens or creates a RouterMemory there); and True
+            (same auto-place as MEMORY_AUTO, but raises if *results_dir*
+            is None). When *fleet* is given, informed_fleet is skipped so
+            memory no longer influences the routing decision, but the
+            completed run's outcome is still recorded into it. The
+            MEMORY_AUTO/True/path shapes open a fresh sqlite3 connection
+            on every call and close it before returning (~1ms overhead
+            per call, measured); callers making many run_route_request
+            calls in a loop should open one RouterMemory (or use it as a
             context manager) and pass that instance instead, which this
             function then leaves open for the caller to close.
         emit_report: When True, attach a human-readable
@@ -737,10 +762,11 @@ def run_route_request(
 
     mem = _resolve_router_memory(memory, results_dir)
     # _resolve_router_memory opens a brand-new sqlite3 connection for the
-    # memory=True / path shapes (a caller-supplied RouterMemory instance
-    # is returned as-is and stays theirs to close). Nothing closed it
-    # afterwards, so a caller routing in a tight loop with memory=True
-    # leaked one open connection per call -- close what we opened here.
+    # MEMORY_AUTO / True / path shapes (a caller-supplied RouterMemory
+    # instance is returned as-is and stays theirs to close). Nothing
+    # closed it afterwards, so a caller routing in a tight loop with
+    # memory=True leaked one open connection per call -- close what we
+    # opened here.
     owns_mem = mem is not None and not isinstance(memory, RouterMemory)
     try:
         if fleet is None:

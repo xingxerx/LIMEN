@@ -14,6 +14,7 @@ import pathlib
 import sys
 
 from limen.limend.daemon import run_forever
+from limen.pipeline import MEMORY_AUTO
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -22,7 +23,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--results-dir", type=pathlib.Path, default=None,
                          help="results dir for run history/calibration snapshots and QPU job-state persistence")
     parser.add_argument("--memory", type=pathlib.Path, default=None,
-                         help="path to a RouterMemory sqlite3 ledger (created if missing)")
+                         help="path to a RouterMemory sqlite3 ledger (created if missing); "
+                              "when omitted, uses MEMORY_AUTO (ledger under --results-dir when set)")
     parser.add_argument("--poll-interval", type=float, default=1.0)
     parser.add_argument("--memory-ceiling-mb", type=float, default=None,
                          help="preemptively exit (for supervisor restart) once RSS crosses this")
@@ -35,11 +37,13 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    # Omitted --memory must not pass memory=None (explicit opt-out); use
+    # MEMORY_AUTO so a --results-dir still gets Discovery Loop P0 rows.
     run_forever(
         args.spool_dir,
         poll_interval=args.poll_interval,
         results_dir=args.results_dir,
-        memory=args.memory,
+        memory=args.memory if args.memory is not None else MEMORY_AUTO,
         memory_ceiling_mb=args.memory_ceiling_mb,
         once=args.once,
     )

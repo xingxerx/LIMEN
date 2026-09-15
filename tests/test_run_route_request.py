@@ -49,7 +49,12 @@ class TestOfflineDispatch(unittest.TestCase):
             )
             manual_plan = route(request, fleet=informed_fleet(RESULTS_DIR))
             expected = run_pipeline_from_plan(request.qubo, manual_plan)
-            actual = run_route_request(request, results_dir=RESULTS_DIR)
+            # memory=None keeps this an informed_fleet-without-ledger
+            # comparison; default MEMORY_AUTO would open a ledger under
+            # RESULTS_DIR and can change routing vs the flat scan above.
+            actual = run_route_request(
+                request, results_dir=RESULTS_DIR, memory=None
+            )
             self.assertEqual(actual.to_dict(), expected.to_dict())
 
     def test_default_fleet_when_no_results_dir(self):
@@ -104,13 +109,50 @@ class TestMemoryLoopClosure(unittest.TestCase):
                 mem.close()
 
     def test_no_memory_no_write_and_no_error(self):
-        # memory=None (the default) must leave today's behavior exactly
-        # unchanged -- no ledger opened, no write attempted.
+        # Explicit memory=None must opt out -- no ledger opened, no write
+        # attempted -- even when results_dir is set (P0 opt-out).
+        import tempfile
+
+        from limen.router import RouterMemory
+
         request = RouteRequest(
             cycle_maxcut(4), fidelity_target=0.9, credit_budget=0.0
         )
-        actual = run_route_request(request, fleet=DEFAULT_FLEET)
-        self.assertTrue(actual.is_optimal)
+        with tempfile.TemporaryDirectory() as tmp:
+            results_dir = pathlib.Path(tmp)
+            actual = run_route_request(
+                request, fleet=DEFAULT_FLEET, results_dir=results_dir, memory=None
+            )
+            self.assertTrue(actual.is_optimal)
+            db = results_dir / "router_memory.sqlite3"
+            self.assertFalse(db.exists())
+
+    def test_default_memory_with_results_dir_writes_ledger(self):
+        # P0: omitting memory (MEMORY_AUTO) with results_dir set must
+        # open RouterMemory.in_results_dir and record the outcome.
+        import tempfile
+
+        from limen.router import RouterMemory
+
+        request = RouteRequest(
+            cycle_maxcut(4), fidelity_target=0.9, credit_budget=0.0
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            results_dir = pathlib.Path(tmp)
+            cert = run_route_request(
+                request, fleet=DEFAULT_FLEET, results_dir=results_dir
+            )
+            self.assertTrue(cert.is_optimal)
+            db = results_dir / "router_memory.sqlite3"
+            self.assertTrue(db.exists())
+            mem = RouterMemory(db)
+            try:
+                entries = list(mem.certificates())
+                self.assertGreaterEqual(len(entries), 1)
+                self.assertTrue(mem.verify_ledger())
+            finally:
+                mem.close()
+
 
 
 class TestRouteReport(unittest.TestCase):

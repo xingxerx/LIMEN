@@ -33,6 +33,7 @@ import uuid
 from typing import Any
 
 from limen.limend.spool import CERTS, DONE, FAILED, PENDING, ensure_spool_dirs
+from limen.pipeline import MEMORY_AUTO
 
 logger = logging.getLogger("limen.limend")
 
@@ -164,7 +165,7 @@ def run_forever(
     *,
     poll_interval: float = 1.0,
     results_dir: Any = None,
-    memory: Any = None,
+    memory: Any = MEMORY_AUTO,
     memory_ceiling_mb: float | None = None,
     once: bool = False,
 ) -> None:
@@ -176,6 +177,11 @@ def run_forever(
     restart-on-crash supervisor (systemd ``Restart=always`` or
     equivalent -- see scripts/limend.service), so a clean exit here is
     a preemptive restart, not a crash.
+
+    *memory* defaults to :data:`limen.pipeline.MEMORY_AUTO` so a
+    *results_dir* still receives ledger rows (Discovery Loop P0). Pass
+    ``memory=None`` to opt out, or a RouterMemory / path / True to
+    override.
     """
     dirs = ensure_spool_dirs(spool_dir)
     qpu_token = os.environ.get(QPU_TOKEN_ENV)
