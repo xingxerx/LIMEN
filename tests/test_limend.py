@@ -44,8 +44,79 @@ class TestLimendSpoolLoop(unittest.TestCase):
             self.assertEqual(cert["job_id"], "job-abc")
             self.assertIn("backend", cert)
             self.assertIn("tier", cert)
-            self.assertIsInstance(cert["fidelity_estimate"], float)
+            self.assertIsInstance(cert["success_probability"], float)
+            self.assertEqual(cert["fidelity_estimate"], cert["success_probability"])
             self.assertEqual(cert["lamport"], 1)
+
+    def test_below_target_job_stays_done_and_records_shortfall(self):
+        """3-leaf star Max-Cut, fidelity_target 0.9, credit_budget 0,
+        offline Tier 0 sim: the job finishes done even when the
+        measured success probability misses the named fidelity target.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            spool = pathlib.Path(tmp) / "spool"
+            dirs = ensure_spool_dirs(spool)
+            request = {
+                "job_id": "job-below",
+                "qubo": star_maxcut_json(3),
+                "fidelity_target": 0.9,
+                "credit_budget": 0.0,
+                "offline": True,
+            }
+            (dirs[PENDING] / "job-below.json").write_text(json.dumps(request))
+
+            with self.assertLogs("limen.limend", level="WARNING") as cm:
+                run_forever(spool, once=True)
+
+            self.assertFalse((dirs[PENDING] / "job-below.json").exists())
+            self.assertTrue((dirs[DONE] / "job-below.json").exists())
+            self.assertFalse((dirs[FAILED] / "job-below.json").exists())
+            cert = json.loads((dirs[CERTS] / "job-below.json").read_text())
+            self.assertEqual(cert["job_id"], "job-below")
+            self.assertIsInstance(cert["success_probability"], float)
+            self.assertEqual(cert["fidelity_estimate"], cert["success_probability"])
+            self.assertEqual(cert["fidelity_target"], 0.9)
+            self.assertFalse(cert["target_met"])
+            self.assertLess(cert["success_probability"], cert["fidelity_target"])
+            self.assertIn("note", cert)
+            self.assertIn("Success probability", cert["note"])
+            self.assertIn("fidelity target", cert["note"])
+            self.assertIn("0.90", cert["note"])
+            warning_text = "\n".join(cm.output)
+            self.assertIn("Success probability", warning_text)
+            self.assertIn("fidelity target", warning_text)
+            self.assertIn("0.90", warning_text)
+
+    def test_met_target_job_has_no_shortfall_note(self):
+        """Same offline star, with a fidelity target the simulator
+        can meet, so target_met is true and no shortfall note/warning.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            spool = pathlib.Path(tmp) / "spool"
+            dirs = ensure_spool_dirs(spool)
+            request = {
+                "job_id": "job-met",
+                "qubo": star_maxcut_json(3),
+                "fidelity_target": 0.0,
+                "credit_budget": 0.0,
+                "offline": True,
+            }
+            (dirs[PENDING] / "job-met.json").write_text(json.dumps(request))
+
+            with self.assertLogs("limen.limend", level="INFO") as cm:
+                run_forever(spool, once=True)
+
+            self.assertTrue((dirs[DONE] / "job-met.json").exists())
+            self.assertFalse((dirs[FAILED] / "job-met.json").exists())
+            cert = json.loads((dirs[CERTS] / "job-met.json").read_text())
+            self.assertGreaterEqual(cert["success_probability"], cert["fidelity_target"])
+            self.assertTrue(cert["target_met"])
+            self.assertEqual(cert["fidelity_estimate"], cert["success_probability"])
+            self.assertNotIn("note", cert)
+            log_text = "\n".join(cm.output)
+            self.assertIn("success_probability=", log_text)
+            self.assertNotIn("fidelity=", log_text)
+            self.assertFalse(any("WARNING" in line for line in cm.output))
 
     def test_bad_request_lands_in_failed_not_silently_dropped(self):
         with tempfile.TemporaryDirectory() as tmp:

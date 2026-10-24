@@ -142,17 +142,38 @@ def process_one(
                 "route_report missing from certificate metadata -- cannot "
                 "build a CertSummary without a backend/tier"
             )
+        success_probability = float(cert.success_probability)
+        fidelity_target = float(request.fidelity_target)
+        target_met = success_probability >= fidelity_target
         cert_summary = {
             "job_id": job_id,
             "backend": report["backend"],
             "tier": int(report["tier"]),
-            "fidelity_estimate": cert.success_probability,
+            "success_probability": success_probability,
+            # Deprecated alias of success_probability (same value). Kept
+            # for one release so existing cert-summary readers keep working.
+            "fidelity_estimate": success_probability,
+            "fidelity_target": fidelity_target,
+            "target_met": target_met,
             "lamport": lamport,
         }
+        if not target_met:
+            cert_summary["note"] = (
+                f"Success probability {success_probability:.4f} is below "
+                f"the fidelity target {fidelity_target:.2f}; the job "
+                f"finished but did not meet its target."
+            )
         (dirs[CERTS] / f"{job_id}.json").write_text(json.dumps(cert_summary, indent=2))
         path.rename(dirs[DONE] / f"{job_id}.json")
-        logger.info("job %s done: backend=%s tier=%s fidelity=%.4f", job_id,
-                     cert_summary["backend"], cert_summary["tier"], cert_summary["fidelity_estimate"])
+        logger.info(
+            "job %s done: backend=%s tier=%s success_probability=%.4f",
+            job_id,
+            cert_summary["backend"],
+            cert_summary["tier"],
+            success_probability,
+        )
+        if not target_met:
+            logger.warning("job %s: %s", job_id, cert_summary["note"])
         return True
     except Exception as exc:
         _write_failed(dirs, job_id, data, exc)
