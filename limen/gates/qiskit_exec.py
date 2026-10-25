@@ -20,6 +20,12 @@ _INSTALL_MSG = (
 )
 
 
+# Backend name for the local GPU statevector tier 0. Kept as a literal here
+# (not imported from limen.router) so limen.gates has no dependency on the
+# router package; limen.router.budget_router.LOCAL_GPU_BACKEND_NAME must match.
+GPU_BACKEND_NAME = "aer_gpu"
+
+
 def _check_qiskit() -> None:
     try:
         import qiskit  # noqa: F401
@@ -108,14 +114,36 @@ def run_circuit(
     from qiskit_aer import AerSimulator
 
     qc = to_qiskit_circuit(circuit)
-    method = "statevector" if backend_name == "statevector" else "automatic"
-    backend = AerSimulator(method=method, seed_simulator=seed)
-    transpiled = transpile(qc, backend)
-    job = backend.run(transpiled, shots=shots)
-    counts = job.result().get_counts()
+    metadata: dict[str, Any] = {"backend": backend_name, "shots": shots, "seed": seed}
+    if backend_name == GPU_BACKEND_NAME:
+        # Local GPU statevector tier 0 (limen.router.route_local_gpu_first).
+        # Single precision halves VRAM per amplitude; the router's qubit cap
+        # (gpu_qubit_cap, 8 bytes/amplitude) assumes exactly this setting.
+        # A CPU-only qiskit-aer build accepts device="GPU" at construction
+        # and only fails inside run(), so the whole attempt is guarded and
+        # falls back to the CPU simulator, recording why in the metadata
+        # rather than failing the job.
+        try:
+            backend = AerSimulator(
+                method="statevector", device="GPU", precision="single", seed_simulator=seed
+            )
+            transpiled = transpile(qc, backend)
+            counts = backend.run(transpiled, shots=shots).result().get_counts()
+            metadata["device"] = "GPU"
+        except Exception as exc:  # AerError / RuntimeError from the C++ controller
+            backend = AerSimulator(method="automatic", seed_simulator=seed)
+            transpiled = transpile(qc, backend)
+            counts = backend.run(transpiled, shots=shots).result().get_counts()
+            metadata["device"] = "CPU"
+            metadata["gpu_fallback_reason"] = f"{type(exc).__name__}: {exc}"
+    else:
+        method = "statevector" if backend_name == "statevector" else "automatic"
+        backend = AerSimulator(method=method, seed_simulator=seed)
+        transpiled = transpile(qc, backend)
+        counts = backend.run(transpiled, shots=shots).result().get_counts()
 
     return CircuitResult(
         counts=counts,
         circuit_depth=transpiled.depth(),
-        metadata={"backend": backend_name, "shots": shots, "seed": seed},
+        metadata=metadata,
     )

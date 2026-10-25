@@ -42,7 +42,10 @@ backend names and shot counts only, and the caller supplies
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+import os
+import shutil
+import subprocess
+from dataclasses import dataclass, field, replace
 from enum import IntEnum
 from typing import Any
 
@@ -136,6 +139,87 @@ class BackendProfile:
             raise ValueError("max_qubits must be positive")
         if self.cost_per_shot < 0:
             raise ValueError("cost_per_shot must be non-negative")
+
+
+# ---------------------------------------------------------------------------
+# Local GPU statevector tier 0 (opt-in: LIMEN_LOCAL_GPU=1 or
+# run_route_request(local_gpu_first=True)).
+#
+# Aer's GPU statevector is run in *single* precision (complex64, 8 bytes
+# per amplitude -- see limen.gates.qiskit_exec.run_circuit for the
+# matching ``precision="single"``), so n qubits need 8 * 2**n bytes. The
+# cap is read from nvidia-smi at call time and only ever uses VRAM that is
+# already free: another tenant (LM Studio, say) is never evicted. A
+# fraction of free VRAM is reserved for Aer's own working buffers (gate
+# fusion scratch, measurement sampling, cuStateVec workspace) instead of
+# dropping a whole qubit, which halved the usable statevector and made
+# the 30-qubit cap unreachable on a 16 GB card.
+# ---------------------------------------------------------------------------
+LOCAL_GPU_BACKEND_NAME = "aer_gpu"
+LOCAL_GPU_MAX_QUBITS_CAP = 30
+LOCAL_GPU_BYTES_PER_AMPLITUDE = 8  # complex64
+LOCAL_GPU_VRAM_RESERVE_FRACTION = 0.20
+# Extra qubits dropped below what fits. 0: the 20% VRAM reserve above is the
+# safety margin; one more qubit would halve the usable statevector and make
+# the 30-qubit cap unreachable on a 16 GB card. Raise only if Aer OOMs.
+LOCAL_GPU_HEADROOM_QUBITS = 0
+LOCAL_GPU_FALLBACK_BACKEND = "ibm_fez"
+LOCAL_GPU_ENV = "LIMEN_LOCAL_GPU"
+_NVIDIA_SMI_ARGS = (
+    "--query-gpu=memory.free",
+    "--format=csv,noheader,nounits",
+)
+
+
+def local_gpu_enabled() -> bool:
+    """True when ``LIMEN_LOCAL_GPU`` is set to 1/true/yes/on."""
+    return os.environ.get(LOCAL_GPU_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def query_free_vram_mib(timeout: float = 5.0) -> int | None:
+    """Free VRAM in MiB on GPU 0 via nvidia-smi, or None if unavailable."""
+    exe = shutil.which("nvidia-smi")
+    if exe is None:
+        return None
+    try:
+        out = subprocess.run(
+            [exe, *_NVIDIA_SMI_ARGS],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if not lines:
+        return None
+    try:
+        return int(float(lines[0]))
+    except ValueError:
+        return None
+
+
+def gpu_qubit_cap(
+    free_mib: int | None,
+    cap: int = LOCAL_GPU_MAX_QUBITS_CAP,
+    reserve_fraction: float = LOCAL_GPU_VRAM_RESERVE_FRACTION,
+    headroom_qubits: int = LOCAL_GPU_HEADROOM_QUBITS,
+) -> int:
+    """Largest statevector that fits in ``(1 - reserve) * free`` VRAM, minus headroom, capped.
+
+    ``max_qubits = floor(log2((1 - reserve) * free_bytes / 8)) - headroom``,
+    clamped to ``[0, cap]``; 0 when there is no GPU or nothing is free.
+    With the defaults an idle 16 GB card reaches the 30-qubit cap; with
+    ~7 GB held by another tenant (LM Studio) it lands at 29.
+    """
+    if free_mib is None or free_mib <= 0:
+        return 0
+    usable = free_mib * 1024 * 1024 * (1.0 - reserve_fraction)
+    if usable < LOCAL_GPU_BYTES_PER_AMPLITUDE * 2:
+        return 0
+    fits = int(math.floor(math.log2(usable / LOCAL_GPU_BYTES_PER_AMPLITUDE)))
+    return max(0, min(cap, fits - headroom_qubits))
 
 
 # Seeded from results/fleet_certificate.json (2026-06-29 live query).
@@ -510,4 +594,58 @@ def route(
         shots=shots,
         criticality_spread=spread,
         notes=tuple(notes),
+    )
+
+
+def route_local_gpu_first(
+    request: RouteRequest,
+    fleet: tuple[BackendProfile, ...] = DEFAULT_FLEET,
+    free_vram_mib: Any = query_free_vram_mib,
+) -> RoutePlan:
+    """Prepend a local GPU statevector tier 0 to :func:`route`.
+
+    The plan :func:`route` would have produced is computed first and is
+    the fallthrough in every case where tier 0 does not apply, so turning
+    tier 0 on never changes a decision it did not take over:
+
+    * the base plan is Tier 2 (HW_CERTIFIED), or the caller pinned a
+      hardware tier via ``force_tier`` -- a certified hardware run is a
+      different product from a free simulation, so it is left alone
+      (this is the criticality gate);
+    * there is no GPU / no nvidia-smi / no free VRAM, or the problem has
+      more variables than :func:`gpu_qubit_cap` allows right now.
+
+    Otherwise the plan is Tier.SIM on an ``aer_gpu`` profile sized to the
+    VRAM that is free *at call time* (``free_vram_mib`` may be an int,
+    None, or a zero-arg callable; tests stub nvidia-smi this way), with
+    ``pipeline_kwargs`` that make run_pipeline execute both the QAOA
+    grid search and the final circuit on AerSimulator(device="GPU").
+    VRAM held by other processes is never freed or evicted.
+    """
+    base = route(request, fleet)
+    free = free_vram_mib() if callable(free_vram_mib) else free_vram_mib
+    cap = gpu_qubit_cap(free)
+    n_vars = base.n_vars
+    gpu_note = f"local GPU tier 0: free {free} MiB -> cap {cap}q, problem {n_vars}q"
+
+    hardware_pinned = request.force_tier is not None and request.force_tier != Tier.SIM
+    if base.tier == Tier.HW_CERTIFIED or hardware_pinned:
+        return replace(base, notes=(*base.notes, gpu_note + " -> skipped (hardware tier kept)"))
+    if cap <= 0 or n_vars > cap:
+        reason = "no usable GPU" if cap <= 0 else f"{n_vars}q exceeds cap {cap}q"
+        return replace(
+            base,
+            notes=(*base.notes, gpu_note + f" -> fallthrough to {base.backend.name} ({reason})"),
+        )
+
+    gpu = BackendProfile(LOCAL_GPU_BACKEND_NAME, "sim", cap, 0.0, validated=True)
+    others = tuple(p for p in fleet if p.kind != "sim")
+    plan = route(replace(request, force_tier=Tier.SIM), (gpu, *others))
+    kwargs = dict(plan.pipeline_kwargs)
+    kwargs["backend"] = "aer"
+    kwargs["qpu_backend_name"] = LOCAL_GPU_BACKEND_NAME
+    return replace(
+        plan,
+        pipeline_kwargs=kwargs,
+        notes=(*plan.notes, gpu_note + " -> tier 0 aer_gpu (AerSimulator device=GPU, single precision)"),
     )

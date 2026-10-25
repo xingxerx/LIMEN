@@ -5,11 +5,16 @@ import pathlib
 
 from limen.router.budget_router import (
     DEFAULT_FLEET,
+    LOCAL_GPU_BACKEND_NAME,
     BackendProfile,
     RoutePlan,
     RouteRequest,
     Tier,
+    gpu_qubit_cap,
+    local_gpu_enabled,
+    query_free_vram_mib,
     route,
+    route_local_gpu_first,
 )
 from limen.router.calibration import (
     apply_calibration,

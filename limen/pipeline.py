@@ -654,6 +654,7 @@ def run_route_request(
     poll_ceiling_seconds: float = 24 * 3600.0,
     server_addresses: list[str] | None = None,
     num_partitions: int | None = None,
+    local_gpu_first: bool | None = None,
 ) -> EndToEndCertificate:
     """QUBO + budget in, certified answer out — route and execute in one call.
 
@@ -735,6 +736,14 @@ def run_route_request(
         num_partitions: Number of partitions to split the graph into
             when dispatching to peers; defaults to
             ``len(server_addresses)``.
+        local_gpu_first: Route through
+            :func:`limen.router.route_local_gpu_first` (local GPU
+            statevector tier 0, sized to free VRAM at call time) instead
+            of plain :func:`limen.router.route`. ``None`` (default) reads
+            the ``LIMEN_LOCAL_GPU`` environment variable, so limend and
+            other callers opt in without a code change. The tier-0 router
+            only ever takes over Tier 0/1 plans that fit the GPU; Tier 2
+            and pinned hardware tiers are returned unchanged.
 
     Returns:
         The EndToEndCertificate for the executed plan, or — when the plan
@@ -755,10 +764,20 @@ def run_route_request(
     import dataclasses
     import os
 
-    from limen.router import DEFAULT_FLEET, RouterMemory, informed_fleet, route
+    from limen.router import (
+        DEFAULT_FLEET,
+        RouterMemory,
+        informed_fleet,
+        local_gpu_enabled,
+        route,
+        route_local_gpu_first,
+    )
 
     if server_addresses is None:
         server_addresses = _known_peers_from_env()
+    if local_gpu_first is None:
+        local_gpu_first = local_gpu_enabled()
+    router = route_local_gpu_first if local_gpu_first else route
 
     mem = _resolve_router_memory(memory, results_dir)
     # _resolve_router_memory opens a brand-new sqlite3 connection for the
@@ -775,7 +794,7 @@ def run_route_request(
                 if results_dir is not None
                 else DEFAULT_FLEET
             )
-        plan = route(request, fleet=fleet)
+        plan = router(request, fleet)
         if server_addresses:
             plan = dataclasses.replace(plan, server_addresses=tuple(server_addresses))
 
@@ -1326,7 +1345,19 @@ def run_pipeline(
         # jobs to a QPU would be impractical and expensive.  We find the optimal
         # (gamma, beta) offline, then execute the final circuit once on the
         # chosen backend.
-        params, sim_dist = _grid_search(graph, qaoa_layers, grid_size)
+        if backend == "aer":
+            # The pure-Python statevector returns a dict over all 2**n
+            # outcomes and is unusable past ~20 qubits, which silently
+            # capped the "aer" backend at the Python simulator's limit.
+            # Run the grid search on the same Aer backend the final
+            # circuit uses (shot-sampled), so a GPU-tier plan is GPU
+            # end to end.
+            def _aer_prob_fn(c: Any) -> dict[str, float]:
+                return _aer_probabilities(c, qpu_backend_name, qpu_shots)
+
+            params, sim_dist = _grid_search(graph, qaoa_layers, grid_size, prob_fn=_aer_prob_fn)
+        else:
+            params, sim_dist = _grid_search(graph, qaoa_layers, grid_size)
 
         # Final circuit execution — one shot on the chosen backend.
         if backend == "statevector":
