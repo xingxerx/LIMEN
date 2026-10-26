@@ -29,6 +29,33 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and restores the re-attach contract with
   `examples/router_tier2_kingston_fetch.py`, which reads the repo-root
   results dir.
+- ECC everywhere it applies: the surface-code logical-error certificate
+  now covers every hardware tier, every certificate shape, and every
+  downstream consumer. (1) `route()` sets `encode_logical=True`,
+  `distance`, calibration-derived `physical_error_rate` and the
+  `measured_logical_error` prior for Tier 1 (`HW_STANDARD`) plans as well
+  as Tier 2 -- the term is an analytic, solution-agnostic model that
+  costs no credits and no qubits, so there was no reason a noisy Tier 1
+  run should report no logical error rate (and feed nothing into the
+  router ledger). The criticality-ranked patch budget
+  (`patch_assignments`/`physical_qubit_budget`) stays Tier 2 only; Tier 0
+  plans now carry an explicit "ECC: skipped (noiseless)" note.
+  (2) `run_pipeline` and `run_cut_route_request` compute the term through
+  one shared helper (`limen.pipeline._certify_ecc`), and
+  `CuttingCertificate` gained `aggregate_logical_error_rate`,
+  `predicted_logical_error_bound`, `measured_logical_error_prior` and
+  `roundtrip_corrects_all_weight1` -- previously a cut-circuit run only
+  reported the per-qubit rate with no n-qubit aggregate, no prior bound
+  and no gate-executed round-trip. (3) `_record_route_outcome` and
+  `build_route_report` accept a `CuttingCertificate`: before, both
+  raised `AttributeError` on it and were silently swallowed by the
+  best-effort wrappers, so cut-circuit hardware runs were never
+  witnessed in the ledger nor given a route report. `RouteReport` also
+  gained `ecc_distance` and `predicted_logical_error_bound` (rendered in
+  the markdown next to the raw rates); `success_probability` is None for
+  a cutting run. `limen.router.proposal`'s physical-error-exposure proxy
+  deliberately still counts Tier 2 scenarios only -- it is a
+  policy-evaluation metric, not an ECC application.
 - Persistent router memory (`limen.router.memory`): a SQLite ledger
   (`RouterMemory`) that makes the budget router stateful across runs.
   Three parts: (1) a backend sample ledger with trend-aware stats —

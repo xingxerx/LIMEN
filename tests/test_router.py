@@ -55,6 +55,13 @@ class TestRoutingDecisions(unittest.TestCase):
         self.assertEqual(plan.tier, Tier.HW_STANDARD)
         self.assertNotEqual(plan.backend.kind, "sim")
         self.assertFalse(plan.patch_assignments)
+        # Tier 1 still runs on noisy hardware, so it carries the ECC
+        # certificate (distance + encode_logical) -- just no patch budget.
+        self.assertEqual(plan.ecc_distance, 3)
+        self.assertIsNone(plan.physical_qubit_budget)
+        self.assertTrue(plan.pipeline_kwargs["encode_logical"])
+        self.assertEqual(plan.pipeline_kwargs["distance"], 3)
+        self.assertIn("physical_error_rate", plan.pipeline_kwargs)
 
     def test_heavy_tailed_spectrum_routes_to_tier2(self):
         # star(n)'s spread is (n+1)/2; 20 leaves -> 10.5, above the 10.25
@@ -123,6 +130,20 @@ class TestLoopback(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertEqual(first.to_dict(), second.to_dict())
 
+    def test_tier1_plan_certifies_without_patch_budget(self):
+        plan = route(self._request(Tier.HW_STANDARD))
+        self.assertEqual(plan.ecc_distance, 3)
+        self.assertFalse(plan.patch_assignments)
+        self.assertIsNone(plan.physical_qubit_budget)
+        self.assertTrue(plan.pipeline_kwargs["encode_logical"])
+        self.assertTrue(any(note.startswith("ECC: distance 3") for note in plan.notes))
+
+    def test_tier0_plan_notes_ecc_skipped(self):
+        plan = route(self._request(Tier.SIM))
+        self.assertIsNone(plan.ecc_distance)
+        self.assertFalse(plan.pipeline_kwargs["encode_logical"])
+        self.assertTrue(any(note.startswith("ECC: skipped") for note in plan.notes))
+
     def test_tier2_plan_has_patch_assignments(self):
         plan = route(self._request(Tier.HW_CERTIFIED))
         self.assertEqual(plan.ecc_distance, 3)
@@ -149,11 +170,18 @@ class TestLoopback(unittest.TestCase):
                 self.assertIsInstance(cert, EndToEndCertificate)
                 self.assertTrue(cert.is_optimal)
                 self.assertAlmostEqual(cert.energy, -6.0)
-                if tier == Tier.HW_CERTIFIED:
-                    self.assertIsNotNone(cert.logical_error_rate)
-                    self.assertEqual(cert.distance, plan.ecc_distance)
-                else:
+                if tier == Tier.SIM:
+                    # Noiseless statevector: nothing to certify against.
                     self.assertIsNone(cert.logical_error_rate)
+                    self.assertIsNone(plan.ecc_distance)
+                    self.assertFalse(plan.pipeline_kwargs["encode_logical"])
+                else:
+                    # Both hardware tiers carry the surface-code term.
+                    self.assertIsNotNone(cert.logical_error_rate)
+                    self.assertIsNotNone(cert.aggregate_logical_error_rate)
+                    self.assertIsNotNone(cert.predicted_logical_error_bound)
+                    self.assertEqual(cert.distance, plan.ecc_distance)
+                    self.assertTrue(cert.metadata["roundtrip_corrects_all_weight1"])
 
 
 class TestCutting(unittest.TestCase):

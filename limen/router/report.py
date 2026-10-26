@@ -61,9 +61,13 @@ class RouteReport:
 
     Built entirely from evidence already produced elsewhere:
     ``RouteRequest`` (what was asked), ``RoutePlan`` (what was decided,
-    including its own ``notes``), ``EndToEndCertificate`` (what actually
-    happened), and optionally the ``RouterMemory`` ledger comparison
-    (whether history changed the decision).
+    including its own ``notes``), the certificate (what actually
+    happened -- an ``EndToEndCertificate``, or a ``CuttingCertificate``
+    for a cut-circuit run, in which case ``success_probability`` is None
+    and ``energy`` is the decoded classical energy), and optionally the
+    ``RouterMemory`` ledger comparison (whether history changed the
+    decision). ``ecc_distance`` and ``predicted_logical_error_bound``
+    surface the surface-code ECC term next to the raw rates.
     """
 
     backend: str
@@ -75,12 +79,14 @@ class RouteReport:
     routing_notes: tuple[str, ...]
     ledger_comparisons: tuple[LedgerComparison, ...]
     is_optimal: bool | None
-    success_probability: float
+    success_probability: float | None
     energy: float
     physical_error_rate: float | None
     aggregate_logical_error_rate: float | None
     certificate_sha256: str | None
     generated_at: float
+    ecc_distance: int | None = None
+    predicted_logical_error_bound: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,6 +107,8 @@ class RouteReport:
             "aggregate_logical_error_rate": self.aggregate_logical_error_rate,
             "certificate_sha256": self.certificate_sha256,
             "generated_at": self.generated_at,
+            "ecc_distance": self.ecc_distance,
+            "predicted_logical_error_bound": self.predicted_logical_error_bound,
         }
 
     def to_markdown(self) -> str:
@@ -116,15 +124,22 @@ class RouteReport:
             "not confirmed optimal" if self.is_optimal is False else
             "optimality not evaluated"
         )
-        lines.append(
-            f"- **Result:** energy {self.energy:.4g}, {optimal}, "
-            f"success probability {self.success_probability:.1%}"
-        )
+        result = f"- **Result:** energy {self.energy:.4g}, {optimal}"
+        if self.success_probability is not None:
+            result += f", success probability {self.success_probability:.1%}"
+        lines.append(result)
+        if self.ecc_distance is not None:
+            lines.append(f"- **ECC:** distance-{self.ecc_distance} surface code")
         if self.physical_error_rate is not None:
             lines.append(f"- **Physical error rate:** {self.physical_error_rate:.2e}")
         if self.aggregate_logical_error_rate is not None:
             lines.append(
                 f"- **Logical error rate:** {self.aggregate_logical_error_rate:.2e}"
+            )
+        if self.predicted_logical_error_bound is not None:
+            lines.append(
+                f"- **Predicted logical error bound:** "
+                f"{self.predicted_logical_error_bound:.2e}"
             )
         if self.certificate_sha256:
             lines.append(f"- **Certificate hash:** `{self.certificate_sha256[:16]}...`")
@@ -297,10 +312,16 @@ def build_route_report(
         routing_notes=tuple(plan.notes),
         ledger_comparisons=tuple(comparisons),
         is_optimal=cert.is_optimal,
-        success_probability=cert.success_probability,
-        energy=cert.energy,
+        success_probability=getattr(cert, "success_probability", None),
+        energy=(
+            cert.energy
+            if hasattr(cert, "energy")
+            else cert.decoded_classical_energy  # CuttingCertificate
+        ),
         physical_error_rate=cert.physical_error_rate,
-        aggregate_logical_error_rate=cert.aggregate_logical_error_rate,
+        aggregate_logical_error_rate=getattr(cert, "aggregate_logical_error_rate", None),
         certificate_sha256=certificate_sha256,
         generated_at=now,
+        ecc_distance=getattr(cert, "distance", None),
+        predicted_logical_error_bound=getattr(cert, "predicted_logical_error_bound", None),
     )
