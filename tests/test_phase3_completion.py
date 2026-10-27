@@ -44,7 +44,11 @@ def test_identity_delta_model_matches_no_model():
     ident = run_neutral_atom(
         ir, delta_model=HardwareDeltaModel.identity("dev-id", SubstrateType.NEUTRAL_ATOM, ir.n_sites)
     )
-    assert ident.atom_positions == pytest.approx(base.atom_positions)
+    # atom_positions is a list of (x, y) tuples; pytest >= 9.2 rejects approx()
+    # on nested sequences, so compare each position on its own.
+    assert len(ident.atom_positions) == len(base.atom_positions)
+    for got, want in zip(ident.atom_positions, base.atom_positions):
+        assert got == pytest.approx(want)
     assert ident.detunings == pytest.approx(base.detunings)
     for key in base.realized_couplings:
         assert ident.realized_couplings[key] == pytest.approx(base.realized_couplings[key])
