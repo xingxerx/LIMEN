@@ -25,7 +25,10 @@ After=network.target
 
 [Service]
 WorkingDirectory=/opt/limen
-ExecStart=/opt/limen/.venv/bin/limend /opt/limen/spool --results-dir /opt/limen/results --memory /opt/limen/spool/router_memory.sqlite3 --memory-ceiling-mb 1024
+# --proposals-dir turns on the post-land rollback guard (harness-roadmap/03):
+# a landed routing-policy change that regresses against the live ledger is
+# rolled back in-process and witnessed. Drop the flag to turn it off.
+ExecStart=/opt/limen/.venv/bin/limend /opt/limen/spool --results-dir /opt/limen/results --memory /opt/limen/spool/router_memory.sqlite3 --proposals-dir /opt/limen/policy_proposals --memory-ceiling-mb 1024
 EnvironmentFile=-/etc/limend/env
 Restart=always
 RestartSec=2
