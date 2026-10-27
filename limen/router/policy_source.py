@@ -14,6 +14,12 @@ guard rails:
 
   * only a proposal with an ``accepted`` verdict on disk can be applied, so
     the harness, not the caller, decides what may change;
+  * that verdict file must be byte-for-byte what the append-only proposal
+    ledger recorded when the harness judged it (its most recent row for the
+    proposal id, and that row must be an acceptance), so a verdict edited or
+    dropped into ``accepted/`` by hand is refused. This catches casual edits,
+    not a determined attacker who can also rewrite the ledger; the protection
+    against that is review of the commit (branch protection, signed commits);
   * only a constant in :data:`~limen.router.proposal.GATED_POLICIES`;
   * the source must still hold the value the verdict was evaluated against
     (``previous_value``), otherwise the edit is refused as stale;
@@ -29,7 +35,11 @@ import dataclasses
 import json
 import pathlib
 import re
+import shutil
+import sqlite3
+import tempfile
 
+from limen.router.memory import _canonical_json
 from limen.router.proposal import GATED_POLICIES, Verdict
 
 
@@ -75,25 +85,70 @@ def set_constant(
     return new_text, old
 
 
+def _check_witnessed(ledger: pathlib.Path, proposal_id: str, verdict_doc: dict) -> None:
+    """Require the verdict file to equal the ledger's latest row for the id,
+    and that row to be an acceptance.
+
+    The ledger is read from a scratch copy (main file plus any -wal), so the
+    check never writes to the repository: opening a WAL-mode database in place,
+    even read-only, creates -wal/-shm files next to it."""
+    if not ledger.is_file():
+        raise PolicyApplyError(
+            f"no proposal ledger at {ledger}; cannot confirm the harness witnessed {proposal_id}"
+        )
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            copy = pathlib.Path(scratch) / "ledger.sqlite3"
+            shutil.copy2(ledger, copy)
+            wal = ledger.with_name(ledger.name + "-wal")
+            if wal.is_file():
+                shutil.copy2(wal, copy.with_name(copy.name + "-wal"))
+            conn = sqlite3.connect(copy)
+            try:
+                row = conn.execute(
+                    "SELECT accepted, verdict FROM policy_proposals WHERE proposal_id = ? "
+                    "ORDER BY seq DESC LIMIT 1",
+                    (proposal_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+    except (sqlite3.Error, OSError) as exc:
+        raise PolicyApplyError(f"cannot read proposal ledger {ledger}: {exc}") from exc
+    if row is None:
+        raise PolicyApplyError(f"{proposal_id} has no row in {ledger}; the harness never witnessed it")
+    accepted, recorded = row
+    if not accepted:
+        raise PolicyApplyError(f"the ledger's latest verdict for {proposal_id} is not an acceptance")
+    if _canonical_json(json.loads(recorded)) != _canonical_json(verdict_doc):
+        raise PolicyApplyError(
+            f"the verdict file for {proposal_id} differs from what the ledger recorded; "
+            "re-run scripts/run_proposal.py on its claim instead of editing it"
+        )
+
+
 def apply_accepted(
     proposal_id: str,
     proposals_dir: pathlib.Path | str,
     source: pathlib.Path | str,
     *,
     dry_run: bool = False,
+    ledger: pathlib.Path | str | None = None,
 ) -> ApplyResult:
     """Apply the accepted proposal *proposal_id* to *source*.
 
     Raises :class:`PolicyApplyError` if there is no accepted verdict for it,
-    its policy is not gated, or the source value is stale. A source that
-    already holds the proposed value is a no-op (``changed=False``)."""
+    the ledger (default ``<proposals_dir>/ledger/router_memory.sqlite3``) does
+    not witness exactly that verdict, its policy is not gated, or the source
+    value is stale. A source that already holds the proposed value is a no-op
+    (``changed=False``)."""
     verdict_path = pathlib.Path(proposals_dir) / "accepted" / f"{proposal_id}.json"
     if not verdict_path.is_file():
         raise PolicyApplyError(
             f"no accepted verdict at {verdict_path}; only a proposal the CI verdict accepted can be applied"
         )
     try:
-        verdict = Verdict.from_dict(json.loads(verdict_path.read_text()))
+        verdict_doc = json.loads(verdict_path.read_text())
+        verdict = Verdict.from_dict(verdict_doc)
     except (OSError, KeyError, TypeError, ValueError) as exc:
         raise PolicyApplyError(f"unreadable verdict {verdict_path}: {exc}") from exc
     if not verdict.accepted:
@@ -106,6 +161,13 @@ def apply_accepted(
             f"verdict for {proposal_id} records no previous_value, so it cannot be checked "
             "against the source it was evaluated for; re-run scripts/run_proposal.py on its claim"
         )
+
+    ledger_path = (
+        pathlib.Path(ledger)
+        if ledger is not None
+        else pathlib.Path(proposals_dir) / "ledger" / "router_memory.sqlite3"
+    )
+    _check_witnessed(ledger_path, proposal_id, verdict_doc)
 
     path = pathlib.Path(source)
     raw = path.read_bytes().decode("utf-8")

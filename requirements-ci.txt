@@ -1,0 +1,4 @@
+# CI-only test tooling, pinned so a new release arrives as a Dependabot pull
+# request instead of turning unrelated pull requests red (pytest 9.2.0 did
+# exactly that to nested approx() comparisons).
+pytest==9.2.0

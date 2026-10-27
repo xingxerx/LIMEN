@@ -7,6 +7,7 @@ import shutil
 import tempfile
 import unittest
 
+from limen.router.memory import RouterMemory
 from limen.router.policy_source import PolicyApplyError, apply_accepted, set_constant
 from limen.router.proposal import FleetMetrics, Proposal, ScenarioOutcome, Verdict
 
@@ -23,6 +24,15 @@ def _fleet() -> FleetMetrics:
             ),
         )
     )
+
+
+def _witness(proposals: pathlib.Path, pid: str, verdict: Verdict) -> None:
+    """Record *verdict* in the proposal ledger the way run_proposal.py does."""
+    mem = RouterMemory(proposals / "ledger" / "router_memory.sqlite3")
+    try:
+        mem.record_proposal(pid, NAME, verdict.accepted, verdict.to_dict())
+    finally:
+        mem.close()
 
 
 def _verdict(pid: str, proposed: float, previous: float | None, accepted: bool = True) -> Verdict:
@@ -80,9 +90,13 @@ class ApplyAcceptedTests(unittest.TestCase):
         self.source = self.dir / "budget_router.py"
         self.source.write_text(f"{NAME} = 10.25  # live\n")
 
-    def _accept(self, pid: str, proposed: float, previous: float | None, accepted: bool = True) -> None:
+    def _accept(self, pid: str, proposed: float, previous: float | None, accepted: bool = True,
+                witness: bool = True) -> Verdict:
         verdict = _verdict(pid, proposed, previous, accepted)
         (self.proposals / "accepted" / f"{pid}.json").write_text(json.dumps(verdict.to_dict()))
+        if witness:
+            _witness(self.proposals, pid, verdict)
+        return verdict
 
     def test_applies_an_accepted_revert(self):
         self._accept("revert-one", 8.0, 10.25)
@@ -145,6 +159,73 @@ class ApplyAcceptedTests(unittest.TestCase):
             apply_accepted("junk", self.proposals, self.source)
 
 
+class WitnessTests(unittest.TestCase):
+    """The verdict file alone is not enough: the ledger must have recorded it."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = pathlib.Path(self._tmp.name)
+        self.proposals = self.dir / "policy_proposals"
+        (self.proposals / "accepted").mkdir(parents=True)
+        self.source = self.dir / "budget_router.py"
+        self.source.write_text(f"{NAME} = 10.25\n")
+
+    def _file(self, verdict: Verdict) -> None:
+        (self.proposals / "accepted" / f"{verdict.proposal.id}.json").write_text(
+            json.dumps(verdict.to_dict())
+        )
+
+    def test_a_verdict_dropped_in_by_hand_is_refused(self):
+        verdict = _verdict("forged", 8.0, 10.25)
+        self._file(verdict)  # never recorded by the harness
+        with self.assertRaises(PolicyApplyError):
+            apply_accepted("forged", self.proposals, self.source)
+        self.assertEqual(self.source.read_text(), f"{NAME} = 10.25\n")
+
+    def test_a_missing_ledger_is_refused(self):
+        self._file(_verdict("no-ledger", 8.0, 10.25))
+        with self.assertRaises(PolicyApplyError) as ctx:
+            apply_accepted("no-ledger", self.proposals, self.source)
+        self.assertIn("no proposal ledger", str(ctx.exception))
+
+    def test_a_verdict_edited_after_it_was_witnessed_is_refused(self):
+        verdict = _verdict("edited", 8.0, 10.25)
+        _witness(self.proposals, "edited", verdict)
+        tampered = _verdict("edited", 1.0, 10.25)  # same id, different proposed value
+        self._file(tampered)
+        with self.assertRaises(PolicyApplyError) as ctx:
+            apply_accepted("edited", self.proposals, self.source)
+        self.assertIn("differs from what the ledger recorded", str(ctx.exception))
+        self.assertEqual(self.source.read_text(), f"{NAME} = 10.25\n")
+
+    def test_a_later_rejection_in_the_ledger_wins(self):
+        accepted = _verdict("flipped", 8.0, 10.25)
+        _witness(self.proposals, "flipped", accepted)
+        _witness(self.proposals, "flipped", _verdict("flipped", 8.0, 10.25, accepted=False))
+        self._file(accepted)
+        with self.assertRaises(PolicyApplyError):
+            apply_accepted("flipped", self.proposals, self.source)
+
+    def test_the_latest_acceptance_is_what_counts(self):
+        _witness(self.proposals, "reeval", _verdict("reeval", 8.0, 2.0))
+        latest = _verdict("reeval", 8.0, 10.25)  # re-evaluated later against the current source
+        _witness(self.proposals, "reeval", latest)
+        self._file(latest)
+        self.assertTrue(apply_accepted("reeval", self.proposals, self.source).changed)
+
+    def test_checking_the_ledger_never_writes_to_the_repository(self):
+        verdict = _verdict("ro", 8.0, 10.25)
+        _witness(self.proposals, "ro", verdict)
+        self._file(verdict)
+        ledger = self.proposals / "ledger" / "router_memory.sqlite3"
+        before_bytes = ledger.read_bytes()
+        before_dir = sorted(p.name for p in ledger.parent.iterdir())
+        apply_accepted("ro", self.proposals, self.source, dry_run=True)
+        self.assertEqual(ledger.read_bytes(), before_bytes)
+        self.assertEqual(sorted(p.name for p in ledger.parent.iterdir()), before_dir)  # no -wal/-shm
+
+
 class RealRepoTests(unittest.TestCase):
     """Against copies of the real source and accepted verdicts, never the repo files."""
 
@@ -164,9 +245,9 @@ class RealRepoTests(unittest.TestCase):
             shutil.copy2(REPO / "limen/router/budget_router.py", copy)
             proposals = pathlib.Path(d) / "pp"
             (proposals / "accepted").mkdir(parents=True)
-            (proposals / "accepted" / "r.json").write_text(
-                json.dumps(_verdict("r", 8.0, 10.25).to_dict())
-            )
+            verdict = _verdict("r", 8.0, 10.25)
+            (proposals / "accepted" / "r.json").write_text(json.dumps(verdict.to_dict()))
+            _witness(proposals, "r", verdict)
             before = copy.read_text().splitlines()
             apply_accepted("r", proposals, copy)
             after = copy.read_text().splitlines()
