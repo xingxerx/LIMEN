@@ -53,6 +53,8 @@ jobs:
           python-version: "3.12"
       - name: Install package (simulator path only)
         run: pip install .
+      - name: Proposer report (informational; writes nothing)
+        run: python scripts/propose.py
       - name: Evaluate every pending proposal
         run: |
           shopt -s nullglob
