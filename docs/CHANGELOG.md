@@ -5,13 +5,15 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-- Security: the distributed coordination server now binds loopback by
-  default (`LIMEN_NODE_HOST` defaulted to `0.0.0.0`) and refuses to serve
-  cleartext gRPC on any network-reachable address. Set `LIMEN_TLS_CERT` and
-  `LIMEN_TLS_KEY` (and `LIMEN_TLS_CA` for mutual TLS), or accept the risk
-  explicitly with `LIMEN_ALLOW_INSECURE_NETWORK=1`, which logs a warning.
-  Nodes that relied on the old wildcard default must now set
-  `LIMEN_NODE_HOST` to a specific interface address.
+- Security: the distributed coordination server no longer defaults to
+  `0.0.0.0`. `LIMEN_NODE_HOST` now defaults to this machine's Tailscale
+  address (so tailnet peers can reach the node), or loopback if it has none.
+  Any non-loopback address, Tailscale included, needs `LIMEN_TLS_CERT` and
+  `LIMEN_TLS_KEY` (and `LIMEN_TLS_CA` for mutual TLS); without them the server
+  refuses to start. WireGuard encrypts a tailnet link but does not authenticate
+  callers to the node. Set `LIMEN_NODE_HOST=127.0.0.1` for a local-only node, or
+  accept the risk explicitly with `LIMEN_ALLOW_INSECURE_NETWORK=1` (logged
+  warning). Nodes that relied on the old wildcard default must set TLS.
 - Security: `scripts/deploy_node.sh` runs the node as the SSH user (it refuses
   root) inside a systemd sandbox, defaults to TLS (`--insecure` opts out,
   `--bind ADDR` picks the interface), and generates an EC certificate with a
