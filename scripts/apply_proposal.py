@@ -8,7 +8,8 @@
 """Apply an accepted routing-policy proposal to the source (harness-roadmap/03).
 
 Takes a proposal id, requires an ``accepted`` verdict under
-``policy_proposals/accepted/``, and edits the one matching constant in
+``policy_proposals/accepted/`` that the append-only proposal ledger also
+recorded (byte-for-byte), and edits the one matching constant in
 ``limen/router/budget_router.py``. This is also how a rollback becomes
 permanent: when limend rolls a landed change back it writes a ``-revert-``
 claim to ``policy_proposals/pending/``; once CI accepts that claim, run this
@@ -19,7 +20,7 @@ normal PR gate yourself.
 
 Usage:
     python scripts/apply_proposal.py <proposal-id> [--dry-run]
-        [--proposals-dir DIR] [--source FILE]
+        [--proposals-dir DIR] [--source FILE] [--ledger FILE]
 """
 
 from __future__ import annotations
@@ -39,11 +40,15 @@ def main() -> int:
     parser.add_argument("proposal_id")
     parser.add_argument("--proposals-dir", type=pathlib.Path, default=ROOT / "policy_proposals")
     parser.add_argument("--source", type=pathlib.Path, default=ROOT / "limen/router/budget_router.py")
+    parser.add_argument("--ledger", type=pathlib.Path, default=None,
+                        help="proposal ledger (default: <proposals-dir>/ledger/router_memory.sqlite3)")
     parser.add_argument("--dry-run", action="store_true", help="report the edit without writing it")
     args = parser.parse_args()
 
     try:
-        result = apply_accepted(args.proposal_id, args.proposals_dir, args.source, dry_run=args.dry_run)
+        result = apply_accepted(
+            args.proposal_id, args.proposals_dir, args.source, dry_run=args.dry_run, ledger=args.ledger
+        )
     except PolicyApplyError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1

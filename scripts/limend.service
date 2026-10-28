@@ -9,21 +9,46 @@
 # exits cleanly on its own once RSS crosses --memory-ceiling-mb, which
 # systemd then turns into a preemptive restart the same way.
 #
-# Install:
-#   sudo cp scripts/limend.service /etc/systemd/system/
-#   sudo systemctl daemon-reload
-#   sudo systemctl enable --now limend
+# limend runs as an unprivileged system user, never root, in a sandbox that
+# can write only its spool, results and policy_proposals directories. It holds
+# a QPU (quantum processing unit) token, so a bug or a bad dependency should
+# not be able to reach anything else on the host.
 #
-# Edit WorkingDirectory/ExecStart below to match your checkout path, and
-# set LIMEN_QPU_TOKEN / LIMEN_QPU_INSTANCE via an EnvironmentFile rather
-# than inline Environment= lines so credentials never land in the unit
-# file itself (which systemctl cat / journalctl can both surface).
+# Install (as root, once):
+#   useradd --system --home-dir /opt/limen --shell /usr/sbin/nologin limend
+#   install -d -o limend -g limend -m 0700 /opt/limen/spool /opt/limen/results /opt/limen/policy_proposals
+#   install -d -m 0750 -o root -g limend /etc/limend
+#   install -m 0600 -o root -g root /dev/null /etc/limend/env   # then add LIMEN_QPU_TOKEN / LIMEN_QPU_INSTANCE
+#   cp scripts/limend.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now limend
+#
+# The env file is read by systemd before privileges are dropped, so it can stay
+# root-only (0600). Credentials never go inline in this file (systemctl cat and
+# journalctl can both surface it).
+#
+# Edit WorkingDirectory/ExecStart and ReadWritePaths below to match your
+# checkout path. Then check the result on the host:
+#   systemd-analyze verify /etc/systemd/system/limend.service
+#   systemd-analyze security limend      # exposure score; lower is better
+#   journalctl -u limend -f              # run a smoke job and watch for denials
+#
+# Directives deliberately left out, and why:
+#   PrivateDevices=yes             would hide /dev/nvidia* and break the local GPU tier 0 (aer_gpu).
+#                                  On a host without a GPU, turn it on.
+#   MemoryDenyWriteExecute=yes     breaks JIT-compiled numerics (numba, LLVM) used by the backends.
+#   SystemCallFilter=@system-service
+#                                  recommended once a real job has run clean under the sandbox;
+#                                  add it, then watch the journal for EPERM denials.
 
 [Unit]
 Description=limend -- LIMEN daemonized routing loop
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
+User=limend
+Group=limend
 WorkingDirectory=/opt/limen
 # --proposals-dir turns on the post-land rollback guard (harness-roadmap/03):
 # a landed routing-policy change that regresses against the live ledger is
@@ -32,6 +57,34 @@ ExecStart=/opt/limen/.venv/bin/limend /opt/limen/spool --results-dir /opt/limen/
 EnvironmentFile=-/etc/limend/env
 Restart=always
 RestartSec=2
+
+# --- sandbox: no new privileges, read-only system, minimal writable paths ---
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/opt/limen/spool /opt/limen/results /opt/limen/policy_proposals
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+# limend talks to QPU providers over HTTPS and to local sockets only.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Python must not drop .pyc files into the read-only checkout.
+Environment=PYTHONDONTWRITEBYTECODE=1
 
 [Install]
 WantedBy=multi-user.target

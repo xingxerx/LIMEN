@@ -23,18 +23,28 @@
 #                          on startup (LIMEN_KNOWN_PEERS)
 #   --extras EXTRAS        Comma-separated pip extras beyond 'distributed',
 #                          e.g. "dwave,braket" (default: none)
-#   --tls                  Generate a self-signed TLS cert/key on the
-#                          remote host and bind the server with TLS
+#   --tls                  Bind the server with TLS. This is the default; the flag is
+#                          kept so existing invocations keep working. A self-signed
+#                          EC cert/key is generated on the remote host if none exists.
+#   --insecure             Serve cleartext gRPC instead of TLS. Anyone who can reach
+#                          the port can call the node; use only on an isolated network.
+#   --bind ADDR            Interface address to bind (default: 0.0.0.0). Prefer a
+#                          specific private or VPN address.
 #   --remote-dir DIR       Remote checkout directory
 #                          (default: ~/limen-<node-id>)
 #   --ssh-key PATH         Identity file passed to ssh/rsync as -i PATH
 #   --no-restart           Skip stopping/restarting if the service is
 #                          already running (still installs/updates code)
 #
-# Example — bring up LIMEN-B and point it at LIMEN-A:
+# The node runs as the SSH user, never as root (the script refuses root), inside a
+# systemd sandbox: no new privileges, read-only system, private /tmp, restricted
+# network families and no capabilities. Ports below 1024 therefore need a
+# different setup (a reverse proxy, or CAP_NET_BIND_SERVICE added on purpose).
+#
+# Example: bring up LIMEN-B and point it at LIMEN-A:
 #   scripts/deploy_node.sh ubuntu@node-b \
 #       --node-id limen-b --port 50051 \
-#       --peers limen-a.internal:50051 --tls
+#       --peers limen-a.internal:50051
 #
 # Then on LIMEN-A's side, pass server_addresses=["node-b:50051"] to
 # limen.run_pipeline() — see examples/distributed_two_node.py.
@@ -57,7 +67,8 @@ NODE_ID=""
 PORT=50051
 PEERS=""
 EXTRAS=""
-USE_TLS=0
+USE_TLS=1
+BIND="0.0.0.0"
 REMOTE_DIR=""
 SSH_KEY_OPT=()
 RESTART=1
@@ -69,6 +80,8 @@ while [[ $# -gt 0 ]]; do
         --peers) PEERS="$2"; shift 2 ;;
         --extras) EXTRAS="$2"; shift 2 ;;
         --tls) USE_TLS=1; shift ;;
+        --insecure) USE_TLS=0; shift ;;
+        --bind) BIND="$2"; shift 2 ;;
         --remote-dir) REMOTE_DIR="$2"; shift 2 ;;
         --ssh-key) SSH_KEY_OPT=(-i "$2"); shift 2 ;;
         --no-restart) RESTART=0; shift ;;
@@ -80,6 +93,16 @@ done
 if [[ -z "$NODE_ID" ]]; then
     echo "ERROR: --node-id is required" >&2
     usage
+fi
+
+if [[ "$DEST" == *@* ]]; then
+    DEPLOY_USER="${DEST%@*}"
+else
+    DEPLOY_USER="$(ssh "${SSH_KEY_OPT[@]}" "$DEST" id -un)"
+fi
+if [[ "$DEPLOY_USER" == "root" ]]; then
+    echo "ERROR: refusing to run the node as root; deploy as an unprivileged user (e.g. ubuntu@host)" >&2
+    exit 1
 fi
 
 REMOTE_DIR="${REMOTE_DIR:-~/limen-${NODE_ID}}"
@@ -123,23 +146,30 @@ remote_dir="$1"
 cn="$2"
 cert_dir="${remote_dir}/.tls"
 mkdir -p "$cert_dir"
+chmod 700 "$cert_dir"
 if [[ ! -f "${cert_dir}/server.crt" ]]; then
-    openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+    # Modern TLS clients match the SAN, not the CN.
+    if [[ "$cn" =~ ^[0-9.]+$ ]]; then san="IP:${cn}"; else san="DNS:${cn}"; fi
+    (umask 077; openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 825 \
         -keyout "${cert_dir}/server.key" -out "${cert_dir}/server.crt" \
-        -subj "/CN=${cn}" >/dev/null 2>&1
+        -subj "/CN=${cn}" -addext "subjectAltName=${san}" >/dev/null 2>&1)
 fi
+chmod 600 "${cert_dir}/server.key"
 REMOTE_TLS
     TLS_ENV="Environment=\"LIMEN_TLS_CERT=${REMOTE_DIR}/.tls/server.crt\"
 Environment=\"LIMEN_TLS_KEY=${REMOTE_DIR}/.tls/server.key\""
 else
-    echo "[3/4] Skipping TLS (pass --tls to enable)."
+    echo "WARNING: --insecure: serving cleartext gRPC; anyone who can reach ${BIND}:${PORT} can call this node." >&2
+    echo "[3/4] Skipping TLS (--insecure)."
+    TLS_ENV="Environment=\"LIMEN_ALLOW_INSECURE_NETWORK=1\""
 fi
 
 echo "[4/4] Writing and starting systemd unit '${SERVICE_NAME}' ..."
 ssh "${SSH_KEY_OPT[@]}" "$DEST" sudo bash -s -- \
-    "$SERVICE_NAME" "$REMOTE_DIR" "$NODE_ID" "$PORT" "$PEERS" "$RESTART" "$TLS_ENV" <<'REMOTE_UNIT'
+    "$SERVICE_NAME" "$REMOTE_DIR" "$NODE_ID" "$PORT" "$PEERS" "$RESTART" "$TLS_ENV" "$DEPLOY_USER" "$BIND" <<'REMOTE_UNIT'
 set -euo pipefail
 service_name="$1"; remote_dir="$2"; node_id="$3"; port="$4"; peers="$5"; restart="$6"; tls_env="$7"
+deploy_user="$8"; bind_addr="$9"
 remote_dir_expanded="$(eval echo "$remote_dir")"
 
 cat > "/etc/systemd/system/${service_name}.service" <<UNIT
@@ -148,15 +178,41 @@ Description=LIMEN coordination node (${node_id})
 After=network.target
 
 [Service]
+User=${deploy_user}
 WorkingDirectory=${remote_dir_expanded}
 ExecStart=${remote_dir_expanded}/.venv/bin/python -m limen.distributed.server
 Environment="LIMEN_NODE_ID=${node_id}"
-Environment="LIMEN_NODE_HOST=0.0.0.0"
+Environment="LIMEN_NODE_HOST=${bind_addr}"
 Environment="LIMEN_NODE_PORT=${port}"
 Environment="LIMEN_KNOWN_PEERS=${peers}"
 ${tls_env}
 Restart=on-failure
 RestartSec=2
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# Sandbox: unprivileged, read-only system, nothing writable, no capabilities.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 
 [Install]
 WantedBy=multi-user.target
@@ -174,5 +230,5 @@ systemctl --no-pager status "${service_name}"
 REMOTE_UNIT
 
 echo
-echo "LIMEN node '${NODE_ID}' is running on ${DEST} as systemd unit '${SERVICE_NAME}', port ${PORT}."
+echo "LIMEN node '${NODE_ID}' is running on ${DEST} as systemd unit '${SERVICE_NAME}' (user ${DEPLOY_USER}), ${BIND}:${PORT}."
 echo "Point the other node's run_pipeline(server_addresses=[...]) at this host:${PORT}."

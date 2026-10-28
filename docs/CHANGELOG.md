@@ -5,6 +5,28 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Security: the distributed coordination server now binds loopback by
+  default (`LIMEN_NODE_HOST` defaulted to `0.0.0.0`) and refuses to serve
+  cleartext gRPC on any network-reachable address. Set `LIMEN_TLS_CERT` and
+  `LIMEN_TLS_KEY` (and `LIMEN_TLS_CA` for mutual TLS), or accept the risk
+  explicitly with `LIMEN_ALLOW_INSECURE_NETWORK=1`, which logs a warning.
+  Nodes that relied on the old wildcard default must now set
+  `LIMEN_NODE_HOST` to a specific interface address.
+- Security: `scripts/deploy_node.sh` runs the node as the SSH user (it refuses
+  root) inside a systemd sandbox, defaults to TLS (`--insecure` opts out,
+  `--bind ADDR` picks the interface), and generates an EC certificate with a
+  subject alternative name and mode 0600 key.
+- Security: `scripts/limend.service` runs limend as a dedicated unprivileged
+  user in a sandbox (no capabilities, read-only system, writable paths limited
+  to spool, results and policy_proposals, restricted address families).
+  `systemd-analyze security` exposure dropped from 9.4 UNSAFE to 3.1 OK.
+- Security: `scripts/apply_proposal.py` only applies a verdict file that the
+  append-only proposal ledger recorded byte-for-byte, as its latest row for
+  that id and as an acceptance.
+- CI: workflow actions are pinned to commit SHAs, workflow tokens are
+  read-only by default, checkouts do not persist credentials, the Rust
+  toolchain input is explicit, `pytest` comes from a pinned
+  `requirements-ci.txt`, and Dependabot watches Actions, Cargo and pip.
 - Added: self-improvement loop hardening (harness-roadmap/03). The
   proposal gate now also replays a held-out scenario set
   (`HELDOUT_SCENARIOS`, never read by the proposer) and rejects a proposal

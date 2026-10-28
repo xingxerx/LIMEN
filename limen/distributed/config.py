@@ -11,8 +11,32 @@ used elsewhere in the project (see limen/backends/qiskit_backend.py).
 
 from __future__ import annotations
 
+import ipaddress
+import logging
 import os
 from dataclasses import dataclass, field
+
+logger = logging.getLogger("limen.distributed")
+
+# Explicit opt-in for serving cleartext gRPC on a non-loopback address.
+ALLOW_INSECURE_NETWORK_ENV = "LIMEN_ALLOW_INSECURE_NETWORK"
+
+
+class InsecureBindError(ValueError):
+    """Refusing to serve cleartext gRPC on a network-reachable address."""
+
+
+def is_loopback_host(host: str) -> bool:
+    """True only for an address that cannot be reached from another machine.
+    Wildcards (``0.0.0.0``, ``::``, empty) and every other hostname or IP
+    count as network-reachable."""
+    host = host.strip().strip("[]")
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -22,12 +46,14 @@ class NodeConfig:
     Attributes:
         node_id: Unique identifier for this node.
         host: Hostname/IP this node's gRPC server binds to and advertises.
+            Defaults to loopback; set it explicitly to serve other machines
+            (and then configure TLS, see tls_cert_path).
         port: Port this node's gRPC server listens on.
         device_ids: HardwareDeltaModel device IDs this node serves.
         known_peers: "host:port" addresses to register with on startup.
         tls_cert_path: Path to this node's PEM-encoded TLS server certificate.
-            When unset (default), the server binds with ``add_insecure_port``
-            exactly as before TLS support was added.
+            When unset (default), the server binds with ``add_insecure_port``,
+            which is only allowed on a loopback host (see :meth:`check_bind_policy`).
         tls_key_path: Path to this node's PEM-encoded TLS private key.
             Required alongside tls_cert_path to enable TLS.
         tls_ca_path: Optional path to a PEM-encoded CA bundle used to verify
@@ -44,13 +70,50 @@ class NodeConfig:
     tls_key_path: str | None = None
     tls_ca_path: str | None = None
 
+    @property
+    def tls_enabled(self) -> bool:
+        return bool(self.tls_cert_path and self.tls_key_path)
+
+    def check_bind_policy(self) -> None:
+        """Refuse cleartext gRPC on a network-reachable address.
+
+        Loopback may run without TLS. Anything else needs TLS (a certificate
+        and key) unless ``LIMEN_ALLOW_INSECURE_NETWORK=1`` is set, which is
+        logged as a warning every time. TLS without a client CA is allowed but
+        warned about: any peer that can reach the port can call it.
+        """
+        if is_loopback_host(self.host):
+            return
+        if not self.tls_enabled:
+            if os.environ.get(ALLOW_INSECURE_NETWORK_ENV) == "1":
+                logger.warning(
+                    "serving cleartext gRPC on %s because %s=1; anyone who can reach this "
+                    "port can call it. Configure LIMEN_TLS_CERT/LIMEN_TLS_KEY (and LIMEN_TLS_CA).",
+                    self.host, ALLOW_INSECURE_NETWORK_ENV,
+                )
+                return
+            raise InsecureBindError(
+                f"refusing to serve cleartext gRPC on {self.host!r}: set LIMEN_TLS_CERT and "
+                f"LIMEN_TLS_KEY, bind a loopback address, or set {ALLOW_INSECURE_NETWORK_ENV}=1 "
+                "to accept the risk"
+            )
+        if not self.tls_ca_path:
+            logger.warning(
+                "serving TLS on %s without LIMEN_TLS_CA: server identity is protected but "
+                "clients are not authenticated (no mutual TLS).",
+                self.host,
+            )
+
     @classmethod
     def from_env(cls) -> NodeConfig:
         """Build a NodeConfig from LIMEN_NODE_* environment variables.
 
         Reads:
             LIMEN_NODE_ID: required, unique node identifier.
-            LIMEN_NODE_HOST: defaults to "0.0.0.0".
+            LIMEN_NODE_HOST: defaults to "127.0.0.1" (loopback). Set it to a
+                specific interface address to serve other machines; serving
+                cleartext on a non-loopback address is refused, see
+                :meth:`check_bind_policy`.
             LIMEN_NODE_PORT: defaults to 50051.
             LIMEN_NODE_DEVICE_IDS: comma-separated device IDs (optional).
             LIMEN_KNOWN_PEERS: comma-separated "host:port" peer addresses.
@@ -68,7 +131,7 @@ class NodeConfig:
         if not node_id:
             raise ValueError("LIMEN_NODE_ID environment variable is required")
 
-        host = os.environ.get("LIMEN_NODE_HOST", "0.0.0.0")
+        host = os.environ.get("LIMEN_NODE_HOST", "127.0.0.1")
         port = int(os.environ.get("LIMEN_NODE_PORT", "50051"))
         device_ids = _split_csv(os.environ.get("LIMEN_NODE_DEVICE_IDS", ""))
         known_peers = _split_csv(os.environ.get("LIMEN_KNOWN_PEERS", ""))
