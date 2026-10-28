@@ -3,7 +3,7 @@ use crate::analog::interface::{AnalogTargetAdapter, ContinuousFieldIR, HardwareD
 use std::collections::HashMap;
 use pyo3::prelude::*;
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PhotonicGBSParameters {
     #[pyo3(get)]

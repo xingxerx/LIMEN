@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 /// Port of `limen.ecc.surface_code.SurfaceCodePatch`; see that module's
 /// docstring for the construction rule. Correctness is established by
 /// the existing Python test suite, not re-derived here.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct SurfaceCodePatch {
     #[pyo3(get)]

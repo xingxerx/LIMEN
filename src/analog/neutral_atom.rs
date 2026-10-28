@@ -2,7 +2,7 @@ use crate::sim::ising_backend::LogicalGraph;
 use crate::analog::interface::{AnalogTargetAdapter, ContinuousFieldIR, HardwareDeltaModel, AnalogError, ScalingError};
 use pyo3::prelude::*;
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub struct SpatialCoordinates {
     #[pyo3(get)]
@@ -11,7 +11,7 @@ pub struct SpatialCoordinates {
     pub y: f64,
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub struct RydbergControlParameters {
     #[pyo3(get)]
