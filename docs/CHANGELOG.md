@@ -5,6 +5,61 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Security: the distributed coordination server no longer defaults to
+  `0.0.0.0`. `LIMEN_NODE_HOST` now defaults to this machine's Tailscale
+  address (so tailnet peers can reach the node), or loopback if it has none.
+  Any non-loopback address, Tailscale included, needs `LIMEN_TLS_CERT` and
+  `LIMEN_TLS_KEY` (and `LIMEN_TLS_CA` for mutual TLS); without them the server
+  refuses to start. WireGuard encrypts a tailnet link but does not authenticate
+  callers to the node. Set `LIMEN_NODE_HOST=127.0.0.1` for a local-only node, or
+  accept the risk explicitly with `LIMEN_ALLOW_INSECURE_NETWORK=1` (logged
+  warning). Nodes that relied on the old wildcard default must set TLS.
+- Security: `scripts/deploy_node.sh` runs the node as the SSH user (it refuses
+  root) inside a systemd sandbox, defaults to TLS (`--insecure` opts out,
+  `--bind ADDR` picks the interface), and generates an EC certificate with a
+  subject alternative name and mode 0600 key.
+- Security: `scripts/limend.service` runs limend as a dedicated unprivileged
+  user in a sandbox (no capabilities, read-only system, writable paths limited
+  to spool, results and policy_proposals, restricted address families).
+  `systemd-analyze security` exposure dropped from 9.4 UNSAFE to 3.1 OK.
+- Security: `scripts/apply_proposal.py` only applies a verdict file that the
+  append-only proposal ledger recorded byte-for-byte, as its latest row for
+  that id and as an acceptance.
+- CI: workflow actions are pinned to commit SHAs, workflow tokens are
+  read-only by default, checkouts do not persist credentials, the Rust
+  toolchain input is explicit, `pytest` comes from a pinned
+  `requirements-ci.txt`, and Dependabot watches Actions, Cargo and pip.
+- Added: self-improvement loop hardening (harness-roadmap/03). The
+  proposal gate now also replays a held-out scenario set
+  (`HELDOUT_SCENARIOS`, never read by the proposer) and rejects a proposal
+  if any single scenario costs more than under the live policy, so a saving
+  on one scenario can no longer hide an increase on another. A whole
+  evaluation uses one clock reading, so a no-op proposal now reports an
+  exposure delta of exactly 0. `Verdict` gained `from_dict` and optional
+  held-out fields; older verdict files still load.
+- Added: post-land rollback guard in limend (`--proposals-dir` or
+  `LIMEN_PROPOSALS_DIR`, off when neither is set). It anchors a 20-certificate
+  window in the live ledger the first time an accepted proposal is seen
+  live, then confirms it or restores the prior constant and witnesses the
+  result in the append-only proposal ledger. A recorded rollback is
+  re-applied after a restart. It only ever acts on the proposal whose value
+  is live now, and never raises into the routing loop. The rollback is
+  in-process, so it also files a `-revert-` claim in
+  `policy_proposals/pending/`; once CI accepts it,
+  `python scripts/apply_proposal.py <id>` edits the constant in
+  `budget_router.py` (accepted verdicts only, gated policies only, refuses a
+  stale source or a verdict with no recorded previous value) and a human
+  commits it through the PR gate.
+  `scripts/limend.service` now passes `--proposals-dir`.
+- Added: `limen.router.proposer` and `scripts/propose.py`, which sweep a
+  gated knob against the visible scenarios and write a plain-English claim
+  to `policy_proposals/pending/` for the CI verdict to judge. For
+  `CRITICALITY_SPREAD_THRESHOLD` it reports a fixed point (nothing to
+  propose): the meet gate forbids every move that could lower exposure and
+  cost is equal in both tiers. CI runs it as an informational step.
+- Fixed: `tests/test_router_proposal.py` left the live
+  `CRITICALITY_SPREAD_THRESHOLD` at 50.0 for later tests.
+
 - Fixed: the ledger-accepted routing policy
   `2026-07-24-raise-criticality-threshold` is now actually applied —
   `CRITICALITY_SPREAD_THRESHOLD` moves 2.0 -> 8.0 (`budget_router.py`).

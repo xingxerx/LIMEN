@@ -224,6 +224,34 @@ def build_proposal_report(verdict: Any) -> str:
         )
     lines.append("")
 
+    heldout_base = getattr(verdict, "heldout_baseline", None)
+    heldout_new = getattr(verdict, "heldout_proposed", None)
+    if heldout_base is not None and heldout_new is not None:
+        lines.append("## Held-out replay")
+        lines.append(
+            "Scenarios the proposal was not tuned against. The same non-regression "
+            "rules apply: a certified scenario stays certified, and no single scenario "
+            "may cost more than under the live policy."
+        )
+        lines.append("")
+        lines.append(
+            "| scenario | baseline tier/backend | proposed tier/backend | "
+            "baseline cost | proposed cost | meets? | cost ok? |"
+        )
+        lines.append("|---|---|---|---:|---:|---|---|")
+        for base_o, new_o in zip(heldout_base.outcomes, heldout_new.outcomes):
+            was_certified = int(base_o.tier) == 2
+            now_certified = int(new_o.tier) == 2
+            meets = "yes" if (not was_certified or now_certified) else "no"
+            cost_ok = "yes" if new_o.estimated_cost <= base_o.estimated_cost + 1e-9 else "no"
+            lines.append(
+                f"| {base_o.scenario_name} | T{base_o.tier}/{base_o.backend} "
+                f"| T{new_o.tier}/{new_o.backend} "
+                f"| {base_o.estimated_cost:.4g} | {new_o.estimated_cost:.4g} "
+                f"| {meets} | {cost_ok} |"
+            )
+        lines.append("")
+
     return "\n".join(lines)
 
 
