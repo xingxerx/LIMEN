@@ -39,6 +39,10 @@ logger = logging.getLogger("limen.limend")
 
 QPU_TOKEN_ENV = "LIMEN_QPU_TOKEN"
 QPU_INSTANCE_ENV = "LIMEN_QPU_INSTANCE"
+# Opt-in: directory holding policy_proposals/ (its accepted/ verdicts). When
+# neither this nor run_forever(proposals_dir=...) is set, the post-land
+# rollback guard stays off and limend behaves exactly as before.
+PROPOSALS_DIR_ENV = "LIMEN_PROPOSALS_DIR"
 
 
 def _qubo_from_json(raw: Any) -> dict[tuple[str, str], float]:
@@ -181,6 +185,45 @@ def process_one(
         return False
 
 
+def monitor_policy(
+    memory: Any,
+    results_dir: Any,
+    proposals_dir: Any = None,
+) -> list[dict[str, Any]]:
+    """Run the post-land rollback guard (harness-roadmap/03) against the
+    live ledger. A no-op unless *proposals_dir* (or ``LIMEN_PROPOSALS_DIR``)
+    names an existing directory, so it is opt-in. Never raises: a guard
+    failure must not take the routing daemon down, so any error is logged
+    and an empty list returned.
+    """
+    import pathlib
+
+    from limen.pipeline import _resolve_router_memory
+    from limen.router.proposal import monitor_landed_proposals
+
+    raw = proposals_dir if proposals_dir is not None else os.environ.get(PROPOSALS_DIR_ENV)
+    if not raw:
+        return []
+    path = pathlib.Path(raw)
+    if not path.is_dir():
+        logger.warning("proposals dir %s does not exist; rollback guard skipped", path)
+        return []
+
+    mem = None
+    try:
+        mem = _resolve_router_memory(memory, results_dir)
+        if mem is None:
+            return []
+        return monitor_landed_proposals(mem, path)
+    except Exception:
+        logger.exception("policy rollback guard failed; routing continues")
+        return []
+    finally:
+        # Close only a ledger this call opened; a caller-supplied RouterMemory stays open.
+        if mem is not None and mem is not memory:
+            mem.close()
+
+
 def run_forever(
     spool_dir: Any,
     *,
@@ -189,6 +232,7 @@ def run_forever(
     memory: Any = MEMORY_AUTO,
     memory_ceiling_mb: float | None = None,
     once: bool = False,
+    proposals_dir: Any = None,
 ) -> None:
     """Watch ``spool_dir`` and process requests until *once* or the
     memory ceiling is hit.
@@ -203,11 +247,21 @@ def run_forever(
     *results_dir* still receives ledger rows (Discovery Loop P0). Pass
     ``memory=None`` to opt out, or a RouterMemory / path / True to
     override.
+
+    *proposals_dir* (or ``LIMEN_PROPOSALS_DIR``) turns on the post-land
+    rollback guard: at startup, and after every batch that processed at
+    least one job, :func:`monitor_policy` checks whether a landed routing
+    policy change regressed against the live ledger and, if so, restores
+    the prior constant and witnesses it. Off when neither is set.
     """
     dirs = ensure_spool_dirs(spool_dir)
     qpu_token = os.environ.get(QPU_TOKEN_ENV)
     qpu_instance = os.environ.get(QPU_INSTANCE_ENV)
     lamport = 0
+
+    # Re-applies a previously witnessed rollback after a restart, and
+    # anchors the monitor window for a proposal that has just landed.
+    monitor_policy(memory, results_dir, proposals_dir)
 
     while True:
         pending_files = sorted(dirs[PENDING].glob("*.json"))
@@ -221,6 +275,9 @@ def run_forever(
                     qpu_instance=qpu_instance,
                     memory=memory,
                 )
+
+        if pending_files:
+            monitor_policy(memory, results_dir, proposals_dir)
 
         if once:
             return
