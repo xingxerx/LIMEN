@@ -44,10 +44,14 @@ ibm = ["qiskit>=1.0,<2.5", "qiskit-aer>=0.14"]
 braket = ["amazon-braket-sdk>=1.70"]
 openquantum = ["openquantum-sdk"]
 cutting = ["qiskit-addon-cutting>=0.9", "qiskit-ibm-runtime>=0.25"]
+# protobuf>=6.33.5 and grpcio>=1.81.1: limen/distributed/proto/*_pb2*.py is
+# generated with those versions and refuses to import under an older runtime,
+# so the old ">=4.25" / ">=1.60" floors let pip keep a broken install. No upper
+# cap: protobuf 7 loads this gencode (full suite passes on 7.36 + grpcio 1.85).
 distributed = [
-  "grpcio>=1.60",
+  "grpcio>=1.81.1",
   "grpcio-tools>=1.60",
-  "protobuf>=4.25",
+  "protobuf>=6.33.5",
   "grpcio-health-checking>=1.60",
   "cryptography>=48",
 ]
@@ -68,9 +72,9 @@ all = [
   "openquantum-sdk",
   "qiskit-addon-cutting>=0.9",
   "qiskit-ibm-runtime>=0.25",
-  "grpcio>=1.60",
+  "grpcio>=1.81.1",
   "grpcio-tools>=1.60",
-  "protobuf>=4.25",
+  "protobuf>=6.33.5",
   "grpcio-health-checking>=1.60",
   "cryptography>=48",
 ]

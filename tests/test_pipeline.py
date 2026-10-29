@@ -2,6 +2,8 @@
 
 import unittest
 
+import importlib.util
+
 import pytest
 
 from limen.pipeline import EndToEndCertificate, run_pipeline
@@ -155,9 +157,13 @@ class TestAerBackend:
 # D-Wave backend tests (skip when the Ocean SDK is not installed)
 # ---------------------------------------------------------------------------
 
-pytest.importorskip("dimod", reason="dwave Ocean SDK not installed")
-
-
+# A module-level importorskip skipped this whole file (statevector and Aer
+# tests included) on any machine without the Ocean SDK. Scope the skip to
+# the D-Wave class only.
+@pytest.mark.skipif(
+    importlib.util.find_spec("dimod") is None,
+    reason="dwave Ocean SDK not installed",
+)
 class TestDWaveBackend:
     SIMPLE_QUBO = {("x0", "x0"): -1.0, ("x1", "x1"): -1.0, ("x0", "x1"): 2.0}
 
