@@ -7,6 +7,7 @@ import pathlib
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 
 from limen.router import DEFAULT_FLEET, RouteRequest, Tier, informed_fleet, route
 from limen.router.memory import (
@@ -280,6 +281,18 @@ class TestTranspileCache(MemoryTestCase):
         self.assertIsNone(self.memory.transpile_cache_get(keys[1]))
         self.assertIsNone(self.memory.transpile_cache_get(keys[2]))
         self.assertEqual(self.memory.transpile_cache_get(keys[3]), b"payload")
+
+    def test_lru_order_survives_a_coarse_clock(self):
+        # time.time() repeats within a tick on Windows (~1-2 ms), so recency
+        # must not depend on the clock advancing between calls.
+        keys = [transpile_cache_key("circuit", str(i)) for i in range(4)]
+        with mock.patch("limen.router.memory.time.time", return_value=1000.0):
+            for key in keys:
+                self.memory.transpile_cache_put(key, b"payload", max_entries=10)
+            self.memory.transpile_cache_get(keys[0])  # refresh: most recently used
+            self.memory.transpile_cache_evict(max_entries=2)
+            kept = [k for k in keys if self.memory.transpile_cache_get(k) is not None]
+        self.assertCountEqual(kept, [keys[0], keys[3]])
 
 
 class TestCertificateLedger(MemoryTestCase):
