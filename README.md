@@ -44,7 +44,7 @@ For every compiled problem, LIMEN produces a confidence bound — not a proof of
 
 ## Workspace Organization
 
-To help navigate the files and components of LIMEN, see the [Directory Map](DIRECTORY_MAP.md) which labels and defines the role of every directory, script, and source file in the repository.
+To help navigate the files and components of LIMEN, see the [Directory Map](docs/DIRECTORY_MAP.md) which labels and defines the role of every directory, script, and source file in the repository.
 
 ---
 
@@ -243,7 +243,7 @@ print(cert.distributed_compilation)
 
 **Hardware agnostic formulation, hardware explicit compilation.** The logical IR knows nothing about hardware topology. The compiler knows everything. The boundary between them is hard and intentional.
 
-**Open core.** The compiler, IR, validator, and hardware adapters are source-available under the Elastic License 2.0. Production features (Stackelberg co-design, portfolio compilation, drift-aware margin selection) will be offered under a commercial license for enterprise deployments.
+**Open core.** Everything in this repository is source-available under the Elastic License 2.0 and free to use, including in production: the IR, compilers, validator, hardware adapters, gate-model pipeline and certificates, budget router, circuit cutting, Stackelberg co-design, and portfolio compilation. A LIMEN Team license adds multi-node compilation (`limen.distributed`), the `limend` daemon, router memory shared across nodes, and written permission to offer LIMEN as a hosted or managed service, which ELv2 otherwise prohibits. Team features check an offline, post-quantum-signed license key; nothing phones home. To ask about a Team license, open an issue.
 
 ---
 
@@ -256,7 +256,7 @@ LIMEN is early. The most valuable contributions right now are:
 - Validator improvements — better small-instance solvers, additional confidence metrics
 - Benchmarking data from real hardware runs
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for details.
 
 ---
 
