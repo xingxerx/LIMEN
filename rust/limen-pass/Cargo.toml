@@ -1,0 +1,16 @@
+[package]
+name = "limen-pass"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Pass trait and pipeline for limen-ir with invariant checks after every pass"
+
+[dependencies]
+limen-ir = { path = "../limen-ir" }
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
