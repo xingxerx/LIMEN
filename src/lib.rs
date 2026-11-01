@@ -8,6 +8,7 @@ mod graph_partition;
 mod scoring;
 mod stackelberg;
 mod validator;
+mod ir_py;
 pub mod sim;
 pub mod analog;
 
@@ -33,6 +34,7 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ecc::decoder::build_ecc_lookup_table, m)?)?;
     m.add_function(wrap_pyfunction!(ecc::decoder::logical_failure_probability, m)?)?;
     m.add_function(wrap_pyfunction!(graph_partition::stoer_wagner_bisect, m)?)?;
+    ir_py::register(m)?;
 
     let sim = PyModule::new_bound(m.py(), "sim")?;
     sim.add_class::<sim::ising_backend::IsingSimulator>()?;

@@ -11,6 +11,9 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.22", features = ["abi3-py310"] }
 rayon = "1.10"
 petgraph = "0.8"
+limen-ir = { path = "rust/limen-ir" }
+limen-qasm = { path = "rust/limen-qasm" }
+limen-pass = { path = "rust/limen-pass" }
 
 [features]
 # extension-module must NOT be a default/unconditional dependency feature:
