@@ -35,12 +35,14 @@ TEAM = "team"
 
 _PREFIX = "LIMEN1"
 
-# Features unlocked per tier. Paid features are placeholders until the
-# product decision on what is paid is made; nothing in LIMEN is gated yet.
+# Features unlocked per tier. Gated today: signed_certificates (signed
+# ledger entries, RouterMemory.append_certificate) and peer_mesh (multi-node
+# registration, limen.distributed.server.register_with_peers).
+# router_memory stays free; priority_routing is reserved, not gated yet.
 TIER_FEATURES: dict[str, frozenset[str]] = {
     FREE: frozenset(),
     PRO: frozenset({"signed_certificates", "priority_routing"}),
-    TEAM: frozenset({"signed_certificates", "priority_routing", "peer_mesh", "router_memory"}),
+    TEAM: frozenset({"signed_certificates", "priority_routing", "peer_mesh"}),
 }
 
 
@@ -150,18 +152,26 @@ def current_license() -> License:
     return _FREE_LICENSE if key is None else decode_key(key)
 
 
+def check_feature(feature: str) -> None:
+    """Raise LicenseError unless the active license has *feature*.
+
+    Use inline when only part of a function is paid (e.g. signing is paid,
+    unsigned use stays free); use require_feature for whole functions."""
+    lic = current_license()
+    if not lic.has(feature):
+        why = f" ({lic.reason})" if lic.reason else ""
+        raise LicenseError(
+            f"'{feature}' needs a paid LIMEN license{why}. Set LIMEN_LICENSE or ~/.limen/license.key."
+        )
+
+
 def require_feature(feature: str) -> Callable:
     """Decorator: raise LicenseError unless the active license has *feature*."""
 
     def deco(fn: Callable) -> Callable:
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            lic = current_license()
-            if not lic.has(feature):
-                why = f" ({lic.reason})" if lic.reason else ""
-                raise LicenseError(
-                    f"'{feature}' needs a paid LIMEN license{why}. Set LIMEN_LICENSE or ~/.limen/license.key."
-                )
+            check_feature(feature)
             return fn(*args, **kwargs)
 
         return wrapper

@@ -62,3 +62,35 @@ def test_no_issuer_configured():
 
 def test_malformed():
     assert decode_key("garbage", "AAAA").reason == "malformed key"
+
+from limen.licensing.license import FREE, LicenseError, License
+
+
+def test_free_tier_blocks_signed_certificates(tmp_path, monkeypatch):
+    pytest.importorskip("limen.security.pqc", exc_type=ImportError)
+    from unittest import mock
+    from limen.router.memory import RouterMemory
+
+    mem = RouterMemory(tmp_path / "m.sqlite3")
+    try:
+        with mock.patch("limen.licensing.license.current_license", return_value=License(tier=FREE)):
+            mem.append_certificate({"e": 1})  # unsigned stays free
+            with pytest.raises(LicenseError):
+                mem.append_certificate({"e": 2}, private_key=pqc.generate_signing_key())
+    finally:
+        mem.close()
+
+
+def test_free_tier_blocks_peer_mesh_but_not_single_node():
+    pytest.importorskip("grpc")
+    from unittest import mock
+    from limen.distributed.config import NodeConfig
+    from limen.distributed.registry import NodeRegistry
+    from limen.distributed.server import register_with_peers
+
+    with mock.patch("limen.licensing.license.current_license", return_value=License(tier=FREE)):
+        register_with_peers(NodeConfig(node_id="a", host="127.0.0.1", port=0, known_peers=[]), NodeRegistry())
+        with pytest.raises(LicenseError):
+            register_with_peers(
+                NodeConfig(node_id="a", host="127.0.0.1", port=0, known_peers=["127.0.0.1:1"]), NodeRegistry()
+            )

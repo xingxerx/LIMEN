@@ -344,11 +344,16 @@ class TestCertificateLedger(MemoryTestCase):
 
     @unittest.skipUnless(_PQC_AVAILABLE, "cryptography>=48 (ML-DSA / FIPS 204) not installed")
     def test_signed_entry_verifies_and_binds_to_chain(self):
+        from limen.licensing.license import PRO, License
+
         key = generate_signing_key()
         self.memory.append_certificate({"energy": -1.0})
-        entry = self.memory.append_certificate(
-            self.CERT, backend="ibm_kingston", private_key=key
-        )
+        with mock.patch(
+            "limen.licensing.license.current_license", return_value=License(tier=PRO)
+        ):
+            entry = self.memory.append_certificate(
+                self.CERT, backend="ibm_kingston", private_key=key
+            )
         self.assertIsNotNone(entry.signature)
         self.assertTrue(
             self.memory.verify_certificate_signature(entry, key.public_key())

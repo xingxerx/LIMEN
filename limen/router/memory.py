@@ -620,7 +620,10 @@ class RouterMemory:
 
         signature: str | None = None
         if private_key is not None:
+            from limen.licensing.license import check_feature
             from limen.security.pqc import sign_json
+
+            check_feature("signed_certificates")
 
             signature = sign_json(
                 private_key, {"payload_sha256": payload_hash, "chain_sha256": chain}
