@@ -52,6 +52,17 @@ class CuttingCertificate:
         physical_error_rate: The physical_error_rate the ECC certificate
             was computed against.
         distance: Surface-code distance the ECC certificate used.
+        aggregate_logical_error_rate: ``1 - (1 - logical_error_rate)^n``
+            over the n decoded variables -- the surface-code model's own
+            prediction, exactly as EndToEndCertificate reports it.
+        predicted_logical_error_bound: ``max(aggregate, measured prior)``,
+            the conservative envelope to compare a measured deficit
+            against; never a blend of the two.
+        measured_logical_error_prior: Optional empirical prior from run
+            history on the same backend (limen.router.history), forwarded
+            from the RoutePlan; None when no history exists.
+        roundtrip_corrects_all_weight1: Whether the gate-executed
+            syndrome round-trip corrected every weight-1 X error.
         notes: Human-readable caveats, always including an explicit
             statement of the marginal-rounding decode and the mean-field
             approximation (see class docstring).
@@ -68,6 +79,10 @@ class CuttingCertificate:
     logical_error_rate: float | None
     physical_error_rate: float | None
     distance: int | None
+    aggregate_logical_error_rate: float | None = None
+    predicted_logical_error_bound: float | None = None
+    measured_logical_error_prior: float | None = None
+    roundtrip_corrects_all_weight1: bool | None = None
     notes: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -83,6 +98,10 @@ class CuttingCertificate:
             "logical_error_rate": self.logical_error_rate,
             "physical_error_rate": self.physical_error_rate,
             "distance": self.distance,
+            "aggregate_logical_error_rate": self.aggregate_logical_error_rate,
+            "predicted_logical_error_bound": self.predicted_logical_error_bound,
+            "measured_logical_error_prior": self.measured_logical_error_prior,
+            "roundtrip_corrects_all_weight1": self.roundtrip_corrects_all_weight1,
             "notes": list(self.notes),
             "metadata": dict(self.metadata),
         }

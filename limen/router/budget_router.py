@@ -16,9 +16,21 @@ directly.
 Tiers:
 
     Tier 0 (SIM)          — free, offline, exact statevector simulation.
-    Tier 1 (HW_STANDARD)  — QPU shots, no error correction.
-    Tier 2 (HW_CERTIFIED) — QPU shots plus a surface-code patch budget
-                            allocated by criticality (limen.ecc.budget).
+                            No ECC term: a noiseless simulator has no
+                            physical error rate to certify against.
+    Tier 1 (HW_STANDARD)  — QPU shots plus the surface-code logical-error
+                            certificate (limen.ecc.certificate), but no
+                            physical-qubit patch budget.
+    Tier 2 (HW_CERTIFIED) — validated hardware: everything Tier 1 does
+                            plus a surface-code patch budget allocated by
+                            criticality (limen.ecc.budget).
+
+Every tier that touches noisy hardware carries the ECC certificate. It is
+an analytic, solution-agnostic model term costing neither credits nor
+qubits, so withholding it from Tier 1 only meant a noisy run reported no
+logical error rate and contributed nothing to the router ledger. What
+separates the two hardware tiers is the *patch budget* — spending real
+physical qubits to protect the variables that dominate error sensitivity.
 
 Routing is deterministic — a pure function of the request and the fleet.
 The same QUBO with the same request always yields an identical plan;
@@ -33,6 +45,8 @@ means every variable is equally error-sensitive and plain QPU sampling
 suffices; a heavy-tailed spectrum means a few variables dominate error
 sensitivity, so protecting exactly those with surface-code patches (the
 thing the ECC budget allocator does) is where the credits should go.
+Both tiers are certified either way — the spread decides whether physical
+qubits get spent on patches, not whether the logical error rate is known.
 
 Credentials never appear in a RoutePlan: ``pipeline_kwargs`` carries
 backend names and shot counts only, and the caller supplies
@@ -82,7 +96,21 @@ _BACKEND_KINDS = frozenset({"ibm", "openquantum", "braket", "sim"})
 
 
 class Tier(IntEnum):
-    """Fidelity tiers, cheapest first."""
+    """Fidelity tiers, cheapest first.
+
+    ECC applies to every tier that touches noisy hardware:
+
+    - ``SIM``: noiseless statevector; no ECC term (there is no physical
+      error rate to certify against).
+    - ``HW_STANDARD``: any hardware; the surface-code logical-error
+      certificate is computed (distance from the fidelity target,
+      physical error rate from calibration, measured prior from run
+      history) but no physical-qubit patch budget is allocated.
+    - ``HW_CERTIFIED``: validated hardware only; everything Tier 1 does
+      plus a criticality-ranked surface-code patch allocation
+      (``RoutePlan.patch_assignments``) under the device's spare-qubit
+      budget.
+    """
 
     SIM = 0
     HW_STANDARD = 1
@@ -108,7 +136,7 @@ class BackendProfile:
     limen.router.calibration): None until a live calibration snapshot
     for this backend has been fetched and scanned. When set, route()
     prefers it over RouteRequest.physical_error_rate's hardcoded default
-    for Tier 2 planning.
+    for hardware-tier (Tier 1 and Tier 2) planning.
 
     ``substrate_affinity`` is an optional soft preference over
     :class:`~limen.router.problem_profile.ProblemProfile` traits (keys
@@ -515,8 +543,14 @@ def route(
     ecc_distance: int | None = None
     physical_qubit_budget: int | None = None
     patches: tuple[PatchAssignment, ...] = ()
-    if tier == Tier.HW_CERTIFIED:
+    # Every hardware tier gets the surface-code certificate: it costs no
+    # credits and no qubits (it is an analytic, solution-agnostic model
+    # term), so a Tier 1 run reports a logical error rate too, and its
+    # outcome feeds the ledger like a Tier 2 run. Only the physical-qubit
+    # patch budget stays a Tier 2 (validated-hardware) concern.
+    if tier >= Tier.HW_STANDARD:
         ecc_distance = distance_for_fidelity(request.fidelity_target)
+    if tier == Tier.HW_CERTIFIED:
         physical_qubit_budget = max(backend.max_qubits - n_vars, 0)
         patches = tuple(
             allocate_ecc_budget(int_qubo, n_vars, physical_qubit_budget, ecc_distance)
@@ -525,6 +559,13 @@ def route(
             f"ECC: distance {ecc_distance}, {physical_qubit_budget} physical qubits "
             f"budgeted, {len(patches)} of {n_vars} variables patched"
         )
+    elif tier == Tier.HW_STANDARD:
+        notes.append(
+            f"ECC: distance {ecc_distance} logical-error certificate "
+            "(no patch budget at Tier 1)"
+        )
+    else:
+        notes.append("ECC: skipped (Tier 0 statevector is noiseless)")
     if use_cutting:
         notes.append(
             f"{n_vars} vars exceed {backend.max_qubits}q: cut into "
@@ -551,7 +592,7 @@ def route(
         kwargs["braket_shots"] = shots
         kwargs["braket_use_qpu"] = True
 
-    if tier == Tier.HW_CERTIFIED:
+    if tier >= Tier.HW_STANDARD:
         kwargs["encode_logical"] = True
         kwargs["distance"] = ecc_distance
         if backend.physical_error_rate is not None:

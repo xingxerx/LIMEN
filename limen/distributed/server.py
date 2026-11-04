@@ -213,6 +213,11 @@ def register_with_peers(config: NodeConfig, registry: NodeRegistry) -> None:
     doesn't permanently miss registration, and a single unreachable peer
     doesn't prevent registering with the rest.
     """
+    if not config.known_peers:
+        return  # single node: free tier, nothing to register
+    from limen.licensing.license import check_feature
+
+    check_feature("peer_mesh")
     self_info = NodeInfo(
         node_id=config.node_id, host=config.host, port=config.port, device_ids=config.device_ids
     )

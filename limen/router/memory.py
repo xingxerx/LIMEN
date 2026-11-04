@@ -290,6 +290,14 @@ class RouterMemory:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        self._last_tick = 0.0
+
+    def _tick(self) -> float:
+        """A strictly increasing timestamp for LRU order. time.time() alone
+        repeats within a tick on coarse clocks (~1-2 ms on Windows), and the
+        eviction tie-break (cache_key) is unrelated to recency."""
+        self._last_tick = now = max(time.time(), self._last_tick + 1e-6)
+        return now
 
     @classmethod
     def in_results_dir(cls, results_dir: pathlib.Path | str) -> "RouterMemory":
@@ -544,7 +552,7 @@ class RouterMemory:
             self._conn.execute(
                 "UPDATE transpile_cache SET last_used_at = ?, hits = hits + 1"
                 " WHERE cache_key = ?",
-                (time.time(), cache_key),
+                (self._tick(), cache_key),
             )
         return row[0]
 
@@ -558,7 +566,7 @@ class RouterMemory:
     ) -> None:
         """Store (or overwrite) a transpiled payload, then evict the
         least-recently-used entries beyond *max_entries*."""
-        now = time.time()
+        now = self._tick()
         with self._conn:
             self._conn.execute(
                 "INSERT INTO transpile_cache"
@@ -612,7 +620,10 @@ class RouterMemory:
 
         signature: str | None = None
         if private_key is not None:
+            from limen.licensing.license import check_feature
             from limen.security.pqc import sign_json
+
+            check_feature("signed_certificates")
 
             signature = sign_json(
                 private_key, {"payload_sha256": payload_hash, "chain_sha256": chain}

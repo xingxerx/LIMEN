@@ -1,8 +1,11 @@
 # tests/test_quantum_channel.py
+import importlib.util
 import math
 import pytest
 from limen.quantum_channel.channel_delta import ChannelDeltaModel
 from limen.quantum_channel.qkd import sift_and_evaluate
+
+_HAS_QISKIT = importlib.util.find_spec("qiskit") is not None
 
 
 def test_within_coherence_true():
@@ -68,20 +71,14 @@ def test_qkd_result_to_dict():
     assert "qber" in d
 
 
-@pytest.mark.skipif(
-    True,  # flip to False once qiskit is installed
-    reason="requires qiskit"
-)
+@pytest.mark.skipif(not _HAS_QISKIT, reason="requires qiskit")
 def test_bb84_circuit_shape():
     from limen.quantum_channel.qkd import bb84_circuit
     qc, _, _, _ = bb84_circuit(8)
     assert qc.num_qubits == 8
 
 
-@pytest.mark.skipif(
-    True,
-    reason="requires qiskit"
-)
+@pytest.mark.skipif(not _HAS_QISKIT, reason="requires qiskit")
 def test_teleport_circuit_shape():
     from limen.quantum_channel.teleport import teleport_circuit
     qc = teleport_circuit()

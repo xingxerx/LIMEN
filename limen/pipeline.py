@@ -126,6 +126,102 @@ def _energy(qubo: dict[tuple[str, str], float], assignment: dict[str, int]) -> f
     return sum(w * assignment[i] * assignment[j] for (i, j), w in qubo.items())
 
 
+@dataclass
+class _EccTerm:
+    """The surface-code ECC term shared by every certificate shape.
+
+    Solution-agnostic by construction: it depends only on the number of
+    logical qubits, the code distance, the physical error rate and an
+    optional measured prior, so :func:`run_pipeline` (EndToEndCertificate)
+    and :func:`run_cut_route_request` (CuttingCertificate) compute it
+    through the same :func:`_certify_ecc` call and can never drift apart.
+    """
+
+    logical_error_rate: float | None = None
+    aggregate_logical_error_rate: float | None = None
+    predicted_logical_error_bound: float | None = None
+    roundtrip_corrects_all_weight1: bool | None = None
+    distance: int | None = None
+    notes: list[str] = field(default_factory=list)
+
+
+def _certify_ecc(
+    n_logical_qubits: int,
+    distance: int,
+    physical_error_rate: float | None,
+    measured_logical_error: float | None = None,
+    *,
+    encode_logical: bool = True,
+) -> _EccTerm:
+    """Compute the surface-code logical-error term for *n_logical_qubits*.
+
+    Returns an empty :class:`_EccTerm` when ``encode_logical`` is False,
+    and one carrying only a skip note when no ``physical_error_rate`` is
+    available. Otherwise: the exact per-qubit logical error rate
+    (limen.ecc.certificate.certify_logical_qubit), its n-qubit aggregate
+    ``1 - (1 - p_L)^n``, the conservative envelope
+    ``max(aggregate, measured_logical_error)``, and a gate-executed
+    round-trip check that the code corrects every weight-1 X error.
+    """
+    term = _EccTerm()
+    if not encode_logical:
+        return term
+    if physical_error_rate is None:
+        term.notes.append("ECC certificate skipped: no physical_error_rate supplied.")
+        return term
+
+    patch = build_surface_code(distance)
+    decoder = LookupDecoder(patch)
+    cert = certify_logical_qubit(patch, decoder, physical_error_rate)
+    logical_rate = cert.logical_error_rate
+    aggregate_rate = 1.0 - (1.0 - logical_rate) ** n_logical_qubits
+    notes: list[str] = []
+    # Conservative envelope, not a blend: the model prediction stays
+    # reported untouched in aggregate_logical_error_rate; the bound
+    # takes whichever of (model, measured prior) is worse, so repeat
+    # runs on a backend with a known deficit land within prediction
+    # without pretending the model predicted it.
+    predicted_bound = aggregate_rate
+    if measured_logical_error is not None:
+        predicted_bound = max(aggregate_rate, measured_logical_error)
+        if measured_logical_error > aggregate_rate:
+            notes.append(
+                f"Measured logical-error prior {measured_logical_error:.3e} "
+                f"from run history exceeds the surface-code model's "
+                f"aggregate prediction {aggregate_rate:.3e}; "
+                f"predicted_logical_error_bound uses the prior."
+            )
+        else:
+            notes.append(
+                f"Measured logical-error prior {measured_logical_error:.3e} "
+                f"from run history is within the surface-code model's "
+                f"aggregate prediction {aggregate_rate:.3e}; "
+                f"predicted_logical_error_bound uses the model."
+            )
+    # Back the analytic certificate with executed gate circuits: run
+    # the syndrome-extraction loop on the simulator for every weight-1
+    # X error and confirm the code corrects them all.
+    roundtrip_ok = verify_corrects_all_weight_one(patch, decoder)
+    notes.append(
+        f"Logical-qubit budget: distance-{distance} surface code at physical "
+        f"error rate {physical_error_rate} gives per-qubit logical error "
+        f"{logical_rate:.3e} ({n_logical_qubits} logical qubits)."
+    )
+    notes.append(
+        "Gate-executed round-trip "
+        + ("corrects" if roundtrip_ok else "FAILS to correct")
+        + " all weight-1 X errors."
+    )
+    return _EccTerm(
+        logical_error_rate=logical_rate,
+        aggregate_logical_error_rate=aggregate_rate,
+        predicted_logical_error_bound=predicted_bound,
+        roundtrip_corrects_all_weight1=roundtrip_ok,
+        distance=distance,
+        notes=notes,
+    )
+
+
 def _grid_search(
     graph: LogicalGraph,
     layers: int,
@@ -397,8 +493,10 @@ def run_cut_route_request(
     qubit — see limen.cutting.qubo_bridge module docstring for why),
     decodes a solution bitstring from those marginals by threshold
     rounding, and certifies it with the same surface-code ECC term
-    run_pipeline uses (limen.ecc.certificate.certify_logical_qubit,
-    reused unmodified — it is solution-agnostic).
+    run_pipeline uses (:func:`_certify_ecc` — per-qubit rate, n-qubit
+    aggregate, ``max(model, measured prior)`` bound and the gate-executed
+    weight-1 round-trip; it is solution-agnostic, so nothing about
+    cutting changes it).
 
     Args:
         qubo: The QUBO dict ``plan`` was routed for.
@@ -483,9 +581,8 @@ def run_cut_route_request(
 
     distance = plan.pipeline_kwargs.get("distance", 3)
     physical_error_rate = plan.pipeline_kwargs.get("physical_error_rate", 1e-3)
-    patch = build_surface_code(distance)
-    decoder = LookupDecoder(patch)
-    cert = certify_logical_qubit(patch, decoder, physical_error_rate)
+    measured_prior = plan.pipeline_kwargs.get("measured_logical_error")
+    ecc = _certify_ecc(n, distance, physical_error_rate, measured_prior)
 
     notes = [
         f"{n} vars exceeded backend capacity ({max_subcircuit_qubits}q): solved "
@@ -508,10 +605,14 @@ def run_cut_route_request(
         num_partitions=reconstruction.num_partitions,
         num_cuts=reconstruction.num_cuts,
         job_ids=reconstruction.job_ids,
-        logical_error_rate=cert.logical_error_rate,
+        logical_error_rate=ecc.logical_error_rate,
         physical_error_rate=physical_error_rate,
         distance=distance,
-        notes=notes,
+        aggregate_logical_error_rate=ecc.aggregate_logical_error_rate,
+        predicted_logical_error_bound=ecc.predicted_logical_error_bound,
+        measured_logical_error_prior=measured_prior,
+        roundtrip_corrects_all_weight1=ecc.roundtrip_corrects_all_weight1,
+        notes=notes + ecc.notes,
         metadata={"n_vars": n, "max_subcircuit_qubits": max_subcircuit_qubits},
     )
 
@@ -560,8 +661,13 @@ def _resolve_router_memory(memory: Any, results_dir: Any) -> Any:
     return RouterMemory(memory)
 
 
-def _record_route_outcome(mem: Any, plan: Any, cert: "EndToEndCertificate") -> str | None:
+def _record_route_outcome(mem: Any, plan: Any, cert: Any) -> str | None:
     """Write a just-completed run's outcome into *mem*, if memory is in use.
+
+    *cert* is an EndToEndCertificate or a CuttingCertificate; both carry
+    the same ECC fields (``aggregate_logical_error_rate``,
+    ``physical_error_rate``) so a cut-circuit hardware run feeds the
+    ledger exactly like a single-circuit one.
 
     ``run_route_request`` reads memory (history/calibration/ledger
     estimates) at the *start* of a call via ``informed_fleet``, but until
@@ -586,8 +692,8 @@ def _record_route_outcome(mem: Any, plan: Any, cert: "EndToEndCertificate") -> s
     try:
         mem.record_route_outcome(
             str(backend) if backend is not None else "unknown",
-            logical_error=cert.aggregate_logical_error_rate,
-            physical_error_rate=cert.physical_error_rate,
+            logical_error=getattr(cert, "aggregate_logical_error_rate", None),
+            physical_error_rate=getattr(cert, "physical_error_rate", None),
         )
         entry = mem.append_certificate(
             cert.to_dict(), backend=str(backend) if backend else None
@@ -598,7 +704,7 @@ def _record_route_outcome(mem: Any, plan: Any, cert: "EndToEndCertificate") -> s
 
 
 def _finalize_run(
-    request: Any, mem: Any, plan: Any, cert: "EndToEndCertificate", emit_report: bool
+    request: Any, mem: Any, plan: Any, cert: Any, emit_report: bool
 ) -> None:
     """Report, then record -- in that order, deliberately.
 
@@ -1431,55 +1537,15 @@ def run_pipeline(
             if abs(_energy(canonical_qubo, bitstring_to_assignment(bits, order)) - target) < 1e-9
         )
 
-    logical_rate: float | None = None
-    aggregate_rate: float | None = None
-    predicted_bound: float | None = None
-    roundtrip_corrects_all_weight1: bool | None = None
-    notes: list[str] = []
-    if encode_logical and physical_error_rate is not None:
-        patch = build_surface_code(distance)
-        decoder = LookupDecoder(patch)
-        cert = certify_logical_qubit(patch, decoder, physical_error_rate)
-        logical_rate = cert.logical_error_rate
-        aggregate_rate = 1.0 - (1.0 - logical_rate) ** n
-        # Conservative envelope, not a blend: the model prediction stays
-        # reported untouched in aggregate_logical_error_rate; the bound
-        # takes whichever of (model, measured prior) is worse, so repeat
-        # runs on a backend with a known deficit land within prediction
-        # without pretending the model predicted it.
-        predicted_bound = aggregate_rate
-        if measured_logical_error is not None:
-            predicted_bound = max(aggregate_rate, measured_logical_error)
-            if measured_logical_error > aggregate_rate:
-                notes.append(
-                    f"Measured logical-error prior {measured_logical_error:.3e} "
-                    f"from run history exceeds the surface-code model's "
-                    f"aggregate prediction {aggregate_rate:.3e}; "
-                    f"predicted_logical_error_bound uses the prior."
-                )
-            else:
-                notes.append(
-                    f"Measured logical-error prior {measured_logical_error:.3e} "
-                    f"from run history is within the surface-code model's "
-                    f"aggregate prediction {aggregate_rate:.3e}; "
-                    f"predicted_logical_error_bound uses the model."
-                )
-        # Back the analytic certificate with executed gate circuits: run
-        # the syndrome-extraction loop on the simulator for every weight-1
-        # X error and confirm the code corrects them all.
-        roundtrip_corrects_all_weight1 = verify_corrects_all_weight_one(patch, decoder)
-        notes.append(
-            f"Logical-qubit budget: distance-{distance} surface code at physical "
-            f"error rate {physical_error_rate} gives per-qubit logical error "
-            f"{logical_rate:.3e} ({n} logical qubits)."
-        )
-        notes.append(
-            "Gate-executed round-trip "
-            + ("corrects" if roundtrip_corrects_all_weight1 else "FAILS to correct")
-            + " all weight-1 X errors."
-        )
-    elif encode_logical:
-        notes.append("ECC certificate skipped: no physical_error_rate supplied.")
+    ecc = _certify_ecc(
+        n, distance, physical_error_rate, measured_logical_error,
+        encode_logical=encode_logical,
+    )
+    logical_rate = ecc.logical_error_rate
+    aggregate_rate = ecc.aggregate_logical_error_rate
+    predicted_bound = ecc.predicted_logical_error_bound
+    roundtrip_corrects_all_weight1 = ecc.roundtrip_corrects_all_weight1
+    notes: list[str] = list(ecc.notes)
 
     if backend == "dwave":
         if is_optimal:

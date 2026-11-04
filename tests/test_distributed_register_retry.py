@@ -34,6 +34,17 @@ from limen.distributed.server import (
 pytestmark = pytest.mark.network
 
 
+@pytest.fixture(autouse=True)
+def _team_license():
+    """register_with_peers is gated on peer_mesh; these tests cover retry."""
+    from limen.licensing.license import TEAM, License
+
+    with mock.patch(
+        "limen.licensing.license.current_license", return_value=License(tier=TEAM)
+    ):
+        yield
+
+
 class _FlakyThenOkClient:
     """Fails register() on the first N *instances* with grpc.RpcError, then succeeds.
 
