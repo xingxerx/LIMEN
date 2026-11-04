@@ -57,7 +57,7 @@ class TestRunPipelineFromPlan(unittest.TestCase):
             "qiskit_addon_cutting", reason="qiskit-addon-cutting not installed"
         )
         pytest.importorskip("qiskit_aer", reason="qiskit-aer not installed")
-        pytest.importorskip("limen_core", reason="limen_core Rust extension not installed")
+        pytest.importorskip("limen.limen_core", reason="limen_core Rust extension not installed")
         from limen.cutting.certificate import CuttingCertificate
         from limen.cutting.qubo_bridge import classical_energy
 

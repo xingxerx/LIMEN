@@ -243,7 +243,15 @@ print(cert.distributed_compilation)
 
 **Hardware agnostic formulation, hardware explicit compilation.** The logical IR knows nothing about hardware topology. The compiler knows everything. The boundary between them is hard and intentional.
 
-**Open core.** Everything in this repository is source-available under the Elastic License 2.0 and free to use, including in production: the IR, compilers, validator, hardware adapters, gate-model pipeline and certificates, budget router, circuit cutting, Stackelberg co-design, and portfolio compilation. A LIMEN Team license adds multi-node compilation (`limen.distributed`), the `limend` daemon, router memory shared across nodes, and written permission to offer LIMEN as a hosted or managed service, which ELv2 otherwise prohibits. Team features check an offline, post-quantum-signed license key; nothing phones home. To ask about a Team license, open an issue.
+**Open core.** The core of this repository is source-available under the Elastic License 2.0 and free to use, including in production: the IR, compilers, validator, hardware adapters, gate-model pipeline and unsigned certificates, budget router, router memory, circuit cutting, Stackelberg co-design, and portfolio compilation. Two paid tiers check an offline, post-quantum-signed (ML-DSA-65) license key; nothing phones home.
+
+| Tier | Adds |
+|---|---|
+| Free | Everything above |
+| Pro | Signed certificates (ML-DSA-65 signed ledger entries) |
+| Team | Pro, plus multi-node peer registration (`peer_mesh`) and written permission to offer LIMEN as a hosted or managed service, which ELv2 otherwise prohibits |
+
+Key install, verification and how to request a license: [docs/LICENSING.md](docs/LICENSING.md).
 
 ---
 
@@ -279,7 +287,7 @@ under ELv2.
 
 ## Status
 
-**v0.8.3 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Phase 4 complete · Phase 5 complete · Phase 6 in progress · Hardware validated.**
+**v0.9.0 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Phase 4 complete · Phase 5 complete · Phase 6 in progress · Hardware validated.**
 Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend
 adapters shipped and tested. Stackelberg co-design loop operational with
 Rust-backed κ scoring, stability-penalised learning rate, and portfolio
@@ -360,8 +368,9 @@ so a crashed terminal or a long maintenance-window queue can't strand a
 completed job. Hardware-validated on ibm_kingston (job
 `d965qgotcv6s73djc1l0`).
 
-387 tests passing, 3 skipped (skips are environment-gated: optional SDKs not
-installed in this dev environment). Zero regressions.
+570 tests passing, 0 skipped, with every optional extra installed
+(`pip install "limen-compiler[all]"`). Without the extras, tests for the
+missing SDKs skip cleanly. Zero regressions.
 
 If you are building in this space and want to collaborate, open an issue.
 
