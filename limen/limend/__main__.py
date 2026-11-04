@@ -25,6 +25,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--memory", type=pathlib.Path, default=None,
                          help="path to a RouterMemory sqlite3 ledger (created if missing); "
                               "when omitted, uses MEMORY_AUTO (ledger under --results-dir when set)")
+    parser.add_argument("--proposals-dir", type=pathlib.Path, default=None,
+                         help="policy_proposals/ directory; turns on the post-land rollback guard "
+                              "(also read from LIMEN_PROPOSALS_DIR; off when neither is set)")
     parser.add_argument("--poll-interval", type=float, default=1.0)
     parser.add_argument("--memory-ceiling-mb", type=float, default=None,
                          help="preemptively exit (for supervisor restart) once RSS crosses this")
@@ -46,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
         memory=args.memory if args.memory is not None else MEMORY_AUTO,
         memory_ceiling_mb=args.memory_ceiling_mb,
         once=args.once,
+        proposals_dir=args.proposals_dir,
     )
     return 0
 

@@ -34,7 +34,7 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ecc::decoder::logical_failure_probability, m)?)?;
     m.add_function(wrap_pyfunction!(graph_partition::stoer_wagner_bisect, m)?)?;
 
-    let sim = PyModule::new_bound(m.py(), "sim")?;
+    let sim = PyModule::new(m.py(), "sim")?;
     sim.add_class::<sim::ising_backend::IsingSimulator>()?;
     sim.add_class::<sim::ising_backend::LogicalGraph>()?;
     sim.add_class::<sim::ising_backend::Variable>()?;
@@ -42,7 +42,7 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     sim.add_class::<sim::qudit::QuditSimulator>()?;
     m.add_submodule(&sim)?;
 
-    let analog = PyModule::new_bound(m.py(), "analog")?;
+    let analog = PyModule::new(m.py(), "analog")?;
     analog.add_class::<analog::interface::ContinuousFieldIR>()?;
     analog.add_class::<analog::interface::HardwareDeltaModel>()?;
     analog.add_class::<analog::neutral_atom::RydbergControlParameters>()?;
@@ -52,7 +52,7 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     analog.add_class::<analog::photonic::PhotonicCompiler>()?;
     m.add_submodule(&analog)?;
 
-    let ecc = PyModule::new_bound(m.py(), "ecc")?;
+    let ecc = PyModule::new(m.py(), "ecc")?;
     ecc.add_class::<ecc::surface_code::SurfaceCodePatch>()?;
     ecc.add_function(wrap_pyfunction!(ecc::surface_code::build_surface_code, &ecc)?)?;
     ecc.add_class::<ecc::selector::PatchAssignment>()?;
@@ -60,7 +60,7 @@ fn limen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ecc.add_function(wrap_pyfunction!(ecc::remapper::remap_circuit, &ecc)?)?;
     m.add_submodule(&ecc)?;
 
-    let cutting = PyModule::new_bound(m.py(), "cutting")?;
+    let cutting = PyModule::new(m.py(), "cutting")?;
     cutting.add_class::<cutting::reconstruct::SubcircuitSampleCounts>()?;
     cutting.add_class::<cutting::reconstruct::SampleCoefficient>()?;
     cutting.add_function(wrap_pyfunction!(

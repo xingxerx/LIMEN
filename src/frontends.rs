@@ -112,13 +112,13 @@ pub fn vrp_qubo_terms<'py>(
 
     let py_names: Vec<Bound<'py, PyString>> = names
         .iter()
-        .map(|s| PyString::new_bound(py, s))
+        .map(|s| PyString::new(py, s))
         .collect();
 
-    let out = PyDict::new_bound(py);
+    let out = PyDict::new(py);
     for (key, w) in terms {
         let (fu, fv) = ((key >> 32) as usize, (key & 0xFFFF_FFFF) as usize);
-        let key = PyTuple::new_bound(py, [&py_names[fu], &py_names[fv]]);
+        let key = PyTuple::new(py, [&py_names[fu], &py_names[fv]])?;
         out.set_item(key, w)?;
     }
     Ok(out)

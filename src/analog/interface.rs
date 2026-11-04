@@ -2,14 +2,14 @@ use crate::sim::ising_backend::LogicalGraph;
 use pyo3::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub struct ContinuousFieldIR {
     #[pyo3(get, set)]
     pub data: Vec<f64>,
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub struct HardwareDeltaModel {
     #[pyo3(get, set)]

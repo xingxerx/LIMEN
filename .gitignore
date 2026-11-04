@@ -13,3 +13,18 @@ venv/
 *.so
 smoke_spool/
 smoke_spool/
+
+# --- secrets and key material: never commit (security baseline) ---
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.kdbx
+id_rsa*
+id_ed25519*
+*.seed
+*.seed.*
+*.dpapi
+secrets/

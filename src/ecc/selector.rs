@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 ///
 /// `physical_start..physical_end` is the contiguous block of physical
 /// qubits reserved for this variable's surface code patch.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PatchAssignment {
     #[pyo3(get)]

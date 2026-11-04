@@ -99,8 +99,9 @@ def serve(
     server binds with TLS (grpc.ssl_server_credentials) instead of
     cleartext. If config.tls_ca_path is additionally set, client
     certificates are required and verified against that CA (mutual TLS).
-    When TLS paths are unset (the default), behavior is unchanged from
-    before TLS support existed: the server binds with add_insecure_port.
+    When TLS paths are unset, the server binds with add_insecure_port, which
+    is only allowed on a loopback host: a network-reachable host without TLS
+    raises InsecureBindError unless LIMEN_ALLOW_INSECURE_NETWORK=1 is set.
 
     If the grpc_health.v1 health-checking package is installed, the
     standard Health service is also registered and marked SERVING once
@@ -110,6 +111,7 @@ def serve(
     Returns the started grpc.Server and the port it actually bound to;
     callers are responsible for calling server.stop() / wait_for_termination().
     """
+    config.check_bind_policy()  # raises InsecureBindError before anything is created or bound
     bind_port = config.port if port is None else port
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
     pb_grpc.add_CoordinationServicer_to_server(CoordinationServicer(registry), server)

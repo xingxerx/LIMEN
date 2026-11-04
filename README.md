@@ -368,7 +368,7 @@ so a crashed terminal or a long maintenance-window queue can't strand a
 completed job. Hardware-validated on ibm_kingston (job
 `d965qgotcv6s73djc1l0`).
 
-570 tests passing, 0 skipped, with every optional extra installed
+654 tests passing, 0 skipped, with every optional extra installed
 (`pip install "limen-compiler[all]"`). Without the extras, tests for the
 missing SDKs skip cleanly. Zero regressions.
 

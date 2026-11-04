@@ -45,7 +45,7 @@ pub fn qubo_criticality(qubo: Vec<((usize, usize), f64)>, n_vars: usize) -> Vec<
 }
 
 /// Equilibrium score for a single Stackelberg iteration.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct EquilibriumScore {
     /// Calibration margin κ ∈ [0.0, 1.0]. Higher is more trustworthy.

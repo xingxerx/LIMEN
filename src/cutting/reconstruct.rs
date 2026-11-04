@@ -20,7 +20,7 @@ use rayon::prelude::*;
 /// `qpd_factor * obs_outcome` from qiskit-addon-cutting's
 /// `reconstruct_expectation_values`, since
 /// `(-1)^popcount(qpd) * (-1)^popcount(obs) == (-1)^popcount(qpd ++ obs)`.
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct SubcircuitSampleCounts {
     #[pyo3(get)]
@@ -61,7 +61,7 @@ impl SubcircuitSampleCounts {
 /// The real-valued coefficient for one joint QPD sample, as produced by
 /// `qiskit_addon_cutting.generate_cutting_experiments` (the first element
 /// of each `(coefficient, WeightType)` tuple it returns).
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct SampleCoefficient {
     #[pyo3(get)]

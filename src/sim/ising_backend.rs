@@ -137,7 +137,7 @@ pub fn qubo_energy_spectrum(
     Ok((best_state, best_energy, distinct_energies))
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct Variable {
     #[pyo3(get, set)]
@@ -154,7 +154,7 @@ impl Variable {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct Interaction {
     #[pyo3(get, set)]
@@ -173,7 +173,7 @@ impl Interaction {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct LogicalGraph {
     #[pyo3(get, set)]
