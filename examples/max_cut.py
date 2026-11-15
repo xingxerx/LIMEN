@@ -32,23 +32,12 @@ NODES = ["A", "B", "C", "D", "E"]
 EDGES = [("A", "B"), ("A", "C"), ("B", "C"), ("B", "D"), ("C", "E"), ("D", "E")]
 
 
-def build_max_cut_qubo(
-    edges: list[tuple[str, str]],
-) -> dict[tuple[str, str], float]:
-    """Convert a Max-Cut instance to a QUBO dict."""
-    qubo: dict[tuple[str, str], float] = {}
-    for u, v in edges:
-        qubo[(u, v)] = qubo.get((u, v), 0.0) + 1.0
-        qubo[(u, u)] = qubo.get((u, u), 0.0) - 1.0
-        qubo[(v, v)] = qubo.get((v, v), 0.0) - 1.0
-    return qubo
-
-
-def count_cut_edges(
-    assignment: dict[str, int], edges: list[tuple[str, str]]
-) -> int:
-    """Count edges that cross the partition defined by assignment."""
-    return sum(1 for u, v in edges if assignment.get(u, 0) != assignment.get(v, 0))
+# The encoding now lives in limen.frontends.maxcut (shared with the tier-0
+# study and its tests). Note the earlier inline version used +1.0 per edge
+# with -1.0 per endpoint, which ties "both endpoints 1" with "edge cut"
+# (-x_u - x_v + x_u x_v is -1 in both cases); the shared version uses the
+# exact cut indicator (+2.0 per edge), so QUBO energy == -(cut edges).
+from limen.frontends.maxcut import build_max_cut_qubo, count_cut_edges  # noqa: E402
 
 
 # ── Pipeline ──────────────────────────────────────────────────────────

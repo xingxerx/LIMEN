@@ -114,10 +114,7 @@ def run_logical_roundtrip(
     n_z = len(patch.z_stabilizers)
     circuit = build_z_syndrome_circuit(patch, x_errors)
 
-    dist = probabilities(circuit)
-    # All registers are in a definite computational state, so the
-    # distribution has a single outcome to read the syndrome from.
-    outcome = max(dist, key=dist.get)
+    outcome = _execute_syndrome_circuit(circuit)
     syndrome = tuple(int(outcome[n_data + j]) for j in range(n_z))
 
     correction = decoder.decode(syndrome)
@@ -133,6 +130,35 @@ def run_logical_roundtrip(
         circuit=circuit,
         metadata={"executed_outcome": outcome},
     )
+
+
+# The pure-Python statevector (and its Rust kernel) stops at 24 qubits. A
+# distance-3 patch is 9 data + 8 ancilla = 17 qubits and fits; distance 5
+# is 25 + 24 = 49 and never did, so Tier 2 at fidelity >= 0.99 (d=5) could
+# not be verified at all. The syndrome circuit is pure Clifford (x, h, cx),
+# so above the limit it runs on Aer's stabilizer simulator instead, which
+# handles any distance. The state is a definite computational basis state
+# either way, so one shot reads the syndrome exactly.
+_PY_STATEVECTOR_MAX_QUBITS = 24
+
+
+def _execute_syndrome_circuit(circuit: CircuitIR) -> str:
+    """Qubit-0-first outcome bitstring of a Clifford syndrome circuit."""
+    if circuit.n_qubits <= _PY_STATEVECTOR_MAX_QUBITS:
+        dist = probabilities(circuit)
+        # All registers are in a definite computational state, so the
+        # distribution has a single outcome to read the syndrome from.
+        return max(dist, key=dist.get)
+    try:
+        from limen.gates.qiskit_exec import STABILIZER_BACKEND_NAME, run_circuit
+    except ImportError as exc:  # pragma: no cover - qiskit missing
+        raise ImportError(
+            f"surface-code round trip on {circuit.n_qubits} qubits needs qiskit-aer's "
+            "stabilizer simulator: pip install limen-compiler[ibm]"
+        ) from exc
+    result = run_circuit(circuit, backend_name=STABILIZER_BACKEND_NAME, shots=1)
+    (qiskit_bits,) = result.counts  # exactly one outcome
+    return qiskit_bits[::-1]  # Qiskit is qubit-0 rightmost; CircuitIR convention is leftmost
 
 
 def verify_corrects_all_weight_one(

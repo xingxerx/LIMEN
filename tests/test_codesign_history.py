@@ -13,7 +13,7 @@ import tempfile
 
 import pytest
 
-pytest.importorskip("limen_core", reason="limen_core Rust extension not installed")
+pytest.importorskip("limen.limen_core", reason="limen_core Rust extension not installed")
 
 from limen import compile_lexicographic, default_hardware_graph, from_qubo_dict
 from limen.codesign.solver import (

@@ -14,7 +14,10 @@ import pytest
 
 pytest.importorskip("qiskit_addon_cutting", reason="qiskit-addon-cutting not installed")
 pytest.importorskip("qiskit_aer", reason="qiskit-aer not installed")
-pytest.importorskip("limen_core", reason="limen_core Rust extension not installed")
+# The extension module is limen.limen_core (see [tool.maturin] module-name);
+# a bare "limen_core" never imports, so this skip used to fire on every
+# machine and this file had never run.
+pytest.importorskip("limen.limen_core", reason="limen_core Rust extension not installed")
 
 from limen.cutting.local_dispatch import run_cut_circuit_locally
 from limen.cutting.qubo_bridge import (

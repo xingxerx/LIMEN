@@ -155,9 +155,14 @@ class TestAerBackend:
 # D-Wave backend tests (skip when the Ocean SDK is not installed)
 # ---------------------------------------------------------------------------
 
-pytest.importorskip("dimod", reason="dwave Ocean SDK not installed")
-
-
+# Module-level importorskip would skip the whole file, including the
+# statevector and Aer tests above, on any machine without the Ocean SDK
+# (seen on xing-laptop: "14 passed, 1 skipped" with none of this file's
+# tests run). Scope the skip to the D-Wave class only.
+@pytest.mark.skipif(
+    __import__("importlib").util.find_spec("dimod") is None,
+    reason="dwave Ocean SDK not installed",
+)
 class TestDWaveBackend:
     SIMPLE_QUBO = {("x0", "x0"): -1.0, ("x1", "x1"): -1.0, ("x0", "x1"): 2.0}
 

@@ -12,4 +12,4 @@ venv/
 
 *.so
 smoke_spool/
-smoke_spool/
+results/study/

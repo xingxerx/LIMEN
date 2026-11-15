@@ -113,15 +113,34 @@ def find_cuts_and_partition(
     optimization = OptimizationParameters()
     cut_circuit, find_cuts_metadata = find_cuts(qc, optimization, constraints)
 
-    partitioned = partition_problem(cut_circuit, observables=PauliList([observable]))
+    # find_cuts may choose wire cuts as well as gate cuts. A wire cut is a
+    # `cut_wire` placeholder instruction that no simulator or device
+    # understands (Aer: "unknown instruction: cut_wire"); cut_wires()
+    # rewrites each one as a Move onto a fresh ancilla qubit and
+    # expand_observables() pads the observable to the new register. Both
+    # are no-ops when only gate cuts were chosen, so this is safe to run
+    # unconditionally. Before this, any instance where the optimizer picked
+    # a wire cut failed at dispatch time.
+    from qiskit_addon_cutting import cut_wires, expand_observables
+
+    qc_w_ancilla = cut_wires(cut_circuit)
+    observables = expand_observables(PauliList([observable]), qc, qc_w_ancilla)
+
+    partitioned = partition_problem(qc_w_ancilla, observables=observables)
     if partitioned.subobservables is None:
         raise ValueError("partition_problem returned no subobservables")
+
+    cuts = find_cuts_metadata["cuts"]
+    find_cuts_metadata = dict(find_cuts_metadata)
+    find_cuts_metadata["num_wire_cuts"] = sum(1 for c in cuts if str(c[0]).lower().startswith("wire"))
+    find_cuts_metadata["num_gate_cuts"] = len(cuts) - find_cuts_metadata["num_wire_cuts"]
+    find_cuts_metadata["qubits_with_ancilla"] = qc_w_ancilla.num_qubits
 
     return CutPlan(
         subcircuits=dict(partitioned.subcircuits),
         subobservables=dict(partitioned.subobservables),
         bases=list(partitioned.bases),
-        num_cuts=len(find_cuts_metadata["cuts"]),
+        num_cuts=len(cuts),
         original_num_qubits=circuit.n_qubits,
         metadata=find_cuts_metadata,
     )
