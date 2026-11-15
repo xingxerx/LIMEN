@@ -92,6 +92,22 @@ def compile_qaoa(
     n = len(order)
     instructions: list[GateInstruction] = [GateInstruction("h", [q]) for q in range(n)]
 
+    # Normalise the cost Hamiltonian so its largest coefficient has unit
+    # magnitude. gamma multiplies every coefficient, so with raw weights a
+    # gamma grid over [0, 2pi) is only meaningful when the weights are
+    # O(1). Penalty-encoded problems are not: the eil51 TSP prefix carries
+    # weights in the hundreds, which turned every cost rotation into
+    # hundreds of radians, aliased the whole gamma grid, and left the
+    # output distribution exactly uniform (1/2**n on every bitstring, seen
+    # on the 2-city instance). The optimum is unchanged by a positive
+    # rescale; metadata records the factor for anyone reading angles back.
+    cost_scale = max([abs(v) for v in h.values()] + [abs(v) for v in j_coeffs.values()] + [0.0])
+    if cost_scale > 1e-15:
+        h = {q: v / cost_scale for q, v in h.items()}
+        j_coeffs = {k: v / cost_scale for k, v in j_coeffs.items()}
+    else:
+        cost_scale = 1.0
+
     coupling_order = sorted(j_coeffs)
     for gamma, beta in zip(gammas, betas):
         for q in range(n):
@@ -114,6 +130,7 @@ def compile_qaoa(
             "ansatz": "qaoa",
             "layers": len(gammas),
             "variable_order": order,
+            "cost_scale": cost_scale,
         },
     )
 

@@ -13,6 +13,7 @@ already established in limen.backends.qiskit_backend.run_qiskit_qpu.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from limen.cutting.partition import CutPlan
 
@@ -50,6 +51,18 @@ class CutDispatchResult:
     coefficients: list[tuple[int, float]]
     subcircuit_labels: list[str]
     job_ids: dict[str, str] = field(default_factory=dict)
+    # Where the sub-experiments actually ran (backend name, device GPU/CPU,
+    # any GPU fallback reason). Empty for real-hardware dispatch, where
+    # job_ids is the provenance.
+    metadata: dict[str, Any] = field(default_factory=dict)
+    # The sampler's PrimitiveResult per partition label and the plan's
+    # sub-observables, kept so reconstruct_from_results can run
+    # qiskit-addon-cutting's reference reconstruction (which applies the
+    # per-observable Pauli bitmask) instead of the parity-of-everything
+    # shortcut the Rust kernel uses. Empty when a result was rebuilt from
+    # plain counts (older persisted results).
+    raw_results: dict[str, Any] = field(default_factory=dict, repr=False)
+    subobservables: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 def run_cut_circuit(
@@ -118,6 +131,7 @@ def run_cut_circuit(
 
     counts_out: list[tuple[int, str, dict[str, int], int]] = []
     job_ids: dict[str, str] = {}
+    raw_results: dict[str, Any] = {}
 
     for raw_label in raw_labels:
         label = str(raw_label)
@@ -136,6 +150,7 @@ def run_cut_circuit(
         job_ids[label] = job.job_id()
 
         pub_results = job.result(timeout=timeout)
+        raw_results[label] = pub_results
         for sample_index, pub_result in enumerate(pub_results):
             data = pub_result.data
             joint = BitArray.concatenate_bits(
@@ -150,4 +165,7 @@ def run_cut_circuit(
         coefficients=coefficients_out,
         subcircuit_labels=[str(label) for label in raw_labels],
         job_ids=job_ids,
+        metadata={"backend": backend_name, "shots": shots},
+        raw_results=raw_results,
+        subobservables={str(k): v for k, v in plan.subobservables.items()},
     )

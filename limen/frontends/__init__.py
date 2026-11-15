@@ -10,9 +10,19 @@ from limen.frontends.tsp import (
     to_route_request,
     tsp_qubo,
 )
+from limen.frontends.maxcut import (
+    build_max_cut_qubo,
+    count_cut_edges,
+    random_regular_edges,
+    ring_edges,
+)
 from limen.frontends.vrp import decode_routes, distance_matrix, from_vrp, vrp_qubo
 
 __all__ = [
+    "build_max_cut_qubo",
+    "count_cut_edges",
+    "ring_edges",
+    "random_regular_edges",
     "from_pyqubo",
     "from_qubo_dict",
     "vrp_qubo",

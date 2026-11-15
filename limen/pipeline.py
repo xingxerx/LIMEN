@@ -274,6 +274,94 @@ def _grid_search(
     return best_params, best_dist
 
 
+# Widest circuit the pure-Python statevector grid search handles; above it
+# the search runs on Aer (exact probabilities up to _AER_EXACT_MAX_QUBITS,
+# shot-sampled beyond that, since a dense 2**n probability dict stops
+# fitting in memory).
+_PY_GRID_SEARCH_MAX_QUBITS = 16
+# Exact probabilities come back as a dense 2**n Python dict that the grid
+# search then sums over 64 times; 18 qubits (262k entries) keeps that under
+# a minute, 20 qubits (1M entries) took ~10 minutes per search on xing-pc.
+_AER_EXACT_MAX_QUBITS = 18
+_GRID_SEARCH_SAMPLE_SHOTS = 4000
+
+
+def _offline_grid_search(
+    graph: LogicalGraph,
+    layers: int,
+    grid_size: int,
+    backend: str,
+    qpu_backend_name: str,
+    qpu_shots: int,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """The deterministic offline (gamma, beta) search every backend shares.
+
+    Must give identical parameters for ``submit_qpu_job`` and the later
+    ``run_pipeline(..., qpu_counts=...)`` certify call, so the choice of
+    simulator depends only on the circuit width, never on the backend:
+
+    * <= 16 qubits: pure-Python statevector (unchanged historical path).
+    * 17-20 qubits: Aer statevector, exact probabilities (no shot noise).
+    * wider: Aer statevector, sampled with a fixed seed.
+
+    Aer runs on the tier-0 GPU when the pipeline was handed the
+    ``aer_gpu`` backend name or LIMEN_LOCAL_GPU is set, else CPU. Before
+    this helper the search always used the pure-Python simulator, which
+    enumerates all 2**n outcomes and could not finish past ~20 qubits for
+    any backend, GPU included.
+    """
+    n = len(variable_order(graph))
+    if n <= _PY_GRID_SEARCH_MAX_QUBITS:
+        return _grid_search(graph, layers, grid_size)
+
+    from limen.gates.qiskit_exec import GPU_BACKEND_NAME
+    from limen.router import local_gpu_enabled
+
+    aer_name = qpu_backend_name if (backend == "aer" and qpu_backend_name in {GPU_BACKEND_NAME, "aer_simulator"}) else (
+        GPU_BACKEND_NAME if local_gpu_enabled() else "aer_simulator"
+    )
+    if n <= _AER_EXACT_MAX_QUBITS:
+        prob_fn = lambda c: _aer_exact_probabilities(c, aer_name)  # noqa: E731
+    else:
+        prob_fn = lambda c: _aer_probabilities(c, aer_name, _GRID_SEARCH_SAMPLE_SHOTS)  # noqa: E731
+    return _grid_search(graph, layers, grid_size, prob_fn=prob_fn)
+
+
+def _aer_exact_probabilities(circuit: Any, backend_name: str) -> dict[str, float]:
+    """Exact qubit-0-first probabilities from an Aer statevector run."""
+    try:
+        from qiskit import transpile
+
+        from limen.gates.qiskit_exec import run_on_aer, to_qiskit_circuit
+    except ImportError as exc:
+        raise ImportError(
+            "The 'aer' backend requires qiskit and qiskit-aer. "
+            "Install with: pip install limen-compiler[ibm]"
+        ) from exc
+
+    # qiskit_aer monkey-patches QuantumCircuit.save_probabilities_dict only
+    # once it has been imported; appending the instruction explicitly does
+    # not depend on import order.
+    from qiskit_aer.library import SaveProbabilitiesDict
+
+    qc = to_qiskit_circuit(circuit)
+    qc.remove_final_measurements()
+    qc.append(SaveProbabilitiesDict(qc.num_qubits), qc.qubits)
+
+    def _run(backend: Any) -> dict[str, float]:
+        res = backend.run(transpile(qc, backend), shots=1).result()
+        data = res.data(0)
+        return data.get("probabilities_dict") or data["probabilities"]
+
+    probs = run_on_aer(backend_name, _run)
+    n = circuit.n_qubits
+    out: dict[str, float] = {}
+    for key, p in probs.items():
+        bits = key if isinstance(key, str) else format(int(key), f"0{n}b")
+        out[bits[::-1]] = float(p)  # Qiskit is qubit-0 rightmost; we want leftmost
+    return out
+
+
 def _aer_probabilities(
     circuit: Any,
     backend_name: str,
@@ -419,7 +507,7 @@ def submit_qpu_job(
         ImportError: If qiskit or qiskit-ibm-runtime are not installed.
     """
     graph = from_qubo_dict(qubo)
-    params, _ = _grid_search(graph, qaoa_layers, grid_size)
+    params, _ = _offline_grid_search(graph, qaoa_layers, grid_size, "qpu", qpu_backend_name, qpu_shots)
     circuit = compile_qaoa(
         graph, [params["gamma"]] * qaoa_layers, [params["beta"]] * qaoa_layers
     )
@@ -473,6 +561,47 @@ def run_pipeline_from_plan(
             qubo, plan, offline=cut_offline, token=cut_token, crn=cut_crn
         )
     return run_pipeline(qubo, **plan.pipeline_kwargs)
+
+
+# CPU Aer statevector tops out around 26 qubits (1 GiB in double
+# precision); the GPU tier's live cap applies when it is enabled.
+_CPU_AER_MAX_QUBITS = 26
+
+
+def _qaoa_params_for_oversized(
+    qubo: dict[tuple[str, str], float], graph: LogicalGraph, n: int
+) -> tuple[dict[str, float], str]:
+    """(gamma, beta) for a QAOA circuit that will be executed via cutting.
+
+    run_cut_route_request used to call ``_grid_search`` on the full graph
+    with the pure-Python statevector, which enumerates all 2**n outcomes:
+    a cutting request exists precisely because n is large, so that call
+    could never finish for the problems it was written for. Now:
+
+    * if the full circuit still fits a local simulator (GPU tier cap when
+      enabled, else CPU Aer), search on the full graph via
+      :func:`_offline_grid_search`;
+    * otherwise search on the induced sub-QUBO of the first 16 variables
+      (canonical order) and transfer the angles. p=1 QAOA angles
+      concentrate across instances of a problem class, so the transferred
+      pair is a usable schedule; the certificate note says what was done.
+    """
+    from limen.router import gpu_qubit_cap, local_gpu_enabled, query_free_vram_mib
+
+    sim_cap = gpu_qubit_cap(query_free_vram_mib()) if local_gpu_enabled() else _CPU_AER_MAX_QUBITS
+    if n <= max(sim_cap, _PY_GRID_SEARCH_MAX_QUBITS):
+        params, _ = _offline_grid_search(graph, 1, 8, "aer", "aer_simulator", _GRID_SEARCH_SAMPLE_SHOTS)
+        return params, f"QAOA angles grid-searched on the full {n}q graph (local simulator, cap {sim_cap}q)."
+
+    order = variable_order(graph)
+    keep = set(order[:_PY_GRID_SEARCH_MAX_QUBITS])
+    sub_qubo = {(u, v): w for (u, v), w in qubo.items() if u in keep and v in keep}
+    params, _ = _grid_search(from_qubo_dict(sub_qubo), 1, 8)
+    return params, (
+        f"QAOA angles grid-searched on a {len(keep)}-variable induced sub-instance "
+        f"(statevector) and transferred to the full {n}q circuit; the full graph "
+        f"exceeds the local simulator cap ({sim_cap}q)."
+    )
 
 
 def run_cut_route_request(
@@ -543,7 +672,7 @@ def run_cut_route_request(
     n = len(order)
     h, j_coeffs, constant, _ = qubo_ising_terms(qubo)
 
-    params, _ = _grid_search(graph, 1, 8)
+    params, search_note = _qaoa_params_for_oversized(qubo, graph, n)
     circuit = compile_qaoa(graph, [params["gamma"]], [params["beta"]])
 
     max_subcircuit_qubits = plan.backend.max_qubits
@@ -551,9 +680,15 @@ def run_cut_route_request(
 
     if offline:
         from limen.cutting.local_dispatch import run_cut_circuit_locally
+        from limen.router import LOCAL_GPU_BACKEND_NAME, local_gpu_enabled
+
+        # Sub-experiments are at most max_subcircuit_qubits wide, so the
+        # tier-0 GPU statevector can run them when it is enabled; the
+        # CPU sampler stays the default.
+        local_backend = LOCAL_GPU_BACKEND_NAME if local_gpu_enabled() else "aer_simulator"
 
         def dispatch_fn(cut_plan: Any) -> Any:
-            return run_cut_circuit_locally(cut_plan, shots=run_shots)
+            return run_cut_circuit_locally(cut_plan, shots=run_shots, backend_name=local_backend)
     else:
         from limen.cutting.dispatch import run_cut_circuit
 
@@ -588,6 +723,7 @@ def run_cut_route_request(
         f"{n} vars exceeded backend capacity ({max_subcircuit_qubits}q): solved "
         f"via circuit cutting into up to {reconstruction.num_partitions} "
         f"partition(s), {reconstruction.num_cuts} cut(s).",
+        search_note,
         "solution decoded via cutting-reconstructed single-qubit <Z_i> "
         "marginal threshold rounding, then evaluated exactly and "
         "classically (decoded_classical_energy) -- not brute-force "
@@ -1451,19 +1587,9 @@ def run_pipeline(
         # jobs to a QPU would be impractical and expensive.  We find the optimal
         # (gamma, beta) offline, then execute the final circuit once on the
         # chosen backend.
-        if backend == "aer":
-            # The pure-Python statevector returns a dict over all 2**n
-            # outcomes and is unusable past ~20 qubits, which silently
-            # capped the "aer" backend at the Python simulator's limit.
-            # Run the grid search on the same Aer backend the final
-            # circuit uses (shot-sampled), so a GPU-tier plan is GPU
-            # end to end.
-            def _aer_prob_fn(c: Any) -> dict[str, float]:
-                return _aer_probabilities(c, qpu_backend_name, qpu_shots)
-
-            params, sim_dist = _grid_search(graph, qaoa_layers, grid_size, prob_fn=_aer_prob_fn)
-        else:
-            params, sim_dist = _grid_search(graph, qaoa_layers, grid_size)
+        params, sim_dist = _offline_grid_search(
+            graph, qaoa_layers, grid_size, backend, qpu_backend_name, qpu_shots
+        )
 
         # Final circuit execution — one shot on the chosen backend.
         if backend == "statevector":

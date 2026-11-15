@@ -24,6 +24,9 @@ _INSTALL_MSG = (
 # (not imported from limen.router) so limen.gates has no dependency on the
 # router package; limen.router.budget_router.LOCAL_GPU_BACKEND_NAME must match.
 GPU_BACKEND_NAME = "aer_gpu"
+# Aer stabilizer (Clifford) simulator: used by limen.ecc for surface-code
+# round trips too wide for any statevector (distance 5 is 49 qubits).
+STABILIZER_BACKEND_NAME = "aer_stabilizer"
 
 
 def _check_qiskit() -> None:
@@ -111,39 +114,67 @@ def run_circuit(
     """
     _check_qiskit()
     from qiskit import transpile
-    from qiskit_aer import AerSimulator
 
     qc = to_qiskit_circuit(circuit)
     metadata: dict[str, Any] = {"backend": backend_name, "shots": shots, "seed": seed}
-    if backend_name == GPU_BACKEND_NAME:
-        # Local GPU statevector tier 0 (limen.router.route_local_gpu_first).
-        # Single precision halves VRAM per amplitude; the router's qubit cap
-        # (gpu_qubit_cap, 8 bytes/amplitude) assumes exactly this setting.
-        # A CPU-only qiskit-aer build accepts device="GPU" at construction
-        # and only fails inside run(), so the whole attempt is guarded and
-        # falls back to the CPU simulator, recording why in the metadata
-        # rather than failing the job.
-        try:
-            backend = AerSimulator(
-                method="statevector", device="GPU", precision="single", seed_simulator=seed
-            )
-            transpiled = transpile(qc, backend)
-            counts = backend.run(transpiled, shots=shots).result().get_counts()
-            metadata["device"] = "GPU"
-        except Exception as exc:  # AerError / RuntimeError from the C++ controller
-            backend = AerSimulator(method="automatic", seed_simulator=seed)
-            transpiled = transpile(qc, backend)
-            counts = backend.run(transpiled, shots=shots).result().get_counts()
-            metadata["device"] = "CPU"
-            metadata["gpu_fallback_reason"] = f"{type(exc).__name__}: {exc}"
-    else:
-        method = "statevector" if backend_name == "statevector" else "automatic"
-        backend = AerSimulator(method=method, seed_simulator=seed)
-        transpiled = transpile(qc, backend)
-        counts = backend.run(transpiled, shots=shots).result().get_counts()
 
-    return CircuitResult(
-        counts=counts,
-        circuit_depth=transpiled.depth(),
-        metadata=metadata,
-    )
+    def _run(backend: Any) -> tuple[dict[str, int], int]:
+        transpiled = transpile(qc, backend)
+        return backend.run(transpiled, shots=shots).result().get_counts(), transpiled.depth()
+
+    counts, depth = run_on_aer(backend_name, _run, seed=seed, metadata=metadata)
+    return CircuitResult(counts=counts, circuit_depth=depth, metadata=metadata)
+
+
+def make_aer_simulator(backend_name: str = "aer_simulator", seed: int = 42, **options: Any) -> Any:
+    """Build the AerSimulator a LIMEN backend name stands for.
+
+    ``"statevector"`` -> exact CPU statevector; ``"aer_gpu"`` ->
+    statevector on ``device="GPU"`` in single precision (the setting the
+    router's VRAM cap assumes); anything else -> ``method="automatic"``.
+    Shared by run_circuit and limen.cutting.local_dispatch so the GPU
+    tier is configured in exactly one place.
+    """
+    _check_qiskit()
+    from qiskit_aer import AerSimulator
+
+    if backend_name == GPU_BACKEND_NAME:
+        return AerSimulator(
+            method="statevector", device="GPU", precision="single", seed_simulator=seed, **options
+        )
+    if backend_name == STABILIZER_BACKEND_NAME:
+        # Clifford-only circuits (surface-code syndrome extraction) at any
+        # width; thousands of qubits are fine. Not a statevector.
+        return AerSimulator(method="stabilizer", seed_simulator=seed, **options)
+    method = "statevector" if backend_name == "statevector" else "automatic"
+    return AerSimulator(method=method, seed_simulator=seed, **options)
+
+
+def run_on_aer(
+    backend_name: str,
+    fn: Any,
+    *,
+    seed: int = 42,
+    metadata: dict[str, Any] | None = None,
+) -> Any:
+    """Call ``fn(backend)`` on the simulator *backend_name* names, with GPU fallback.
+
+    For ``"aer_gpu"`` the attempt is wrapped: a CPU-only qiskit-aer build
+    accepts ``device="GPU"`` at construction and only fails inside
+    ``run()``, so on any exception the same *fn* is re-run on the CPU
+    ``automatic`` simulator and *metadata* records ``device="CPU"`` plus
+    ``gpu_fallback_reason`` instead of the job failing. Other backend
+    names run once with no fallback (their errors are real errors).
+    """
+    meta = metadata if metadata is not None else {}
+    if backend_name != GPU_BACKEND_NAME:
+        meta.setdefault("device", "CPU")
+        return fn(make_aer_simulator(backend_name, seed))
+    try:
+        result = fn(make_aer_simulator(backend_name, seed))
+        meta["device"] = "GPU"
+        return result
+    except Exception as exc:  # AerError / RuntimeError from the C++ controller
+        meta["device"] = "CPU"
+        meta["gpu_fallback_reason"] = f"{type(exc).__name__}: {exc}"
+        return fn(make_aer_simulator("aer_simulator", seed))

@@ -1,0 +1,18 @@
+[package]
+name = "limen-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LIMEN intermediate representation: versioned, typed, canonical, backend-free"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

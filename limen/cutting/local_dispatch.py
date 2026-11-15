@@ -18,6 +18,8 @@ credits.
 
 from __future__ import annotations
 
+from typing import Any
+
 from limen.cutting.dispatch import CutDispatchResult
 from limen.cutting.partition import CutPlan
 
@@ -27,12 +29,18 @@ _INSTALL_MSG = (
 )
 
 
-def run_cut_circuit_locally(plan: CutPlan, shots: int = 20000) -> CutDispatchResult:
+def run_cut_circuit_locally(
+    plan: CutPlan, shots: int = 20000, backend_name: str = "aer_simulator"
+) -> CutDispatchResult:
     """Dispatch every sub-experiment in *plan* to a local AerSimulator.
 
     Args:
         plan: A CutPlan from find_cuts_and_partition.
         shots: Shots per sub-experiment.
+        backend_name: ``"aer_simulator"`` (CPU, default) or ``"aer_gpu"``
+            (the router's tier-0 GPU statevector, single precision, with
+            CPU fallback recorded in the result metadata). See
+            limen.gates.qiskit_exec.make_aer_simulator.
 
     Returns:
         A CutDispatchResult with local simulator counts and empty job_ids
@@ -47,7 +55,8 @@ def run_cut_circuit_locally(plan: CutPlan, shots: int = 20000) -> CutDispatchRes
         from qiskit.primitives import BackendSamplerV2
         from qiskit.primitives.containers.bit_array import BitArray
         from qiskit_addon_cutting import generate_cutting_experiments
-        from qiskit_aer import AerSimulator
+
+        from limen.gates.qiskit_exec import run_on_aer
     except ModuleNotFoundError as exc:
         raise ImportError(_INSTALL_MSG) from exc
 
@@ -59,9 +68,8 @@ def run_cut_circuit_locally(plan: CutPlan, shots: int = 20000) -> CutDispatchRes
 
     raw_labels = sorted(subexperiments.keys(), key=str)
     coefficients_out = [(i, float(c[0])) for i, c in enumerate(coefficients)]
-
-    backend = AerSimulator()
-    sampler = BackendSamplerV2(backend=backend)
+    device_meta: dict[str, Any] = {}
+    raw_results: dict[str, Any] = {}
 
     counts_out: list[tuple[int, str, dict[str, int], int]] = []
     for raw_label in raw_labels:
@@ -74,8 +82,14 @@ def run_cut_circuit_locally(plan: CutPlan, shots: int = 20000) -> CutDispatchRes
                 "only supports observables that decompose into a single "
                 "commuting group per partition"
             )
-        job = sampler.run([(circ,) for circ in circuits], shots=shots)
-        pub_results = job.result()
+
+        def _sample(backend: Any, _circuits: Any = circuits) -> Any:
+            return BackendSamplerV2(backend=backend).run(
+                [(circ,) for circ in _circuits], shots=shots
+            ).result()
+
+        pub_results = run_on_aer(backend_name, _sample, metadata=device_meta)
+        raw_results[label] = pub_results
         for sample_index, pub_result in enumerate(pub_results):
             data = pub_result.data
             joint = BitArray.concatenate_bits(
@@ -90,4 +104,7 @@ def run_cut_circuit_locally(plan: CutPlan, shots: int = 20000) -> CutDispatchRes
         coefficients=coefficients_out,
         subcircuit_labels=[str(label) for label in raw_labels],
         job_ids={},
+        metadata={"backend": backend_name, "shots": shots, **device_meta},
+        raw_results=raw_results,
+        subobservables={str(k): v for k, v in plan.subobservables.items()},
     )

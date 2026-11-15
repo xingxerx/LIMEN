@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f19f5ad642b4d8c112206fd2d212b801939a6462714d52295da541fda70ff83c # shrinks to n = 2, ops = [Rz { q: Qubit(0), theta: Lit(1.1800526589407259) }]
