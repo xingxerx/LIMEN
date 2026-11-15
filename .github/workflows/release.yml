@@ -60,7 +60,9 @@ jobs:
 
   macos:
     name: Build wheels (macos, ${{ matrix.target }})
-    runs-on: macos-14
+    # macos-14 was retired by GitHub on Nov 2, 2026; jobs on it are cancelled
+    # at once with "configuration not supported".
+    runs-on: macos-15
     strategy:
       matrix:
         target: [aarch64]
