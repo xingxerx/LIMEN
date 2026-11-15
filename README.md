@@ -192,6 +192,19 @@ The analog substrate layer (BEC, photonic, continuous-variable) is defined as an
 pip install limen-compiler
 ```
 
+The base install has no third-party dependencies and covers the compiler and
+validator shown below. Running on a backend needs the matching extra:
+
+```bash
+pip install "limen-compiler[ibm]"          # IBM hardware and the local Aer simulator
+pip install "limen-compiler[braket]"       # AWS Braket
+pip install "limen-compiler[dwave]"        # D-Wave annealers
+pip install "limen-compiler[cutting]"      # circuit cutting
+pip install "limen-compiler[distributed]"  # gRPC peer mesh
+pip install "limen-compiler[pqc]"          # ML-DSA-65 signing
+pip install "limen-compiler[all]"          # everything
+```
+
 ```python
 from limen import from_qubo_dict, compile_lexicographic, default_hardware_graph, validate
 

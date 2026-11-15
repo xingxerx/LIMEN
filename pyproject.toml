@@ -4,10 +4,14 @@ build-backend = "maturin"
 
 [project]
 name = "limen-compiler"
-version = "0.9.0"
+version = "0.9.1"
 description = "A physics-aware compiler stack for translating classical optimization problems into native quantum and analog substrates."
 readme = "README.md"
-license = {file = "LICENSE"}
+# SPDX expression plus the files that carry the terms, so the license shows up
+# in the package metadata and on PyPI (0.9.0 shipped with both fields empty).
+license = "Elastic-2.0"
+license-files = ["LICENSE", "ACCEPTABLE_USE.md"]
+authors = [{name = "XINGXERX"}]
 requires-python = ">=3.10"
 keywords = [
   "quantum computing",
@@ -21,7 +25,6 @@ classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Intended Audience :: Science/Research",
   "Intended Audience :: Developers",
-  "License :: Other/Proprietary License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
