@@ -26,17 +26,17 @@ class LoopbackTests(unittest.TestCase):
             self.assertTrue(is_loopback_host(host), host)
 
     def test_everything_else_is_network_reachable(self):
-        for host in ("0.0.0.0", "::", "", "192.168.1.5", "10.0.0.2", "100.64.0.1", "example.com"):
+        for host in ("0.0.0.0", "::", "", "192.168.0.5", "10.0.0.2", "100.64.0.1", "example.com"):
             self.assertFalse(is_loopback_host(host), host)
 
 
 class TailnetTests(unittest.TestCase):
     def test_the_tailscale_range_is_recognised(self):
-        for host in ("100.64.0.1", "100.106.147.75", "100.127.255.255", "[100.100.100.100]"):
+        for host in ("100.64.0.1", "100.64.0.10", "100.127.255.255", "[100.100.100.100]"):
             self.assertTrue(is_tailnet_host(host), host)
 
     def test_neighbouring_and_non_ip_hosts_are_not(self):
-        for host in ("100.63.255.255", "100.128.0.0", "192.168.1.5", "::1", "example.com", ""):
+        for host in ("100.63.255.255", "100.128.0.0", "192.168.0.5", "::1", "example.com", ""):
             self.assertFalse(is_tailnet_host(host), host)
 
 
@@ -51,7 +51,7 @@ class BindPolicyTests(unittest.TestCase):
         _cfg("127.0.0.1").check_bind_policy()
 
     def test_wildcard_or_lan_without_tls_is_refused(self):
-        for host in ("0.0.0.0", "::", "192.168.1.5", "node-b.example.com"):
+        for host in ("0.0.0.0", "::", "192.168.0.5", "node-b.example.com"):
             with self.assertRaises(InsecureBindError, msg=host):
                 _cfg(host).check_bind_policy()
 
@@ -64,16 +64,16 @@ class BindPolicyTests(unittest.TestCase):
 
     def test_a_tailnet_address_without_tls_is_refused(self):
         with self.assertRaises(InsecureBindError):
-            _cfg("100.106.147.75").check_bind_policy()
+            _cfg("100.64.0.10").check_bind_policy()
 
     def test_a_tailnet_address_with_mutual_tls_is_allowed_silently(self):
-        cfg = _cfg("100.106.147.75", tls_cert_path="c.pem", tls_key_path="k.pem", tls_ca_path="ca.pem")
+        cfg = _cfg("100.64.0.10", tls_cert_path="c.pem", tls_key_path="k.pem", tls_ca_path="ca.pem")
         with self.assertNoLogs("limen.distributed", level="WARNING"):
             cfg.check_bind_policy()
 
     def test_the_tailscale_default_without_tls_fails_with_a_way_out(self):
         env = {"LIMEN_NODE_ID": "n"}
-        with mock.patch("limen.distributed.config._tailscale_ipv4", return_value="100.106.147.75"):
+        with mock.patch("limen.distributed.config._tailscale_ipv4", return_value="100.64.0.10"):
             with mock.patch.dict(os.environ, env, clear=True):
                 cfg = NodeConfig.from_env()
         with self.assertRaises(InsecureBindError) as ctx:
@@ -121,10 +121,10 @@ class FromEnvTests(unittest.TestCase):
                 self.assertEqual(NodeConfig.from_env().host, "127.0.0.1")
 
     def test_default_host_is_the_tailscale_address_when_there_is_one(self):
-        with mock.patch("limen.distributed.config._tailscale_ipv4", return_value="100.106.147.75"):
-            self.assertEqual(default_node_host(), "100.106.147.75")
+        with mock.patch("limen.distributed.config._tailscale_ipv4", return_value="100.64.0.10"):
+            self.assertEqual(default_node_host(), "100.64.0.10")
             with mock.patch.dict(os.environ, {"LIMEN_NODE_ID": "n"}, clear=True):
-                self.assertEqual(NodeConfig.from_env().host, "100.106.147.75")
+                self.assertEqual(NodeConfig.from_env().host, "100.64.0.10")
 
     def test_an_empty_host_variable_falls_back_to_the_default(self):
         with mock.patch("limen.distributed.config._tailscale_ipv4", return_value=None):
@@ -134,7 +134,7 @@ class FromEnvTests(unittest.TestCase):
 
     def test_an_explicit_host_is_honoured(self):
         env = {"LIMEN_NODE_ID": "n", "LIMEN_NODE_HOST": "10.1.2.3"}
-        with mock.patch("limen.distributed.config._tailscale_ipv4", return_value="100.106.147.75"):
+        with mock.patch("limen.distributed.config._tailscale_ipv4", return_value="100.64.0.10"):
             with mock.patch.dict(os.environ, env, clear=True):
                 self.assertEqual(NodeConfig.from_env().host, "10.1.2.3")
 
