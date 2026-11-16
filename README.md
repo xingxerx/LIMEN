@@ -262,8 +262,6 @@ Elastic License 2.0 (ELv2). See [LICENSE](LICENSE).
 
 LIMEN is source-available: anyone can read, fork, and use the code for research and internal purposes. ELv2 prohibits offering LIMEN as a hosted or managed service without a commercial license. Use is also subject to [ACCEPTABLE_USE.md](ACCEPTABLE_USE.md), which prohibits weapons development, mass surveillance, unauthorized cryptanalysis, and attacks on critical infrastructure.
 
-As of v0.3.1, LIMEN changed from Apache 2.0 to ELv2. Copies obtained under Apache 2.0 retain their Apache 2.0 rights. All new versions are licensed under ELv2.
-
 ---
 
 *LIMEN: Latin for threshold. The boundary between two states.*
