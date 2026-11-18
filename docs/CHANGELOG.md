@@ -5,6 +5,15 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-18
+
+- Docs: the README is rewritten for first-time users and now leads with a
+  quickstart that runs with no extras. No code changes from 0.9.1.
+- Changed: package status is now Alpha (was Pre-Alpha).
+- Fixed: CI installs the Python dev headers so `cargo test` links on Linux.
+
+## [0.9.1] and earlier
+
 - Added: licensing (`limen.licensing`). Offline, ML-DSA-65 signed license
   keys with Free, Pro and Team tiers; nothing phones home. `signed_certificates`
   (signed ledger entries) needs Pro or Team, `peer_mesh` (multi-node peer

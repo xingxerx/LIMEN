@@ -214,7 +214,7 @@ The budget router sits in front of both tracks and decides which path a request 
 
 ## Status
 
-**v0.9.1.** 677 tests passing. Validated on real IBM hardware since June 2026 (first run: `ibm_kingston`, Heron R2, 156 qubits).
+**v0.9.2.** 677 tests passing. Validated on real IBM hardware since June 2026 (first run: `ibm_kingston`, Heron R2, 156 qubits).
 
 - What is built, phase by phase, plus the hardware case studies: [docs/STATUS.md](docs/STATUS.md)
 - What is shipped, blocked and out of scope: [docs/ROADMAP.md](docs/ROADMAP.md)
