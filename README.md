@@ -2,54 +2,146 @@
 
 > *Where classical problems cross into physical computation.*
 
-**LIMEN** is a physics aware compiler stack for translating classical optimization problems into native quantum and analog substrates. It sits at the threshold between human readable problem specifications and the physical hardware that computes them  providing a deterministic, reproducible compilation pipeline with measurable confidence in every result.
+**LIMEN** is a router and compiler for optimization problems on quantum hardware. You give it a QUBO, a fidelity target and a credit budget. It picks the cheapest backend that meets the target, runs the problem, and hands back a certificate that says what was run, where, and how much to trust the answer.
 
-Governance: ownership map, hard invariants, and build order for this
-repo and its siblings (DUCTEI, Qallow, VEYN) live in
-[ATRIUM](https://github.com/xingxerx/ATRIUM) — read `AGENTS.md` there
-first.
+```bash
+pip install limen-compiler
+```
 
----
-
-## The Problem
-
-Physics native hardware exists. Quantum annealers, gate-model processors, and neutral-atom arrays are accessible today. But using them requires deep expertise in Hamiltonian formulation, hardware-specific embedding, and penalty coefficient engineering knowledge that lives in physics departments, not software teams.
-
-The result: the same problem formulated by two different engineers produces two different encodings. Results vary between hardware generations. Confidence in outputs is largely taken on faith. And every new hardware vendor requires rebuilding the entire toolchain from scratch.
-
-LIMEN fixes this.
+The base install has no third-party dependencies. Everything in the quickstart below runs on it, offline, with no account.
 
 ---
 
-## What LIMEN Does
+## Quickstart (about ten minutes)
 
-LIMEN provides five things that don't exist together anywhere today:
+### 1. Route a QUBO and get a certified answer
 
-**1. A deterministic logical graph IR**
-A hardware-agnostic intermediate representation for optimization problems. The same problem always compiles the same way. Swap the backend — D-Wave, IBM, classical simulator — without touching your formulation.
+```python
+from limen import RouteRequest, run_route_request
 
-**2. A lexicographic compiler**
-Single-pass, deterministic compilation from logical IR to physical encoding. No heuristic randomness. No undocumented magic. Reproducible output every time.
+# A QUBO is a dict of (variable, variable) -> weight.
+qubo = {
+    ("x0", "x0"): -1.0,
+    ("x1", "x1"): -1.0,
+    ("x0", "x1"):  2.0,
+}
 
-**3. Hardware adapters**
-Clean interfaces to D-Wave (via Ocean SDK) and IBM Quantum (via Qiskit) out of the box, plus Open Quantum cross-vendor submission and a dormant Azure Quantum adapter for Atom Computing devices (`limen.backends.azure_atom` — unit-tested but not yet hardware-validated). New backends are first-class citizens: write an adapter, plug it in.
+# A budget of 0 credits keeps the run on the free local simulator.
+request = RouteRequest(qubo=qubo, fidelity_target=0.9, credit_budget=0)
+cert = run_route_request(request)
 
-**4. A gate-model pipeline with error-correction certification**
-An end-to-end path from QUBO to a certified result: QAOA compilation, exact statevector simulation, classical optimality verification, and a gate-executed surface-code ECC round-trip — all offline, no QPU required. Returns a single `EndToEndCertificate` with solution, optimality flag, logical error rate, and ECC metadata.
+print(cert.solution)             # {'x0': 1, 'x1': 0}
+print(cert.is_optimal)           # True (checked against brute force)
+print(cert.success_probability)  # 0.875
+```
 
-**5. A probabilistic validator**
-For every compiled problem, LIMEN produces a confidence bound — not a proof of correctness, but a measurable signal. Small-instance classical verification, cross-architecture sampling, and distribution analysis tell you how much to trust the result.
+### 2. See why the router chose what it chose
+
+```python
+cert = run_route_request(request, emit_report=True)
+print(cert.metadata["route_report_markdown"])
+```
+
+```text
+# Route report: statevector (Tier 0)
+
+- **Problem size:** 2 variables, 1000 shots
+- **Result:** energy -1, optimal, success probability 87.5%
+
+## Why this backend
+- criticality spread 1.000 (threshold 10.25) -> tier 0
+- backend statevector (sim, 24q, validated=True), 1000 shots
+- ECC: skipped (Tier 0 statevector is noiseless)
+```
+
+### 3. Dry-run a hardware plan without spending anything
+
+`offline=True` makes every planning decision against the real hardware fleet (backend, shots, error-correction distance), then executes on the local simulator. Full plan, zero credits.
+
+```python
+from limen import RouteRequest, route, run_route_request
+
+dry = RouteRequest(qubo=qubo, fidelity_target=0.9, credit_budget=5, offline=True)
+
+plan = route(dry)
+print(plan.backend.name, plan.shots)   # ibm_fez 2500
+
+cert = run_route_request(dry)
+print(cert.logical_error_rate)         # 1.793e-05 (distance-3 surface code)
+```
+
+### 4. Run on real hardware
+
+Install the extra for your backend, then give the request a real budget and drop `offline`:
+
+```bash
+pip install "limen-compiler[ibm]"          # IBM hardware and the local Aer simulator
+pip install "limen-compiler[braket]"       # AWS Braket
+pip install "limen-compiler[dwave]"        # D-Wave annealers
+pip install "limen-compiler[cutting]"      # circuit cutting for oversized problems
+pip install "limen-compiler[distributed]"  # gRPC peer mesh
+pip install "limen-compiler[pqc]"          # ML-DSA-65 signing
+pip install "limen-compiler[all]"          # everything
+```
+
+For IBM, set `IBM_QUANTUM_TOKEN` and `IBM_QUANTUM_CRN` (or pass `qpu_token` and `qpu_instance`). Credentials never appear in a route plan or a certificate. Job state is written to `results_dir` at every poll, so a crashed terminal or a long queue cannot strand a finished job.
+
+**Tried it? Tell me what broke.** Open an issue with the QUBO (or its size and shape) and what confused you. Bug reports from real problems are the most useful thing you can send.
 
 ---
 
-## Workspace Organization
+## How routing works
 
-To help navigate the files and components of LIMEN, see the [Directory Map](docs/DIRECTORY_MAP.md) which labels and defines the role of every directory, script, and source file in the repository.
+The router is a pure function of the request and the fleet. The same QUBO with the same request always produces the same plan.
+
+| Tier | Runs on | What you get |
+|---|---|---|
+| 0 | Local simulator (free, exact). Optional local GPU statevector with `LIMEN_LOCAL_GPU=1`. | Solution checked against brute force |
+| 1 | Quantum hardware | Tier 0, plus a surface-code logical-error certificate |
+| 2 | Validated hardware only | Tier 1, plus a physical-qubit patch budget spent on the variables that dominate error sensitivity |
+
+- A budget of 0, or a fidelity target below 0.5, stays on Tier 0.
+- Between Tier 1 and Tier 2 the router looks at how unevenly error sensitivity is spread across your variables. A flat spread gets plain sampling. A heavy-tailed one gets targeted protection.
+- The budget is converted into a shot count before anything is submitted.
+- A problem too large for any single backend is split by circuit cutting and returns a `CuttingCertificate`.
+- Past runs and live calibration data in `results_dir` are folded into the fleet, so the plan uses measured error rates where they exist.
+
+**Hardware it routes to today**
+
+| Backend | Status |
+|---|---|
+| IBM `ibm_kingston`, `ibm_fez`, `ibm_marrakesh` (Heron, 156 qubits) | Validated with real jobs |
+| IonQ `forte-1` through Open Quantum | Wired, not yet validated |
+| D-Wave (Ocean SDK), QuEra Aquila (AWS Braket) | Adapters available through `run_pipeline` |
+| Azure Quantum / Atom Computing | Paused. Atom Computing is not offered on a public marketplace. |
+
+---
+
+## What else is in the box
+
+- **Deterministic compiler.** A hardware-agnostic logical graph IR and a single-pass lexicographic compiler. Same input, same encoding, every time.
+- **Probabilistic validator.** A confidence bound for every compiled problem, from small-instance classical verification and distribution analysis.
+- **Gate-model pipeline.** QUBO to QAOA to execution to a surface-code error certificate in one call (`run_pipeline`), fully offline if you want.
+- **Router memory.** A SQLite ledger of past runs with an append-only, hash-chained certificate log.
+- **Constraint compiler.** Declare typed constraints (`OneHot`, `AtMostK`, `Equality` and others) and get a validated QUBO, so you do not hand-derive penalty terms.
+- **Multi-node compilation.** Nodes discover each other over gRPC and compile one problem across peers.
+- **Co-design loop.** Stackelberg joint tuning of penalties and embedding, with portfolio compilation across backends.
+- **Analog substrates.** Neutral-atom and photonic backends for a restricted, documented class of Hamiltonians.
+- **Rust core.** The hot loops are Rust (PyO3) with pure-Python fallbacks. Prebuilt wheels for Windows, Linux (x86_64 and aarch64) and Apple Silicon.
+
+The lower-level compiler is available directly:
+
+```python
+from limen import from_qubo_dict, compile_lexicographic, default_hardware_graph, validate
+
+graph = from_qubo_dict(qubo)
+encoding = compile_lexicographic(graph, default_hardware_graph(4))
+print(validate(encoding, runs=1000).confidence)  # 0.0 to 1.0
+```
 
 ---
 
 ## Architecture
-
 
 ```
                          [ Domain Problem ]
@@ -106,157 +198,40 @@ To help navigate the files and components of LIMEN, see the [Directory Map](docs
 └─────────────┘    └───────────────┘
 ```
 
----
-
-## Quantum Communication
-
-LIMEN's quantum-channel module also runs and certifies real-hardware protocols, not just optimization circuits. As a cross-layout fidelity case study, the standard 3-qubit teleportation circuit was submitted to `ibm_kingston` on two physical qubit mappings that share the state and Alice qubits but differ in the Bob relay qubit: q[10,11,12] (job `d8u5qqkbp3hs7385g0mg`) and q[10,11,18] (job `d8u6b6kbp3hs7385gil0`), 1000 shots each. The q[10,11,12] layout achieved fidelity 0.954 versus 0.938 for q[10,11,18] — a 1.6 percentage-point gap — isolating the effect of Bob relay qubit choice on end-to-end teleportation fidelity while holding the state and Alice qubits fixed, and demonstrating LIMEN's ability to certify protocol performance sensitivity to physical qubit mapping on real NISQ hardware. Full counts, timestamps, and verified job layouts: [`results/teleport_summary.json`](results/teleport_summary.json).
+The budget router sits in front of both tracks and decides which path a request takes. Design notes: [docs/architecture.md](docs/architecture.md). File-by-file map: [docs/DIRECTORY_MAP.md](docs/DIRECTORY_MAP.md).
 
 ---
 
-## Multi-Node Coordination
+## What LIMEN is not
 
-LIMEN instances can discover each other and exchange hardware calibration state over a gRPC `Coordination` service (`limen.distributed`): each node advertises its `node_id` and the device IDs it serves, registers with a static list of known peers on startup, and can pull a peer's `HardwareDeltaModel` on demand via `SyncCalibration`. On top of this substrate, a QUBO can be **compiled across nodes**: the logical graph is partitioned, each partition is dispatched to a peer via the `CompilePartition` RPC, and the returned encodings are merged into a single encoding energetically equivalent to a one-shot local compile. The end-to-end pipeline exposes this directly — pass `server_addresses=[...]` to `run_pipeline` (see [Getting Started](#getting-started)). See [`limen/docs/architecture.md`](limen/docs/architecture.md#multi-node-coordination-layer) for the design and [`limen/distributed/`](limen/distributed/) for the implementation. Requires the `distributed` extra: `pip install limen-compiler[distributed]`.
-
----
-
-## What LIMEN Is Not
-
-LIMEN is not a general-purpose quantum computing framework or a user-facing circuit runner. It does not replace Qiskit or Cirq. Its job is **translation and certification**, not general quantum execution.
-
-LIMEN *does* include a pure-Python statevector simulator (`limen.gates.simulator`), but its purpose is narrow: it provides an exact, dependency-free backend for offline ECC certification and QAOA parameter validation — without requiring a QPU or an SDK installation. It is capped at roughly 14 logical qubits before memory pressure becomes significant. It is not intended for production circuit workloads.
-
-LIMEN does not claim to solve NP-hard problems. It claims to translate them correctly and reproducibly onto hardware that attempts to solve them, and to give you a measurable signal about how much to trust the result.
-
-The analog substrate layer (BEC, photonic, continuous-variable) is defined as an interface not yet fully implemented. The mathematics required for a constructive universality theorem on those substrates does not yet exist. When it does, LIMEN will be ready to receive it.
+- **Not a general quantum framework.** It does not replace Qiskit or Cirq. Its job is translation, routing and certification.
+- **Not a solver that beats NP-hardness.** It translates problems correctly and reproducibly onto hardware that attempts them, and tells you how much to trust the result.
+- **Not a proof of correctness.** Certificates carry confidence bounds and modelled error rates. Optimality is only claimed where a brute-force check was possible.
+- **Not a production simulator.** The built-in statevector simulator exists for offline certification and small instances (the router caps it at 24 variables).
+- **Not a general analog compiler.** Analog support covers a restricted class (diagonal Ising forms). The general case is open research and is not claimed.
 
 ---
 
-## Roadmap
+## Status
 
-### Phase 1 — Core ✓
-- [x] Logical graph IR schema
-- [x] PyQUBO frontend adapter
-- [x] Lexicographic compiler (D-Wave backend)
-- [x] Probabilistic validator (small-instance classical verification)
-- [x] IBM Qiskit backend adapter
+**v0.9.1.** 677 tests passing. Validated on real IBM hardware since June 2026 (first run: `ibm_kingston`, Heron R2, 156 qubits).
 
-### Phase 2 — Co-Design Loop (Complete)
-- [x] Stackelberg co-design loop (joint penalty + embedding optimization)
-- [x] Robust equilibrium selection with calibration margin
-- [x] Portfolio compilation with runtime switching conditions
+- What is built, phase by phase, plus the hardware case studies: [docs/STATUS.md](docs/STATUS.md)
+- What is shipped, blocked and out of scope: [docs/ROADMAP.md](docs/ROADMAP.md)
+- Release notes: [docs/CHANGELOG.md](docs/CHANGELOG.md)
+- Benchmarks: [benchmarks/RESULTS.md](benchmarks/RESULTS.md)
 
-### Phase 3 — Analog Interface
-- [x] Hamiltonian IR interface specification
-- [x] Classical Ising simulation backend (exact diagonalisation, ≤ 20 sites)
-- [x] Neutral-atom heuristic backend (van der Waals layout, Rydberg parameters)
-- [x] Neutral-atom LHZ parity-encoding fallback (Theorem 3 — automatic for non-natively-realizable targets)
-- [x] Photonic GBS-inspired backend (Arrazola-Bromley adjacency encoding)
-- [x] Restricted-class universality results documented and implemented (Theorems 1-5, `limen/docs/universality_theorem.md`); a fully general universality theorem for arbitrary (non-diagonal, time-dependent) analog Hamiltonians remains open research and is not claimed
+**Open now**
 
-### Phase 4 — Multi-Node Distributed Architecture (Complete)
-- [x] Milestone 1: node identity, registry, and gRPC coordination service (discovery, heartbeat, calibration sync)
-- [x] Milestone 2: distributed QUBO partitioning across nodes (`CompilePartition` RPC, wired into `run_pipeline`)
-- [x] Milestone 3: classical feedforward transport over `QuantumChannel` — `TransportFeedforward` RPC carries Alice's Bell-measurement bits to a peer node, which applies Bob's correction and echoes it back; `run_distributed_feedforward_teleport` measures real round-trip latency and feeds it into `ChannelDeltaModel`
-
-### Phase 5 — Gate-Model Track & ECC Certification (Complete)
-- [x] QAOA compiler: QUBO → Ising → `CircuitIR` with grid-search parameter optimisation
-- [x] Pure-Python statevector simulator (exact, no external SDK, ~14-qubit ceiling)
-- [x] Gate-model synthesis: arbitrary 1-qubit unitary decomposition into `(rz, ry, rz)` + `cx`
-- [x] Distance-3 rotated surface-code ECC: stabilisers, syndrome extraction, lookup decoder
-- [x] Gate-executed ECC round-trip: syndrome circuit run on the statevector simulator
-- [x] `EndToEndCertificate`: solution + optimality + QAOA success rate + logical error rate + ECC metadata
-- [x] `run_pipeline` end-to-end orchestrator (local and distributed)
-- [x] Physics-validation test suite (random QUBO vs brute-force, error-rate sweep, distance scaling, weight-2 uncorrectable boundary, BB84 eavesdrop detection)
-- [x] QPU backend integration for pipeline execution step: `backend="aer"`/`"qpu"` (real IBM hardware via Qiskit Runtime) and `backend="dwave"` (real D-Wave QPU or simulated annealer) are all wired into `run_pipeline`
-- [x] Classical feedforward transport over `QuantumChannel` (Milestone 3, see Phase 4 above)
-
-### Phase 6 — Budget Router & Fleet Cost Model (In Progress)
-- [x] Budget router (`limen.router`): deterministic fidelity-tier planning — tier, backend, cutting strategy, ECC allocation, and shot count chosen against an explicit credit budget before submission
-- [x] Cost-model seeding from run history: `scan_results()`/`apply_history()` fold cached `results/*.json` records into fleet backend profiles offline
-- [x] Calibration seeding from live hardware: `fetch_backend_calibration()` (IBM Runtime gate/readout error) + offline `scan_calibration()`/`apply_calibration()`; `route()` prefers calibrated `physical_error_rate` over hardcoded defaults
-- [x] Crash-resilient QPU job lifecycle: submission decoupled from result-waiting, on-disk state machine (`limen.router.job_state`), transient-error-only retry, no auto-resubmission of errored/cancelled jobs
-- [x] First hardware validation: ibm_kingston Tier 2 run (job `d965qgotcv6s73djc1l0`, `results/router_tier2_kingston_d965qgotcv6s73djc1l0.json`)
-- [x] Router-driven multi-backend dispatch: `run_route_request()` (`limen.pipeline`) is the zero-manual-steps entry point — QUBO + budget in, certified answer out. Builds the informed fleet, routes, and executes; IBM QPU plans go through the decoupled submit → poll → certify chain
-- [x] Cut-circuit bridge: `RoutePlan.use_cutting` plans (problem too large for any single backend) dispatch through `run_cut_route_request()` (`limen.cutting`), returning a `CuttingCertificate` reconstructed from per-qubit `<Z_i>` marginals and certified with the same ECC term `run_pipeline` uses
-- [x] gRPC peer auto-discovery: `run_route_request()` falls back to `LIMEN_KNOWN_PEERS` for distributed compilation when `server_addresses` is omitted
-- [x] Substrate-aware routing: `ProblemProfile`/`BackendProfile.substrate_affinity` break ties between backends already tied on cost/capacity/validation
-- [x] Co-design history loop: `codesign_from_history()` (`limen.codesign`) seeds a fresh Stackelberg run from the best prior chain-strength in `results/`; standalone by design (see `docs/ROADMAP.md`)
-- [ ] Azure Quantum / Atom Computing adapter hardware validation (`limen.backends.azure_atom` is import-clean and unit-tested but dormant — never run against a live Azure workspace; excluded from `DEFAULT_FLEET` until validated)
+- A routing target for IBM's Nighthawk processors
+- Hardware validation for the IonQ path
+- Feedback from people outside the project (see the quickstart)
 
 ---
 
-## Getting Started
+## Free and paid tiers
 
-```bash
-pip install limen-compiler
-```
-
-The base install has no third-party dependencies and covers the compiler and
-validator shown below. Running on a backend needs the matching extra:
-
-```bash
-pip install "limen-compiler[ibm]"          # IBM hardware and the local Aer simulator
-pip install "limen-compiler[braket]"       # AWS Braket
-pip install "limen-compiler[dwave]"        # D-Wave annealers
-pip install "limen-compiler[cutting]"      # circuit cutting
-pip install "limen-compiler[distributed]"  # gRPC peer mesh
-pip install "limen-compiler[pqc]"          # ML-DSA-65 signing
-pip install "limen-compiler[all]"          # everything
-```
-
-```python
-from limen import from_qubo_dict, compile_lexicographic, default_hardware_graph, validate
-
-# Define your problem as a QUBO dict
-graph = from_qubo_dict({
-    ('x0', 'x0'): -1.0,
-    ('x1', 'x1'): -1.0,
-    ('x0', 'x1'):  2.0,
-})
-
-# Compile to a physical encoding
-encoding = compile_lexicographic(graph, default_hardware_graph(4))
-
-# Validate confidence
-result = validate(encoding, runs=1000)
-print(result.confidence)  # 0.0 – 1.0
-```
-
-### End-to-end pipeline (gate-model + ECC, optionally distributed)
-
-`run_pipeline` threads a QUBO through the whole stack — QAOA compilation, statevector execution, classical optimality check, and a surface-code logical-error certificate — and returns a single `EndToEndCertificate`:
-
-```python
-import limen
-
-cert = limen.run_pipeline(
-    {('x0', 'x0'): -1.0, ('x1', 'x1'): -1.0, ('x0', 'x1'): 2.0},
-    physical_error_rate=0.01,
-)
-print(cert.solution, cert.is_optimal, cert.logical_error_rate)
-
-# Compile across peer nodes over the Coordination CompilePartition RPC
-# (requires the `distributed` extra and reachable peers):
-cert = limen.run_pipeline(
-    {('x0', 'x0'): -1.0, ('x1', 'x1'): -1.0, ('x0', 'x1'): 2.0},
-    server_addresses=["127.0.0.1:50051"],
-    num_partitions=2,
-)
-print(cert.distributed_compilation)
-```
-
----
-
-## Design Principles
-
-**Determinism first.** The same input always produces the same encoding. Reproducibility is not optional for scientific infrastructure.
-
-**Honest about limits.** LIMEN reports confidence bounds, not correctness proofs. The validation loop is probabilistic by design, not by accident.
-
-**Hardware agnostic formulation, hardware explicit compilation.** The logical IR knows nothing about hardware topology. The compiler knows everything. The boundary between them is hard and intentional.
-
-**Open core.** The core of this repository is source-available under the Elastic License 2.0 and free to use, including in production: the IR, compilers, validator, hardware adapters, gate-model pipeline and unsigned certificates, budget router, router memory, circuit cutting, Stackelberg co-design, and portfolio compilation. Two paid tiers check an offline, post-quantum-signed (ML-DSA-65) license key; nothing phones home.
+The core of this repository is source-available under the Elastic License 2.0 and free to use, including in production: the IR, compilers, validator, hardware adapters, gate-model pipeline and unsigned certificates, budget router, router memory, circuit cutting, co-design, and portfolio compilation. Two paid tiers check an offline, post-quantum-signed (ML-DSA-65) license key. Nothing phones home.
 
 | Tier | Adds |
 |---|---|
@@ -270,123 +245,23 @@ Key install, verification and how to request a license: [docs/LICENSING.md](docs
 
 ## Contributing
 
-LIMEN is early. The most valuable contributions right now are:
+LIMEN is early. The most valuable contributions right now:
 
-- Problem formulations — real optimization problems encoded in the logical IR
-- Hardware adapter implementations for new backends
-- Validator improvements — better small-instance solvers, additional confidence metrics
-- Benchmarking data from real hardware runs
+- Real optimization problems run through the quickstart, with notes on what broke
+- Hardware adapters for new backends
+- Validator improvements: better small-instance solvers, more confidence metrics
+- Benchmark data from real hardware runs
 
-See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for details.
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 ---
 
 ## License
 
-Elastic License 2.0 (ELv2) — see [LICENSE](LICENSE) for details.
+Elastic License 2.0 (ELv2). See [LICENSE](LICENSE).
 
-LIMEN is source-available: anyone can read, fork, and use the code for
-research and internal purposes. ELv2 prohibits offering LIMEN as a hosted
-or managed service without a commercial license. Use is also subject to
-the restrictions in [ACCEPTABLE_USE.md](ACCEPTABLE_USE.md), which
-prohibits weapons development, mass surveillance, unauthorized
-cryptanalysis, and attacks on critical infrastructure.
-
-As of v0.3.1, LIMEN changed from Apache 2.0 to ELv2. Copies obtained under
-Apache 2.0 retain their Apache 2.0 rights; all new versions are licensed
-under ELv2.
+LIMEN is source-available: anyone can read, fork, and use the code for research and internal purposes. ELv2 prohibits offering LIMEN as a hosted or managed service without a commercial license. Use is also subject to [ACCEPTABLE_USE.md](ACCEPTABLE_USE.md), which prohibits weapons development, mass surveillance, unauthorized cryptanalysis, and attacks on critical infrastructure.
 
 ---
 
-## Status
-
-**v0.9.0 — Phase 1 complete · Phase 2 complete · Phase 3 substantially implemented · Phase 4 complete · Phase 5 complete · Phase 6 in progress · Hardware validated.**
-Core IR, compiler, validator, PyQUBO frontend, D-Wave and Qiskit backend
-adapters shipped and tested. Stackelberg co-design loop operational with
-Rust-backed κ scoring, stability-penalised learning rate, and portfolio
-compilation across backend slots. Chain-break-fraction feedback is wired
-into the loop on both hardware paths: `ibm_noise_fn` (real-hardware total
-variation distance) drives `examples/ibm_codesign_qpu.py`, validated against
-`ibm_kingston`, and `dwave_chain_break_fn` (real chain-break fraction) now
-drives the equivalent closed loop against a live D-Wave QPU in
-`examples/dwave_codesign_qpu.py`. With no callback supplied, chain-break
-fraction defaults to 0.0 (simulation mode) — this is documented behaviour,
-not an inactive feature.
-Analog interface layer implemented: classical Ising simulator (exact
-diagonalisation, ≤20 sites), neutral-atom heuristic backend (van der Waals
-layout, Rydberg parameters), photonic GBS backend (Arrazola-Bromley adjacency
-encoding), HardwareDeltaModel calibration layer (per-site detuning, per-pair
-coupling, and global Rabi-drive correction, each with a pure-Python fallback
-alongside the Rust-backed implementation). The neutral-atom geometric
-embeddability check (Theorem 2 geometry condition) likewise always runs —
-numpy when available, a pure-Python Jacobi eigenvalue fallback otherwise —
-consistent with LIMEN's zero-mandatory-dependency core (`dependencies = []`
-in `pyproject.toml`). Restricted-class universality results (Theorems 1-5)
-documented in `limen/docs/universality_theorem.md`; a fully general
-universality theorem for arbitrary (non-diagonal, time-dependent) analog
-Hamiltonians remains open research and is not claimed — nor is off-diagonal
-(X/Y) or time-dependent Hamiltonian support yet implemented in any backend.
-
-**Gate-model track fully operational**: QUBO → QAOA compilation → exact
-statevector simulation → surface-code (d=3) ECC syndrome extraction and
-logical-error certification, end-to-end with no external SDK required.
-`run_pipeline` returns a single `EndToEndCertificate` with solution, optimality
-flag, success probability, per-qubit logical error rate, and ECC roundtrip
-verification. Distributed compilation over gRPC (`CompilePartition` RPC) wired
-into `run_pipeline(server_addresses=[...])`. The pipeline's execution step now
-also routes to real backends — `backend="aer"`/`"qpu"` (IBM Quantum hardware)
-and `backend="dwave"` (real D-Wave QPU or simulated annealer) — alongside the
-default offline statevector simulator.
-
-**Multi-node coordination is now end-to-end**: beyond discovery and
-calibration sync, nodes can transport the classical feedforward bits of a
-teleportation protocol to a peer over gRPC (`TransportFeedforward` RPC) and
-measure real round-trip latency against the qubit's T2 coherence time
-(`run_distributed_feedforward_teleport`).
-
-**First real hardware validation: IBM ibm_kingston (Heron R2, 156 qubits),
-June 9 2026. Benchmark results in benchmarks/RESULTS.md.**
-
-**Rust acceleration layer (v0.8.x):** every enumeration- or sampling-shaped
-hot loop in the library is now Rust-backed via the `limen_core` PyO3
-extension, each behind a `try: from limen.limen_core import ...` fast path with an
-equivalent pure-Python fallback: QUBO spectrum enumeration, the validator's
-noisy-run simulation (`simulate_qubo_runs`, rayon-parallel), surface-code
-lookup-table construction and logical-error certification
-(`build_ecc_lookup_table` / `logical_failure_probability` — distance-5
-decoding drops from intractable-in-Python to seconds), the VRP one-hot QUBO
-builder (`vrp_qubo_terms`), statevector simulation, κ scoring, and the
-analog delta corrections. The full test suite runs ~8x faster with the
-extension built; hardware SDK adapters, the gRPC distributed layer, and
-pipeline orchestration deliberately stay Python (I/O-bound glue, no compute
-of their own). Build with `maturin develop --release`.
-
-**Circuit cutting (gate-model):**
-`limen/cutting` + the Rust `limen_core::cutting` module split a wide circuit
-into sub-circuits via quasi-probability decomposition and reconstruct the
-original expectation value from real per-subcircuit sampler counts
-(`limen/cutting/dispatch.py`, `limen/cutting/reconstruct.py`,
-`src/cutting/reconstruct.rs`). Validated end-to-end against a plain
-AerSimulator run in `examples/cutting_smoke_test.py`.
-
-**Budget router (v0.8.3):** `limen.router` plans a QUBO run before any credit
-is spent — deterministic fidelity-tier selection (backend, cutting strategy,
-ECC allocation, shot count) against an explicit budget. Backend profiles are
-seeded from real run history (`limen.router.history`) and from live IBM
-calibration snapshots (`limen.router.calibration`); the first ibm_kingston
-calibration (physical error rate 2.586e-2) is 25x closer to measured Tier 2
-behavior than the previous hardcoded 1e-3. QPU job submission is decoupled
-from result-waiting with an on-disk state machine (`limen.router.job_state`),
-so a crashed terminal or a long maintenance-window queue can't strand a
-completed job. Hardware-validated on ibm_kingston (job
-`d965qgotcv6s73djc1l0`).
-
-654 tests passing, 0 skipped, with every optional extra installed
-(`pip install "limen-compiler[all]"`). Without the extras, tests for the
-missing SDKs skip cleanly. Zero regressions.
-
-If you are building in this space and want to collaborate, open an issue.
-
----
-
-*LIMEN — Latin for threshold. The boundary between two states.*
+*LIMEN: Latin for threshold. The boundary between two states.*
