@@ -9,6 +9,22 @@ permissions:
   contents: read
 
 jobs:
+  lean-proof:
+    name: lean proofs (elan + lake)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install elan (Lean toolchain manager)
+        uses: leanprover/elan-action@v1
+        with:
+          toolchain: "leanprover/lean4:v4.8.0"
+      - name: Build Lean project (fail on sorry)
+        working-directory: formal/oneiro
+        run: |
+          lake build
+@@
   rust-test:
     name: cargo test
     runs-on: ubuntu-latest
