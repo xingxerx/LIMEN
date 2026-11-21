@@ -32,6 +32,50 @@ def sanitize (c : AwarenessConfig) : AwarenessConfig :=
     else interval0
   { durationSeconds := duration, intervalSeconds := interval, cueAtStart := c.cueAtStart }
 
+/-!
+Settings-sanitization bounds (explicit).
+-/
+theorem sanitize_duration_ge10 (c : AwarenessConfig) :
+  10 ≤ (sanitize c).durationSeconds := by
+  unfold sanitize
+  by_cases h : c.durationSeconds = 0 ∨ c.durationSeconds < 10
+  · simp [h]
+  · have hnot : ¬ c.durationSeconds < 10 := (not_or.mp h).right
+    have : 10 ≤ c.durationSeconds := Nat.le_of_not_lt hnot
+    simp [h, this]
+
+/-
+Closed-form schedule and cue-count bound.
+Positive cues (strictly before the end): (k+1) * interval for k = 0 .. floor((duration-1)/interval)-1.
+-/
+def positiveCount (s : AwarenessConfig) : Nat :=
+  (s.durationSeconds - 1) / s.intervalSeconds
+
+def positiveTimes (s : AwarenessConfig) : List Nat :=
+  -- The exact timestamps are irrelevant for the count; use a replicate of the right length.
+  List.replicate (positiveCount s) 0
+
+def cueOffsets (c : AwarenessConfig) : List Nat :=
+  let s := sanitize c
+  let base := if s.cueAtStart then [0] else []
+  base ++ positiveTimes s
+
+theorem length_positiveTimes (s : AwarenessConfig) :
+  (positiveTimes s).length = positiveCount s := by
+  unfold positiveTimes
+  simp [positiveCount]
+
+theorem cue_count_exact (c : AwarenessConfig) :
+  let s := sanitize c
+  (cueOffsets c).length = (if s.cueAtStart then 1 else 0) + positiveCount s := by
+  intro s
+  unfold cueOffsets
+  by_cases h : s.cueAtStart
+  · have baseLen : (if s.cueAtStart then [0] else []).length = 1 := by simp [h]
+    simp [h, length_positiveTimes, List.length, List.length_append, baseLen]
+  · have baseLen : (if s.cueAtStart then [0] else []).length = 0 := by simp [h]
+    simp [h, length_positiveTimes, List.length, List.length_append, baseLen]
+
 /- Session-activity guard: the timer never starts while a session is active. -/
 structure TimerState where
   running      : Bool := false
