@@ -84,6 +84,7 @@ all = [
 
 [project.scripts]
 limend = "limen.limend.__main__:main"
+limen = "limen.receipt:main"
 
 [project.urls]
 "Homepage" = "https://github.com/xingxerx/LIMEN"
