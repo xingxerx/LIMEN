@@ -8,8 +8,8 @@ features by checking an offline license key. Nothing phones home.
 
 | Tier | Price | What it adds |
 |---|---|---|
-| Free | $0 | Everything not listed below: IR, compilers, validator, hardware adapters, gate-model pipeline and unsigned certificates, budget router, router memory, circuit cutting, Stackelberg co-design, portfolio compilation |
-| Pro | Contact | `signed_certificates`: ML-DSA-65 (FIPS 204) signed ledger entries via `RouterMemory.append_certificate` |
+| Free | $0 | Everything not listed below: IR, compilers, validator, hardware adapters, gate-model pipeline and unsigned certificates, budget router, router memory, circuit cutting, Stackelberg co-design, portfolio compilation. Checking a signed receipt (`limen verify`) is also free. |
+| Pro | Contact | `signed_certificates`: ML-DSA-65 (FIPS 204) signed ledger entries via `RouterMemory.append_certificate`, and signed run receipts (`limen.receipt.run_signed`), which are portable files anyone can check offline. See [RECEIPTS.md](RECEIPTS.md). |
 | Team | Contact | Everything in Pro, plus `peer_mesh`: multi-node registration via `limen.distributed.server.register_with_peers`, and written permission to offer LIMEN as a hosted or managed service (ELv2 otherwise prohibits this) |
 
 `priority_routing` exists in the code as a reserved Pro feature. It is not
@@ -49,7 +49,9 @@ python -c "from limen.licensing.license import current_license as c; l=c(); prin
   `limen/licensing/_issuer_key.py`.
 - An invalid, expired or malformed key falls back to Free behaviour and
   reports why. Using a paid feature without a valid key raises
-  `LicenseError` with that reason.
+  `LicenseError` with that reason. `run_signed` is the exception: it
+  finishes the run without a receipt and puts the reason in the
+  certificate's notes.
 
 ## Getting a license
 

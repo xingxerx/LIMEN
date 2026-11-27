@@ -5,6 +5,47 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Docs: signed run receipts are documented. New guide `docs/RECEIPTS.md`
+  (install, signing, checking, what a receipt proves and what it does not,
+  file format, Python API, current limits), a receipts section in the README,
+  and the tier tables in the README and `docs/LICENSING.md` now list receipts
+  under Pro and receipt checking under Free.
+- Added: `run_signed` and `verify_receipt` can be imported from the top-level
+  package (`from limen import run_signed`). On 0.9.3 use
+  `from limen.receipt import run_signed`.
+
+## [0.9.3] - 2026-11-27
+
+- Added: signed run receipts (`limen.receipt`). A receipt is one JSON file
+  (format `limen-receipt/1`) holding the certificate payload, its SHA-256,
+  the ledger chain head it was recorded under, an ML-DSA-65 signature over
+  `{payload_sha256, chain_sha256}` and the signer's public key. Anyone can
+  check it offline. Signing needs the `signed_certificates` feature (Pro or
+  Team). Checking is free.
+- Added: `run_signed(request, results_dir=...)`, which is `run_route_request`
+  plus a receipt written to `<results_dir>/receipts/`. The signing key comes
+  from the `signing_key=` argument, then `LIMEN_SIGNING_KEY`, then
+  `<results_dir>/limen_signing.key`. With no key or no license the run still
+  completes, no receipt is written, and the certificate's notes say why.
+- Added: `SigningRouterMemory`, a `RouterMemory` that signs each certificate
+  it appends and writes the receipt. It is passed to `run_route_request` as
+  `memory=`, so `limen.pipeline` is unchanged.
+- Added: a `limen` command. `limen keygen <dir>` creates a signing keypair
+  and refuses to overwrite an existing one. `limen verify <receipt>` checks a
+  receipt, with `--pubkey` to pin the signer and `--ledger` to cross-check
+  the signer's ledger. Exit codes: 0 valid, 1 invalid, 2 unreadable input.
+  Both commands need `pip install "limen-compiler[pqc]"`.
+- Added: `verify_receipt` and `check_against_ledger` for checking receipts
+  from Python. `verify_receipt` never raises and lists problems in `reasons`.
+- Added: Lean-checked proof work for the `cancel_adjacent` pass.
+- Tests: 12 new tests in `tests/test_receipt.py` (roundtrip, edited payload,
+  edited chain head, wrong pinned key, garbage input, free tier stays
+  unsigned, ledger cross-check, `run_signed` with and without a key, CLI,
+  keygen).
+- Note: a receipt checked without `--pubkey` only shows the file is unchanged
+  since someone signed it. Pin the signer's public key when it matters who
+  signed.
+
 ## [0.9.2] - 2026-11-18
 
 - Docs: the README is rewritten for first-time users and now leads with a
