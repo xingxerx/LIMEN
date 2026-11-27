@@ -27,5 +27,6 @@ id_ed25519*
 *.seed
 *.seed.*
 *.dpapi
+*.bak
 secrets/
 results/study/
