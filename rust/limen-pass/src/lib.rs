@@ -45,6 +45,34 @@ impl Pipeline {
 
 impl Default for Pipeline { fn default() -> Self { Self::new() } }
 
+/// What a gate type must provide for [`cancel_adjacent`].
+pub trait Cancels {
+    /// True when `self` followed directly by `next` does nothing.
+    fn cancels(&self, next: &Self) -> bool;
+}
+
+/// The loop behind [`CancelInverses`], kept free of circuit details so it can be
+/// checked in Lean (see `proofs/`). One walk over `ops` with a stack: an op that
+/// cancels the one on top removes it, anything else is pushed.
+///
+/// The index loop is on purpose. The Lean translation reads it; an iterator
+/// version is not supported there yet.
+pub fn cancel_adjacent<T: Clone + Cancels>(ops: &[T]) -> Vec<T> {
+    let mut out: Vec<T> = Vec::new();
+    let mut i = 0;
+    while i < ops.len() {
+        let op = &ops[i];
+        let n = out.len();
+        if n > 0 && out[n - 1].cancels(op) {
+            out.pop();
+        } else {
+            out.push(op.clone());
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Removes adjacent self-inverse pairs (H H, X X, Y Y, Z Z, CX CX, SWAP SWAP) on identical qubits.
 pub struct CancelInverses;
 
@@ -53,17 +81,16 @@ fn self_inverse_pair(a: &Op, b: &Op) -> bool {
         | (Op::Z { .. }, Op::Z { .. }) | (Op::Cx { .. }, Op::Cx { .. }) | (Op::Swap { .. }, Op::Swap { .. })) && a.qubits() == b.qubits()
 }
 
+impl Cancels for Op {
+    fn cancels(&self, next: &Self) -> bool { self_inverse_pair(self, next) }
+}
+
 impl Pass for CancelInverses {
     fn name(&self) -> &'static str { "cancel-inverses" }
     fn input_level(&self) -> Level { Level::Logical }
     fn output_level(&self) -> Level { Level::Logical }
     fn run(&self, c: &Circuit) -> Result<Circuit, PassError> {
-        let mut out = c.clone(); out.ops.clear();
-        for op in &c.ops {
-            if let Some(last) = out.ops.last() { if self_inverse_pair(last, op) { out.ops.pop(); continue; } }
-            out.ops.push(op.clone());
-        }
-        Ok(out)
+        Ok(Circuit { ops: cancel_adjacent(&c.ops), ..c.clone() })
     }
 }
 
@@ -103,6 +130,15 @@ mod tests {
         assert_eq!(out.level, Level::Physical);
         assert_eq!(out.meta["layout"], "0,1,2");
     }
+    /// The loop as it was before `cancel_adjacent` was split out.
+    fn old_loop(ops: &[Op]) -> Vec<Op> {
+        let mut out: Vec<Op> = Vec::new();
+        for op in ops {
+            if let Some(last) = out.last() { if self_inverse_pair(last, op) { out.pop(); continue; } }
+            out.push(op.clone());
+        }
+        out
+    }
     fn arb_op() -> impl Strategy<Value = Op> {
         prop_oneof![(0u32..3).prop_map(|a| Op::H { q: Qubit(a) }), (0u32..3).prop_map(|a| Op::X { q: Qubit(a) }),
             (0u32..3, 0u32..3).prop_filter("d", |(a, b)| a != b).prop_map(|(a, b)| Op::Cx { c: Qubit(a), t: Qubit(b) })]
@@ -114,6 +150,9 @@ mod tests {
             let once = p.run(&c).unwrap(); let twice = p.run(&once).unwrap();
             prop_assert!(once.ops.len() <= c.ops.len());
             prop_assert_eq!(once.hash(), twice.hash());
+        }
+        #[test] fn cancel_adjacent_matches_the_old_loop(ops in prop::collection::vec(arb_op(), 0..40)) {
+            prop_assert_eq!(cancel_adjacent(&ops), old_loop(&ops));
         }
     }
 }

@@ -1,0 +1,10 @@
+# Lean extraction for the proved part of this crate. hax runs on Linux, so on
+# Windows run it inside WSL, from this folder:
+#
+#   cargo hax extract cancel-adjacent --locked
+#
+# Output goes to proofs/cancel-adjacent/lean. In there, Extraction/ is generated
+# and overwritten each run; Verification/ is hand-written and never touched.
+[scenario.cancel-adjacent]
+backend = "lean"
+include = ["limen_pass::cancel_adjacent"]
