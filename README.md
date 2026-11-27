@@ -80,13 +80,55 @@ pip install "limen-compiler[braket]"       # AWS Braket
 pip install "limen-compiler[dwave]"        # D-Wave annealers
 pip install "limen-compiler[cutting]"      # circuit cutting for oversized problems
 pip install "limen-compiler[distributed]"  # gRPC peer mesh
-pip install "limen-compiler[pqc]"          # ML-DSA-65 signing
+pip install "limen-compiler[pqc]"          # ML-DSA-65 signing and receipt checks
 pip install "limen-compiler[all]"          # everything
 ```
 
 For IBM, set `IBM_QUANTUM_TOKEN` and `IBM_QUANTUM_CRN` (or pass `qpu_token` and `qpu_instance`). Credentials never appear in a route plan or a certificate. Job state is written to `results_dir` at every poll, so a crashed terminal or a long queue cannot strand a finished job.
 
 **Tried it? Tell me what broke.** Open an issue with the QUBO (or its size and shape) and what confused you. Bug reports from real problems are the most useful thing you can send.
+
+---
+
+## Signed run receipts (new in 0.9.3)
+
+A receipt is one JSON file that shows a certified run happened and has not been edited since it was signed. You can hand it to a customer or an auditor, and they can check it offline with no LIMEN license. Signing needs a Pro or Team license. Checking is free.
+
+```bash
+pip install "limen-compiler[pqc]"
+limen keygen results
+```
+
+Set your Pro or Team license key (see [docs/LICENSING.md](docs/LICENSING.md)):
+
+```powershell
+$env:LIMEN_LICENSE = "LIMEN1.your-key-here"
+```
+
+```python
+from limen.receipt import run_signed
+
+# request is the RouteRequest from the quickstart above
+cert = run_signed(request, results_dir="results")   # run_route_request plus a receipt
+print(cert.metadata["receipt_path"])                # results/receipts/receipt_000001_....json
+```
+
+Anyone can then check the file:
+
+```bash
+limen verify receipt_000001_3f9a1c2b7d4e.json --pubkey limen_signing.pub
+```
+
+```text
+VALID  receipt seq 1 backend statevector
+  payload hash : matches
+  signature    : ML-DSA-65 verified
+  signer key   : 25507c4e3af9b4eb (pinned to your key)
+```
+
+Pass `--pubkey` whenever it matters who signed. Without it, the check only shows the file is unchanged since someone signed it. Without a license or a signing key the run still completes, and the certificate's notes say why there is no receipt.
+
+Full guide, including what a receipt does and does not prove: [docs/RECEIPTS.md](docs/RECEIPTS.md).
 
 ---
 
@@ -123,6 +165,7 @@ The router is a pure function of the request and the fleet. The same QUBO with t
 - **Probabilistic validator.** A confidence bound for every compiled problem, from small-instance classical verification and distribution analysis.
 - **Gate-model pipeline.** QUBO to QAOA to execution to a surface-code error certificate in one call (`run_pipeline`), fully offline if you want.
 - **Router memory.** A SQLite ledger of past runs with an append-only, hash-chained certificate log.
+- **Signed receipts.** Portable, ML-DSA-65 signed proof of a run that anyone can check offline with `limen verify`.
 - **Constraint compiler.** Declare typed constraints (`OneHot`, `AtMostK`, `Equality` and others) and get a validated QUBO, so you do not hand-derive penalty terms.
 - **Multi-node compilation.** Nodes discover each other over gRPC and compile one problem across peers.
 - **Co-design loop.** Stackelberg joint tuning of penalties and embedding, with portfolio compilation across backends.
@@ -206,7 +249,7 @@ The budget router sits in front of both tracks and decides which path a request 
 
 - **Not a general quantum framework.** It does not replace Qiskit or Cirq. Its job is translation, routing and certification.
 - **Not a solver that beats NP-hardness.** It translates problems correctly and reproducibly onto hardware that attempts them, and tells you how much to trust the result.
-- **Not a proof of correctness.** Certificates carry confidence bounds and modelled error rates. Optimality is only claimed where a brute-force check was possible.
+- **Not a proof of correctness.** Certificates carry confidence bounds and modelled error rates. Optimality is only claimed where a brute-force check was possible. A signed receipt shows a record was not changed after signing. It does not make the answer inside it more correct.
 - **Not a production simulator.** The built-in statevector simulator exists for offline certification and small instances (the router caps it at 24 variables).
 - **Not a general analog compiler.** Analog support covers a restricted class (diagonal Ising forms). The general case is open research and is not claimed.
 
@@ -214,7 +257,7 @@ The budget router sits in front of both tracks and decides which path a request 
 
 ## Status
 
-**v0.9.2.** 677 tests passing. Validated on real IBM hardware since June 2026 (first run: `ibm_kingston`, Heron R2, 156 qubits).
+**v0.9.3.** Over 680 tests passing. Validated on real IBM hardware since June 2026 (first run: `ibm_kingston`, Heron R2, 156 qubits).
 
 - What is built, phase by phase, plus the hardware case studies: [docs/STATUS.md](docs/STATUS.md)
 - What is shipped, blocked and out of scope: [docs/ROADMAP.md](docs/ROADMAP.md)
@@ -235,11 +278,11 @@ The core of this repository is source-available under the Elastic License 2.0 an
 
 | Tier | Adds |
 |---|---|
-| Free | Everything above |
-| Pro | Signed certificates (ML-DSA-65 signed ledger entries) |
+| Free | Everything above, plus checking signed receipts (`limen verify`) |
+| Pro | Signed certificates (ML-DSA-65 signed ledger entries) and signed run receipts you can hand to a customer or auditor |
 | Team | Pro, plus multi-node peer registration (`peer_mesh`) and written permission to offer LIMEN as a hosted or managed service, which ELv2 otherwise prohibits |
 
-Key install, verification and how to request a license: [docs/LICENSING.md](docs/LICENSING.md).
+Key install, verification and how to request a license: [docs/LICENSING.md](docs/LICENSING.md). Receipts guide: [docs/RECEIPTS.md](docs/RECEIPTS.md).
 
 ---
 

@@ -57,6 +57,8 @@ __all__ = [
     "generate_signing_key",
     "sign_json",
     "verify_json",
+    "run_signed",
+    "verify_receipt",
 ]
 
 
@@ -157,6 +159,12 @@ def __getattr__(name: str):
             "generate_signing_key": generate_signing_key,
             "sign_json": sign_json,
             "verify_json": verify_json,
+        }[name]
+    if name in ("run_signed", "verify_receipt"):
+        from limen.receipt import run_signed, verify_receipt
+        return {
+            "run_signed": run_signed,
+            "verify_receipt": verify_receipt,
         }[name]
     raise AttributeError(f"module 'limen' has no attribute {name!r}")
 
