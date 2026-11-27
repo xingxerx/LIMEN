@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "limen-compiler"
-version = "0.9.2"
+version = "0.9.3"
 description = "A physics-aware compiler stack for translating classical optimization problems into native quantum and analog substrates."
 readme = "README.md"
 # SPDX expression plus the files that carry the terms, so the license shows up
